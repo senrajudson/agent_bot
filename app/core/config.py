@@ -1,0 +1,51 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    API_NAME: str = "Bot Chat API"
+    API_PORT: int = 8002
+
+    LLM_PROVIDER: str = "ollama"
+
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "gemma4:e4b"
+
+    GROQ_API_KEY: str | None = None
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+
+    OPENAI_COMPATIBLE_API_KEY: str | None = None
+    OPENAI_COMPATIBLE_BASE_URL: str | None = None
+    OPENAI_COMPATIBLE_MODEL: str | None = None
+
+    PI_WEB_API_BASE_URL: str = "http://10.247.224.39/piwebapi"
+    PI_SERVER_NAME: str = "PIMS"
+    PI_WEB_API_USERNAME: str | None = None
+    PI_WEB_API_PASSWORD: str | None = None
+    PI_WEB_API_VERIFY_SSL: bool = False
+
+    GRAFANA_LOKI_QUERY_RANGE_URL: str
+    GRAFANA_BEARER_TOKEN: str = "SEU_TOKEN_DO_GRAFANA"
+    PIMS_STATUS_LOKI_QUERY: str = '{job="zabbix_proxy"}'
+    PIMS_STATUS_LOOKBACK_MINUTES: int = 20
+    PIMS_STATUS_LIMIT: int = 5000
+
+    PHOENIX_ENABLED: bool = False
+    PHOENIX_PROJECT_NAME: str = "pi-chat-api"
+    PHOENIX_COLLECTOR_ENDPOINT: str = "http://localhost:6006/v1/traces"
+    PHOENIX_PROTOCOL: str = "http/protobuf"
+
+    MATH_TOOL_BASE_URL: str = "http://localhost:8001"
+    MATH_TOOL_TIMEOUT_SECONDS: float = 120
+
+    REDIS_URL: str = "redis://127.0.0.1:6379/2"
+    CHAT_MEMORY_TTL_SECONDS: int = 604800
+    CHAT_MEMORY_MAX_TURNS: int = 8
+
+
+settings = Settings()

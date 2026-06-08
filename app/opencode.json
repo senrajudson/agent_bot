@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "permission": {
+    "webfetch": "allow",
+    "websearch": "allow",
+    "bash": "allow",
+    "edit": "ask"
+  },
+
+  "watcher": {
+    "ignore": [
+      ".venv/**",
+      "venv/**",
+      "__pycache__/**",
+      ".git/**",
+      "node_modules/**",
+      "debug_responses/**",
+      "*.log"
+    ]
+  }
+}
