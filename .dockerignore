@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+phoenix_data/
+.env
+.env.*
+app/.env
+app/.env.*
+enviroment.txt
+auth*
+node_modules/
+dist/
+build/
+*.log
+debug_responses/

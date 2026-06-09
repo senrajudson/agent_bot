@@ -1,5 +1,6 @@
 from phoenix.otel import register
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from openinference.instrumentation.langchain import LangChainInstrumentor
 
 from app.core.config import settings
 
@@ -15,6 +16,8 @@ def setup_phoenix_tracing():
 
     if _tracer_provider is not None:
         return _tracer_provider
+
+    LangChainInstrumentor().instrument()
 
     _tracer_provider = register(
         project_name=settings.PHOENIX_PROJECT_NAME,

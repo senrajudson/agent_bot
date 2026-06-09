@@ -9,7 +9,13 @@ build/
 
 .env
 .env.*
+!.env.example
+docker.env
+app/.env
+app/.env.*
+!app/.env.example
 debug_responses/
 *.log
 
 auth*
+phoenix_data/

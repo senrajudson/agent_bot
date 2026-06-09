@@ -1,20 +1,4 @@
 services:
-  phoenix:
-    image: arizephoenix/phoenix:15.12.0
-    container_name: phoenix_observability
-    restart: always
-    ports:
-      - "6006:6006"
-      - "4317:4317"
-    environment:
-      - PHOENIX_HOST=${PHOENIX_HOST}
-      - PHOENIX_PORT=${PHOENIX_PORT}
-      - PHOENIX_GRPC_PORT=${PHOENIX_GRPC_PORT}
-      - PHOENIX_WORKING_DIR=${PHOENIX_WORKING_DIR}
-      - PHOENIX_ALLOW_EXTERNAL_RESOURCES=${PHOENIX_ALLOW_EXTERNAL_RESOURCES}
-    volumes:
-      - ./phoenix_data:/mnt/data
-
   math_tool:
     build:
       context: ./calc
@@ -24,3 +8,17 @@ services:
     restart: always
     ports:
       - "8001:8001"
+
+  agent_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_bot:0.1.0
+    container_name: agent_bot
+    restart: always
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./app/.env
+    depends_on:
+      - math_tool
