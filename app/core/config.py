@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
 
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
     OPENAI_COMPATIBLE_MODEL: str | None = None

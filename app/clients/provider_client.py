@@ -94,6 +94,30 @@ def _get_openai_compatible_llm(params: LLMParams) -> BaseChatModel:
     return ChatOpenAI(**kwargs)
 
 
+def _get_gemini_llm(params: LLMParams) -> BaseChatModel:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY não configurada no .env.")
+
+    kwargs: dict[str, Any] = {
+        "model": settings.GEMINI_MODEL,
+        "google_api_key": settings.GEMINI_API_KEY,
+        "temperature": params.temperature,
+    }
+
+    if params.num_predict is not None:
+        kwargs["max_tokens"] = params.num_predict
+
+    if params.top_p is not None:
+        kwargs["top_p"] = params.top_p
+
+    if params.top_k is not None:
+        kwargs["top_k"] = params.top_k
+
+    return ChatGoogleGenerativeAI(**kwargs)
+
+
 def get_llm(params: LLMParams | None = None) -> BaseChatModel:
     params = params or LLMParams()
     provider = settings.LLM_PROVIDER.lower().strip()
@@ -107,9 +131,12 @@ def get_llm(params: LLMParams | None = None) -> BaseChatModel:
     if provider in {"openai_compatible", "openai-compatible", "openai"}:
         return _get_openai_compatible_llm(params)
 
+    if provider == "gemini":
+        return _get_gemini_llm(params)
+
     raise ValueError(
         f"LLM_PROVIDER inválido: {settings.LLM_PROVIDER}. "
-        "Use ollama, groq ou openai_compatible."
+        "Use ollama, groq, openai_compatible ou gemini."
     )
 
 
