@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "gemma4:e4b"
 
     GROQ_API_KEY: str | None = None
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str = "gemini-2.5-flash"
@@ -47,6 +47,10 @@ class Settings(BaseSettings):
 
     MATH_TOOL_BASE_URL: str = "http://localhost:8001"
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
+
+    QDRANT_URL: str = "http://10.247.179.197:6333"
+    QDRANT_COLLECTION: str = "pi_web_api_guide"
+    OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"
 
     REDIS_URL: str = "redis://127.0.0.1:6379/2"
     CHAT_MEMORY_TTL_SECONDS: int = 604800
