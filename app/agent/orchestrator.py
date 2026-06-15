@@ -7,6 +7,7 @@ from app.agent.general_agent import run_general_agent
 # from app.agent.calculator_agent import run_calculator_agent
 from app.agent.pi_agent import run_pi_agent
 from app.clients.provider_client import get_llm
+from app.clients.qdrant_client import build_rag_context
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.llm import LLMParams, AGENT_DEFAULT
 from app.services.chat_memory_service import (
@@ -237,9 +238,16 @@ async def _run_pims_route(
     user_message: str,
     state: dict,
 ) -> dict:
+    rag_context = build_rag_context(query=user_message, top_k=3)
+
+    enriched_message = user_message
+
+    if rag_context:
+        enriched_message = f"{rag_context}\n\n---\n\nPERGUNTA DO USUÁRIO:\n{user_message}"
+
     result = await run_pi_agent(
         llm=llm_agent,
-        user_message=user_message,
+        user_message=enriched_message,
     )
 
     agent_trace = build_safe_agent_trace(result)

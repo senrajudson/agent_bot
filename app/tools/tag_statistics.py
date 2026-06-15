@@ -23,94 +23,72 @@ class TagStatisticsInput(BaseModel):
 
     operation: StatsOperation = Field(
         description=(
-            "Operação estatística final executada pela calculadora sobre os valores retornados. "
-            "Não confunda operation com summary_type. "
-            "operation é o cálculo final feito pela aplicação. "
+            "Operação estatística final executada sobre os valores retornados pela consulta temporal. "
+            "operation é o cálculo final feito pela aplicação após obter os dados. "
             "summary_type é o cálculo feito pela PI Web API dentro de cada janela temporal. "
-            "Use mean para média final, max para máximo, min para mínimo, sum para soma final, "
-            "count para contagem, median para mediana, range para amplitude, "
-            "variance_population ou variance_sample para variância, "
-            "stddev_population ou stddev_sample para desvio padrão. "
-            "Para consumo total, volume acumulado ou acumulado de vazão calculado por médias horárias, "
-            "use operation='sum'."
+            "Exemplos: mean para média final, max para máximo, min para mínimo, "
+            "sum para soma total dos valores retornados, count para contagem. "
+            "Para consumo total de vazão (Nm3/h), use operation='sum' com data_method='summary' "
+            "e summary_type='Average'."
         )
     )
 
     start_time: str = Field(
-        description=(
-            "Início do período em formato aceito pela PI Web API. "
-            "Exemplos relativos: '*-2h', '*-30m', '*-1d'. "
-            "Exemplos absolutos: '2026-05-01T00:00:00', '2026-05-23T08:00:00Z'. "
-            "Para períodos mensais resolvidos, use sempre data e hora completas."
-        )
+        description="Início do período. Para períodos fechados, use data e hora completas."
     )
 
     end_time: str = Field(
         default="*",
-        description=(
-            "Fim do período em formato aceito pela PI Web API. "
-            "Use '*' para agora. "
-            "Para períodos fechados, use data e hora completas. "
-            "Para mês completo, prefira o primeiro instante do próximo período. "
-            "Exemplo para maio de 2026: start_time='2026-05-01T00:00:00' "
-            "e end_time='2026-06-01T00:00:00'."
-        ),
+        description="Fim do período. Use '*' para agora.",
     )
 
     data_method: TemporalDataMethod = Field(
         description=(
             "Método de consulta temporal da PI Web API. "
-            "Use recorded somente para histórico bruto, valores reais gravados, eventos, "
-            "mudanças de estado e tags digitais históricas. "
-            "Não use recorded para consumo, volume acumulado, soma mensal, média mensal "
-            "ou estatísticas agregadas de períodos longos. "
-            "Use interpolated quando houver intervalo de amostragem explícito, como 1m, 5m, 10m ou 1h. "
-            "Use summary para agregações por período ou janela, como média, máximo, mínimo, soma, "
-            "contagem, consumo total, volume acumulado ou resumo de períodos longos."
+            "Use 'summary' para agregações por período: média, máximo, mínimo, soma, "
+            "contagem, consumo total, volume acumulado, resumo de períodos longos. "
+            "Use 'recorded' para histórico bruto, eventos reais gravados, mudanças de estado. "
+            "Use 'interpolado' quando houver intervalo de amostragem explícito (ex: 1m, 5m, 1h)."
         ),
     )
 
     interval: str | None = Field(
         default=None,
         description=(
-            "Intervalo usado somente quando data_method='interpolated'. "
-            "Exemplos: '1m', '5m', '10m', '1h'. "
-            "interval é frequência de amostragem, não é janela de summary. "
-            "Quando data_method='recorded' ou data_method='summary', envie null."
+            "Intervalo de amostragem, usado somente quando data_method='interpolated'. "
+            "Não é janela de summary. Quando data_method='recorded' ou 'summary', envie null."
         ),
     )
 
     summary_type: SummaryType | None = Field(
         default=None,
         description=(
-            "Tipo de agregação da PI Web API usado somente quando data_method='summary'. "
-            "Valores possíveis: Average, Maximum, Minimum, Total, Count, Range, StdDev. "
+            "Tipo de agregação da PI Web API, usado somente quando data_method='summary'. "
             "summary_type calcula cada janela temporal antes da operation final. "
-            "Não confunda summary_type com operation. "
-            "Para consumo total de vazão, volume acumulado ou acumulado de vazão, use Average. "
-            "Quando data_method='recorded' ou data_method='interpolated', envie null."
+            "Para consumo total de vazão em Nm3/h, use summary_type='Average'. "
+            "Quando data_method='recorded' ou 'interpolated', envie null."
         ),
     )
 
     summary_duration: str | None = Field(
         default=None,
         description=(
-            "Janela de agregação usada somente quando data_method='summary'. "
-            "Exemplos: '1h', '30m', '1d'. "
+            "Janela de agregação, usada somente quando data_method='summary'. "
+            "Exemplo: '1h' para médias horárias, '30m' para médias de 30 minutos. "
             "Para consumo total de vazão por média horária, use '1h'. "
             "Não confunda summary_duration com interval. "
-            "Quando data_method='recorded' ou data_method='interpolated', envie null."
+            "Quando data_method='recorded' ou 'interpolated', envie null."
         ),
     )
 
     calculation_basis: CalculationBasis | None = Field(
         default=None,
         description=(
-            "Base de cálculo usada somente quando data_method='summary'. "
-            "Use TimeWeighted para variáveis contínuas de processo, como vazão, pressão, temperatura e nível. "
+            "Base de cálculo, usada somente quando data_method='summary'. "
+            "Use TimeWeighted para variáveis contínuas de processo (vazão, temperatura, pressão, nível). "
             "Use EventWeighted quando cada evento gravado deve ter o mesmo peso. "
-            "Nunca use Volume como calculation_basis. "
-            "Quando data_method='recorded' ou data_method='interpolated', envie null."
+            "Para consumo de vazão em Nm3/h, use TimeWeighted. "
+            "Quando data_method='recorded' ou 'interpolated', envie null."
         ),
     )
 
@@ -121,7 +99,7 @@ class TagStatisticsInput(BaseModel):
 
     max_count: int = Field(
         default=200000,
-        description="Quantidade máxima de valores quando data_method='recorded'.",
+        description="Quantidade máxima de valores, usado somente quando data_method='recorded'.",
     )
 
 
@@ -142,63 +120,28 @@ async def tag_statistics_tool(
     """
     Executa estatísticas históricas de tags do PI System.
 
-    Use esta tool quando o usuário pedir cálculo histórico de tags, como:
-    média, máximo, mínimo, soma, contagem, mediana, amplitude, variância,
-    desvio padrão, consumo total, volume acumulado ou acumulado de vazão.
+    Use esta tool quando o usuário pedir agregações históricas, consolidações
+    de valores em um período ou consumo calculado por resumo.
 
-    Contrato padronizado:
+    Exemplos de intenção que usam esta tool:
+    - média, máximo, mínimo de uma tag
+    - soma de valores
+    - consumo de vazão, consumo de gás
+    - consumo diário, consumo mensal
+    - total no período, totalização
+    - estatística histórica
+    - volume acumulado
+
+    Para consumo de vazão em tags com unidade Nm3/h:
+    - Use data_method='summary', summary_type='Average', summary_duration='1h'
+    - Use calculation_basis='TimeWeighted' e operation='sum'
+    - Cada média horária em Nm3/h equivale a 1 Nm3 naquele bloco de 1 hora
+    - A soma final representa o consumo estimado em Nm3
+
+    Contrato:
     - Sempre envie todos os campos do schema.
-    - Quando um campo não se aplicar ao data_method escolhido, envie null.
+    - Quando um campo não se aplicar ao data_method, envie null.
     - Não envie campos fora do schema.
-    - recorded: usa valores reais gravados. Envie interval, summary_type,
-      summary_duration e calculation_basis como null.
-    - interpolated: exige interval. Envie summary_type, summary_duration
-      e calculation_basis como null.
-    - summary: exige summary_type, summary_duration e calculation_basis.
-      Envie interval como null.
-
-    Exemplo - consumo total de vazão em período mensal:
-    Usuário: "Qual foi o consumo total da tag ACI_LC1_MC_MACARICOS_GC_VAZ_O2 em abril?"
-    Use:
-    tag_statistics_tool({
-        "tags": ["ACI_LC1_MC_MACARICOS_GC_VAZ_O2"],
-        "operation": "sum",
-        "start_time": "2026-04-01T00:00:00",
-        "end_time": "2026-05-01T00:00:00",
-        "data_method": "summary",
-        "interval": null,
-        "summary_type": "Average",
-        "summary_duration": "1h",
-        "calculation_basis": "TimeWeighted",
-        "context_text": "Qual foi o consumo total da tag ACI_LC1_MC_MACARICOS_GC_VAZ_O2 em abril?",
-        "max_count": 200000
-    })
-
-    Exemplo - máximo histórico em período:
-    Usuário: "Qual foi o maior valor da tag TEMP_FORNO_01 ontem?"
-    Use:
-    tag_statistics_tool({
-        "tags": ["TEMP_FORNO_01"],
-        "operation": "max",
-        "start_time": "t-1d",
-        "end_time": "t",
-        "data_method": "summary",
-        "interval": null,
-        "summary_type": "Maximum",
-        "summary_duration": "1h",
-        "calculation_basis": "TimeWeighted",
-        "context_text": "Qual foi o maior valor da tag TEMP_FORNO_01 ontem?",
-        "max_count": 200000
-    })
-
-    Regras reforçadas pelos exemplos:
-    - Sempre envie todos os campos do schema.
-    - Use null nos campos que não se aplicam ao data_method escolhido.
-    - Consumo total, volume acumulado e acumulado de vazão usam summary, nunca recorded.
-    - Para consumo total de vazão, use operation="sum", summary_type="Average", summary_duration="1h" e calculation_basis="TimeWeighted".
-    - recorded é somente para valores reais gravados, eventos, mudanças de estado e histórico bruto.
-    - interpolated é usado quando o usuário pedir explicitamente uma amostragem fixa, como 1m, 5m, 10m ou 1h.
-    - summary sempre exige summary_type, summary_duration, calculation_basis e interval=null.
     """
 
     result = await executar_estatistica_tags_service(

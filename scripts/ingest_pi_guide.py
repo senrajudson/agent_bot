@@ -1,8 +1,9 @@
 """
-Semantic chunking ingestion script for PI_WEB_API_AGENT_GUIDE.md into Qdrant.
+CHUNK-based ingestion script for PI_WEB_API_AGENT_GUIDE.md into Qdrant.
 
+Splits the document by CHUNK headers (# CHUNK 01, # CHUNK 02, etc.).
+Chunk 20 is excluded (it's a fixed context chunk always injected at runtime).
 Uses Ollama nomic-embed-text-v2-moe for embeddings.
-Respects markdown structure: headers, code blocks, and tables stay intact.
 """
 
 import re
@@ -26,186 +27,58 @@ COLLECTION = settings.QDRANT_COLLECTION
 MARKDOWN_PATH = Path(__file__).parent.parent / "PI_WEB_API_AGENT_GUIDE.md"
 
 VECTOR_SIZE = 768  # nomic-embed-text-v2-moe produces 768-dim vectors
-MAX_CHUNK_CHARS = 1200  # target max chars per chunk
+SKIP_CHUNK = 20  # Chunk 20 is always injected at runtime, not stored in Qdrant
+
+# Pattern: # CHUNK 01 - Title, # CHUNK 02 - Title, etc.
+CHUNK_HEADER_RE = re.compile(r"^#\s+CHUNK\s+(\d+)\s*-\s*(.+)$", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
-# 1. Parse markdown into semantic units
+# 1. Parse document into CHUNK-based sections
 # ---------------------------------------------------------------------------
-def _is_code_fence(line: str) -> bool:
-    return line.strip().startswith("```")
-
-
-def parse_markdown_sections(text: str) -> list[dict]:
+def parse_chunks(text: str) -> list[dict]:
     """
-    Split markdown into semantic units based on header hierarchy.
+    Split the document by CHUNK headers.
 
-    Returns list of dicts with keys: header, level, content.
-    The top-level intro (before first ##) gets level=0.
+    Returns list of dicts with keys: chunk_number, title, content.
+    The intro (before first CHUNK) is returned as chunk_number=0.
     """
-    lines = text.split("\n")
-    sections: list[dict] = []
-    current_header = "Introduction"
-    current_level = 0
-    current_lines: list[str] = []
-    in_code_block = False
+    # Find all chunk header positions
+    matches = list(CHUNK_HEADER_RE.finditer(text))
 
-    for line in lines:
-        stripped = line.strip()
+    if not matches:
+        raise ValueError("No CHUNK headers found in the document.")
 
-        # Track code fence state — never split inside a code block
-        if _is_code_fence(stripped):
-            in_code_block = not in_code_block
-            current_lines.append(line)
-            continue
-
-        if in_code_block:
-            current_lines.append(line)
-            continue
-
-        # Check for header
-        header_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
-        if header_match:
-            # Save previous section
-            if current_lines:
-                sections.append({
-                    "header": current_header,
-                    "level": current_level,
-                    "content": "\n".join(current_lines).strip(),
-                })
-            current_level = len(header_match.group(1))
-            current_header = header_match.group(2).strip()
-            current_lines = [line]
-        else:
-            current_lines.append(line)
-
-    # Flush last section
-    if current_lines:
-        sections.append({
-            "header": current_header,
-            "level": current_level,
-            "content": "\n".join(current_lines).strip(),
-        })
-
-    return sections
-
-
-# ---------------------------------------------------------------------------
-# 2. Merge small sections & split large ones (semantic chunking)
-# ---------------------------------------------------------------------------
-def _count_chars(sections: list[dict]) -> int:
-    return sum(len(s["content"]) for s in sections)
-
-
-def semantic_chunk(sections: list[dict], max_chars: int = MAX_CHUNK_CHARS) -> list[dict]:
-    """
-    Group small consecutive sections together and split large sections
-    at ### boundaries. Always keeps code blocks and tables intact.
-    """
     chunks: list[dict] = []
-    buffer: list[dict] = []
-    buffer_chars = 0
 
-    def flush_buffer():
-        nonlocal buffer, buffer_chars
-        if not buffer:
-            return
-        merged_content = "\n\n".join(s["content"] for s in buffer)
-        merged_headers = [s["header"] for s in buffer if s["header"] != "Introduction"]
+    # Intro: everything before the first CHUNK header
+    intro_text = text[: matches[0].start()].strip()
+    if intro_text:
         chunks.append({
-            "section": merged_headers[0] if merged_headers else "Introduction",
-            "subsection": merged_headers[-1] if len(merged_headers) > 1 else None,
-            "content": merged_content,
+            "chunk_number": 0,
+            "title": "Intro",
+            "content": intro_text,
         })
-        buffer = []
-        buffer_chars = 0
 
-    for sec in sections:
-        sec_len = len(sec["content"])
+    # Each CHUNK section
+    for i, match in enumerate(matches):
+        chunk_num = int(match.group(1))
+        title = match.group(2).strip()
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = text[start:end].strip()
 
-        # If this single section is too large, split at ### boundaries
-        if sec_len > max_chars and sec["level"] >= 2:
-            flush_buffer()
-            sub_chunks = _split_large_section(sec, max_chars)
-            chunks.extend(sub_chunks)
-            continue
-
-        # If adding this section would exceed the limit, flush first
-        if buffer_chars + sec_len > max_chars and buffer:
-            flush_buffer()
-
-        buffer.append(sec)
-        buffer_chars += sec_len
-
-    flush_buffer()
-    return chunks
-
-
-def _split_large_section(section: dict, max_chars: int) -> list[dict]:
-    """Split a large section into sub-chunks at ### or code block boundaries."""
-    lines = section["content"].split("\n")
-    sub_chunks: list[dict] = []
-    current_lines: list[str] = []
-    current_chars = 0
-    in_code_block = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        if _is_code_fence(stripped):
-            in_code_block = not in_code_block
-            current_lines.append(line)
-            current_chars += len(line) + 1
-            continue
-
-        if in_code_block:
-            current_lines.append(line)
-            current_chars += len(line) + 1
-            continue
-
-        # Check for ### sub-header split point
-        sub_header = re.match(r"^###\s+(.+)$", stripped)
-        if sub_header and current_chars > 100:
-            content = "\n".join(current_lines).strip()
-            if content:
-                sub_chunks.append({
-                    "section": section["header"],
-                    "subsection": sub_chunks[-1]["subsection"] if sub_chunks else None,
-                    "content": content,
-                })
-            current_lines = [line]
-            current_chars = len(line) + 1
-            continue
-
-        current_lines.append(line)
-        current_chars += len(line) + 1
-
-        # If we've gone over limit, split at next paragraph break
-        if current_chars > max_chars and stripped == "":
-            content = "\n".join(current_lines).strip()
-            if content:
-                sub_chunks.append({
-                    "section": section["header"],
-                    "subsection": None,
-                    "content": content,
-                })
-            current_lines = []
-            current_chars = 0
-
-    # Flush remaining
-    content = "\n".join(current_lines).strip()
-    if content:
-        sub_chunks.append({
-            "section": section["header"],
-            "subsection": None,
+        chunks.append({
+            "chunk_number": chunk_num,
+            "title": f"CHUNK {chunk_num:02d} - {title}",
             "content": content,
         })
 
-    return sub_chunks
+    return chunks
 
 
 # ---------------------------------------------------------------------------
-# 3. Generate embeddings via Ollama REST API (no langchain needed)
+# 2. Embed texts via Ollama REST API
 # ---------------------------------------------------------------------------
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """Batch embed texts using Ollama /api/embed endpoint."""
@@ -231,16 +104,16 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 # ---------------------------------------------------------------------------
-# 4. Upsert into Qdrant
+# 3. Upsert into Qdrant
 # ---------------------------------------------------------------------------
 def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
     """Create collection (if needed) and upsert all chunks."""
     client = QdrantClient(url=QDRANT_URL)
 
-    # Create collection if it doesn't exist
+    # Delete collection if it exists
     collections = [c.name for c in client.get_collections().collections]
     if COLLECTION in collections:
-        print(f"  Collection '{COLLECTION}' already exists — deleting and recreating")
+        print(f"  Deleting existing collection '{COLLECTION}'")
         client.delete_collection(COLLECTION)
 
     client.create_collection(
@@ -249,20 +122,19 @@ def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
     )
     print(f"  Created collection '{COLLECTION}' (vector_size={VECTOR_SIZE}, distance=cosine)")
 
-    # Build points
+    # Build points — use chunk_number as the Qdrant point ID
     points = []
-    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+    for chunk, embedding in zip(chunks, embeddings):
         payload = {
             "content": chunk["content"],
-            "section": chunk["section"],
+            "title": chunk["title"],
+            "chunk_number": chunk["chunk_number"],
             "source": "PI_WEB_API_AGENT_GUIDE.md",
         }
-        if chunk.get("subsection"):
-            payload["subsection"] = chunk["subsection"]
 
         points.append(
             PointStruct(
-                id=i + 1,
+                id=chunk["chunk_number"],
                 vector=embedding,
                 payload=payload,
             )
@@ -288,38 +160,39 @@ def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
 # ---------------------------------------------------------------------------
 def main():
     print("=" * 60)
-    print("PI Web API Guide — Semantic Ingestion into Qdrant")
+    print("PI Web API Guide — CHUNK-based Ingestion into Qdrant")
     print("=" * 60)
 
     # 1. Read markdown
-    print(f"\n[1/4] Reading {MARKDOWN_PATH.name} ...")
+    print(f"\n[1/3] Reading {MARKDOWN_PATH.name} ...")
     text = MARKDOWN_PATH.read_text(encoding="utf-8")
     print(f"  {len(text)} chars, {len(text.splitlines())} lines")
 
-    # 2. Parse into semantic sections
-    print("\n[2/4] Parsing semantic sections ...")
-    sections = parse_markdown_sections(text)
-    print(f"  Found {len(sections)} raw sections:")
-    for s in sections:
-        print(f"    {'#' * s['level']} {s['header'][:60]:<60} ({len(s['content'])} chars)")
+    # 2. Parse into CHUNKs
+    print("\n[2/3] Parsing CHUNKs ...")
+    all_chunks = parse_chunks(text)
+    print(f"  Found {len(all_chunks)} chunks (including intro):")
 
-    # 3. Semantic chunking
-    print(f"\n[3/4] Semantic chunking (max {MAX_CHUNK_CHARS} chars/chunk) ...")
-    chunks = semantic_chunk(sections)
-    print(f"  Produced {len(chunks)} semantic chunks:")
-    for i, c in enumerate(chunks):
-        sub = f" > {c['subsection']}" if c.get("subsection") else ""
-        print(f"    [{i+1:2d}] {c['section']}{sub}  ({len(c['content'])} chars)")
+    # Filter out the chunk to skip
+    chunks_to_ingest = []
+    for c in all_chunks:
+        chunk_num = c["chunk_number"]
+        marker = " [SKIP]" if chunk_num == SKIP_CHUNK else ""
+        print(f"    [{chunk_num:2d}] {c['title'][:60]:<60} ({len(c['content'])} chars){marker}")
+        if chunk_num != SKIP_CHUNK:
+            chunks_to_ingest.append(c)
 
-    # 4. Embed
-    print(f"\n[4/4] Embedding with {EMBEDDING_MODEL} ...")
-    texts = [c["content"] for c in chunks]
+    print(f"\n  Ingesting {len(chunks_to_ingest)} chunks (skipping CHUNK {SKIP_CHUNK:02d})")
+
+    # 3. Embed
+    print(f"\n[3/3] Embedding with {EMBEDDING_MODEL} ...")
+    texts = [c["content"] for c in chunks_to_ingest]
     embeddings = embed_texts(texts)
     print(f"  Generated {len(embeddings)} embeddings (dim={len(embeddings[0])})")
 
-    # 5. Upsert
+    # 4. Upsert
     print("\nUpserting into Qdrant ...")
-    upsert_chunks(chunks, embeddings)
+    upsert_chunks(chunks_to_ingest, embeddings)
 
     print("\n" + "=" * 60)
     print("Done!")
