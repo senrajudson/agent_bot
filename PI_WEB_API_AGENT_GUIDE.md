@@ -1,55 +1,55 @@
-# PI Web API Agent Guide
+# Guia de Referência PI Web API
 
-Purpose-built reference for agents querying data from the PI System via PI Web API. This guide focuses on **reading data and information** — no maintenance, no administration, no writes.
+Referência construída para agentes que consultam dados do PI System via PI Web API. Este guia foca em **leitura de dados e informações** — sem manutenção, sem administração, sem gravações.
 
-**Base URL**: `http://10.247.224.39/piwebapi`
-
----
-
-## Table of Contents
-
-1. [Quick Start](#quick-start)
-2. [Finding Points and Elements](#finding-points-and-elements)
-3. [Reading Time Series Data](#reading-time-series-data)
-4. [Bulk Data Retrieval](#bulk-data-retrieval)
-5. [Querying Event Frames](#querying-event-frames)
-6. [AF Hierarchy Navigation](#af-hierarchy-navigation)
-7. [Search Operations](#search-operations)
-8. [System Information](#system-information)
-9. [Error Handling](#error-handling)
-10. [Common Patterns](#common-patterns)
+**URL Base**: `http://10.247.224.39/piwebapi`
 
 ---
 
-## Quick Start
+## Índice
 
-### Get current value of a PI Point by path
+1. [Início Rápido](#início-rápido)
+2. [Encontrando Points e Elements](#encontrando-points-e-elements)
+3. [Lendo Dados de Séries Temporais](#lendo-dados-de-séries-temporais)
+4. [Recuperação de Dados em Lote](#recuperação-de-dados-em-lote)
+5. [Consultando Event Frames](#consultando-event-frames)
+6. [Navegação na Hierarquia AF](#navegação-na-hierarquia-af)
+7. [Operações de Busca](#operações-de-busca)
+8. [Informações do Sistema](#informações-do-sistema)
+9. [Tratamento de Erros](#tratamento-de-erros)
+10. [Padrões Comuns](#padrões-comuns)
+
+---
+
+## Início Rápido
+
+### Obter valor atual de um PI Point por caminho
 ```bash
 curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid" | jq '.WebId'
 ```
 
-### Get the value using the WebId from Links
+### Obter o valor usando o WebId a partir dos Links
 ```bash
-# Use the Value link from the response:
+# Use o link Value da resposta:
 curl -s "http://10.247.224.39/piwebapi/streams/F1DPxhF1MCtATE6DjgaMSVY2ggh0AAAAAU1NU1xMRklfUkIzX1pBW19IV19UT1RBTA/value"
 ```
 
-### Get historical data
+### Obter dados históricos
 ```bash
 curl -s "http://10.247.224.39/piwebapi/streams/{webId}/recorded?startTime=-1d&endTime=*"
 ```
 
 ---
 
-## Finding Points and Elements
+## Encontrando Points e Elements
 
-### PI Point by Path
+### PI Point por Caminho
 ```
 GET http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid
 ```
-Returns: WebId, Name, PointClass, PointType, EngineeringUnits, Span, Zero, Step, and links to data.
+Retorna: WebId, Name, PointClass, PointType, EngineeringUnits, Span, Zero, Step e links para os dados.
 
-Example response from `http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL`:
+Exemplo de resposta de `http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL`:
 ```json
 {
   "WebId": "F1DPxhF1MCtATE6DjgaMSVY2ggh0AAAAAU1NU1xMRklfUkIzX1pBW19IV19UT1RBTA",
@@ -64,75 +64,75 @@ Example response from `http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_
 }
 ```
 
-### AF Element by Path
+### AF Element por Caminho
 ```
 GET http://10.247.224.39/piwebapi/elements?path=\\PIMS\MyDB\MyElement
 ```
 
-### AF Attribute by Path
+### AF Attribute por Caminho
 ```
 GET http://10.247.224.39/piwebapi/attributes?path=\\PIMS\MyDB\MyElement|Temperature
 ```
 
-### Get Element's Attributes
+### Obter Attributes de um Element
 ```
 GET http://10.247.224.39/piwebapi/elements/{webId}/attributes
 ```
 
-### Get Attribute Value (Non-Time-Series)
+### Obter Valor de um Attribute (Não-Série Temporal)
 ```
 GET http://10.247.224.39/piwebapi/attributes/{webId}/value
 ```
 
 ---
 
-## Reading Time Series Data
+## Lendo Dados de Séries Temporais
 
-All time series data goes through **Stream** endpoints. The WebId comes from a PI Point or an Attribute with a PI Point data reference.
+Todos os dados de séries temporais são acessados através dos endpoints **Stream**. O WebId é obtido a partir de um PI Point ou de um Attribute com referência de dados PI Point.
 
-### Current Value
+### Valor Atual
 ```
 GET http://10.247.224.39/piwebapi/streams/{webId}/value
 ```
-Returns the latest value with timestamp, quality, and units.
+Retorna o valor mais recente com timestamp, qualidade e unidades.
 
-### Recorded Values (Historical Raw Data)
+### Valores Gravados (Dados Históricos Brutos)
 ```
 GET http://10.247.224.39/piwebapi/streams/{webId}/recorded
   ?startTime=-1d
   &endTime=*
   &maxCount=1000
 ```
-| Parameter | Description |
-|-----------|-------------|
-| `startTime` | Start of time range (PI time string) |
-| `endTime` | End of time range (`*` = now) |
-| `maxCount` | Max values returned |
-| `boundaryType` | `Inside` (default) or `Outside` |
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `startTime` | Início do intervalo de tempo (string de tempo PI) |
+| `endTime` | Fim do intervalo de tempo (`*` = agora) |
+| `maxCount` | Máximo de valores retornados |
+| `boundaryType` | `Inside` (padrão) ou `Outside` |
 | `retrievalMode` | `Auto`, `AtOrBefore`, `Before`, `AtOrAfter`, `After`, `Exact` |
 
-### Interpolated Values (Gap-Filled)
+### Valores Interpolados (Preenchimento de Lacunas)
 ```
 GET http://10.247.224.39/piwebapi/streams/{webId}/interpolated
   ?startTime=-1d
   &endTime=*
   &interval=1h
 ```
-| Parameter | Description |
-|-----------|-------------|
-| `interval` | Spacing between values (`15m`, `1h`, `1d`) |
-| `syncTime` | Anchor time to prevent interval drift |
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `interval` | Intervalo entre os valores (`15m`, `1h`, `1d`) |
+| `syncTime` | Hora âncora para prevenir deriva do intervalo |
 
-### Plot Values (For Charts)
+### Valores para Gráfico (Plot)
 ```
 GET http://10.247.224.39/piwebapi/streams/{webId}/plot
   ?startTime=-8h
   &endTime=*
   &intervals=500
 ```
-Returns an optimized subset of values for display.
+Retorna um subconjunto otimizado de valores para exibição em gráficos.
 
-### Summary Values (Aggregations)
+### Valores Resumidos (Agregações)
 ```
 GET http://10.247.224.39/piwebapi/streams/{webId}/summary
   ?startTime=-1d
@@ -140,130 +140,130 @@ GET http://10.247.224.39/piwebapi/streams/{webId}/summary
   &summaryType=Average
   &summaryType=Maximum
 ```
-| `summaryType` | Description |
-|---------------|-------------|
-| `Total` | Totalization |
-| `Average` | Average value |
-| `Minimum` | Minimum value |
-| `Maximum` | Maximum value |
-| `Range` | Max - Min |
-| `StdDev` | Standard deviation |
-| `Count` | Number of events |
-| `PercentGood` | % of time with good data |
-| `All` | All summary types |
+| `summaryType` | Descrição |
+|---------------|-----------|
+| `Total` | Totalização |
+| `Average` | Média |
+| `Minimum` | Valor mínimo |
+| `Maximum` | Valor máximo |
+| `Range` | Amplitude (Max - Min) |
+| `StdDev` | Desvio padrão |
+| `Count` | Quantidade de eventos |
+| `PercentGood` | % do tempo com dados válidos |
+| `All` | Todos os tipos de resumo |
 
-Additional parameters:
-- `calculationBasis`: `TimeWeighted` (default) or `EventWeighted`
-- `duration`: For time-bucketed summaries (e.g., `1h` for hourly averages)
-- `timeType`: `Auto`, `EarliestTime`, or `MostRecentTime`
+Parâmetros adicionais:
+- `calculationBasis`: `TimeWeighted` (padrão) ou `EventWeighted`
+- `duration` (duração): Para resumos por intervalo de tempo (ex: `1h` para médias horárias)
+- `timeType`: `Auto`, `EarliestTime` ou `MostRecentTime`
 
 ---
 
-## Bulk Data Retrieval
+## Recuperação de Dados em Lote
 
-Stream Sets retrieve data for **multiple attributes** in one call.
+Stream Sets recuperam dados de **múltiplos attributes** em uma única chamada.
 
-### Hierarchical (Same Parent Element)
+### Hierárquico (Mesmo Element Pai)
 ```
 GET http://10.247.224.39/piwebapi/streamsets/{webId}/value
 GET http://10.247.224.39/piwebapi/streamsets/{webId}/recorded
 GET http://10.247.224.39/piwebapi/streamsets/{webId}/interpolated
 GET http://10.247.224.39/piwebapi/streamsets/{webId}/summaries
 ```
-| Parameter | Description |
-|-----------|-------------|
-| `fieldNameFilter` | Comma-separated attribute names (e.g., `Temperature,Pressure`) |
-| `categoryNameFilter` | Filter by attribute category |
+| Parâmetro | Descrição |
+|-----------|-----------|
+| `fieldNameFilter` | Nomes de attributes separados por vírgula (ex: `Temperature,Pressure`) |
+| `categoryNameFilter` | Filtrar por categoria do attribute |
 
-### Ad-Hoc (Arbitrary Points)
+### Ad-Hoc (Points Arbitrários)
 ```
 GET http://10.247.224.39/piwebapi/streamsets/value?webId={id1}&webId={id2}
 GET http://10.247.224.39/piwebapi/streamsets/recorded?webId={id1}&webId={id2}
 GET http://10.247.224.39/piwebapi/streamsets/interpolated?webId={id1}&webId={id2}
 ```
-**When**: Need data from unrelated points across different elements.
+**Quando usar**: Quando precisar de dados de points não relacionados em diferentes elements.
 
 ---
 
-## Querying Event Frames
+## Consultando Event Frames
 
-### Event Frames for an Element
+### Event Frames de um Element
 ```
 GET http://10.247.224.39/piwebapi/elements/{webId}/eventframes
 ```
 
-### Event Frames for a Database
+### Event Frames de um Database
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/eventframes
 ```
 
-### Search Event Frames
+### Buscar Event Frames
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/eventframes
   ?searchQuery=Name:=Shutdown* Template:ProcessTemplate
 ```
 
-| Search Filter | Example |
-|---------------|---------|
-| `Name:=Pattern*` | Name with wildcards |
-| `Template:TemplateName` | Filter by template |
-| `Category:CategoryName` | Filter by category |
-| `Element:ParentName` | Filter by parent element |
-| `Start:>-1w` | Started after 1 week ago |
-| `End:<*` | Ended before now |
-| `InProgress:true` | Currently active |
-| `Severity:Critical` | Filter by severity |
+| Filtro de Busca | Exemplo |
+|------------------|---------|
+| `Name:=Pattern*` | Nome com curingas (wildcards) |
+| `Template:TemplateName` | Filtrar por template |
+| `Category:CategoryName` | Filtrar por categoria |
+| `Element:ParentName` | Filtrar por element pai |
+| `Start:>-1w` | Iniciado há mais de 1 semana |
+| `End:<*` | Finalizado antes de agora |
+| `InProgress:true` | Atualmente ativo |
+| `Severity:Critical` | Filtrar por severidade |
 
-### Event Frame Search Modes
-| Mode | Description |
-|------|-------------|
-| `StartInclusive` | Start time within range |
-| `EndInclusive` | End time within range |
-| `Inclusive` | Both start and end within range |
-| `Overlapped` | Overlaps with range |
-| `InProgress` | Started in range, no end time |
+### Modos de Busca de Event Frames
+| Modo | Descrição |
+|------|-----------|
+| `StartInclusive` | Hora de início dentro do intervalo |
+| `EndInclusive` | Hora de fim dentro do intervalo |
+| `Inclusive` | Tanto início quanto fim dentro do intervalo |
+| `Overlapped` | Sobrepõe com o intervalo |
+| `InProgress` | Iniciado no intervalo, sem data de fim |
 
-### Get Event Frame Attributes
+### Obter Attributes de um Event Frame
 ```
 GET http://10.247.224.39/piwebapi/eventframes/{webId}/attributes
 ```
 
-### Get Event Frame Referenced Elements
+### Obter Elements Referenciados de um Event Frame
 ```
 GET http://10.247.224.39/piwebapi/eventframes/{webId}/referencedelements
 ```
 
 ---
 
-## AF Hierarchy Navigation
+## Navegação na Hierarquia AF
 
-### List Asset Servers
+### Listar Asset Servers
 ```
 GET http://10.247.224.39/piwebapi/assetservers
 ```
 
-### Get Databases for a Server
+### Obter Databases de um Server
 ```
 GET http://10.247.224.39/piwebapi/assetservers/{webId}/databases
 ```
 
-### Get Elements in a Database
+### Obter Elements de um Database
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/elements
 ```
 
-### Get Child Elements
+### Obter Child Elements
 ```
 GET http://10.247.224.39/piwebapi/elements/{webId}/elements
 ```
 
-### Get Element Templates
+### Obter Element Templates
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/elementtemplates
 ```
 
-### Navigation Pattern (HATEOAS)
-Every response includes a `Links` object. Follow links instead of constructing URLs:
+### Padrão de Navegação (HATEOAS)
+Toda resposta inclui um objeto `Links`. Siga os links em vez de construir URLs manualmente:
 ```json
 {
   "WebId": "AbTG2yC4KjNRxe...",
@@ -278,29 +278,29 @@ Every response includes a `Links` object. Follow links instead of constructing U
 
 ---
 
-## Search Operations
+## Operações de Busca
 
-### PI Point Search
+### Busca de PI Points
 ```
 GET http://10.247.224.39/piwebapi/points/{dataServerWebId}/search
   ?query=tag:sin* AND PointType:Float64
 ```
 
-| Query Syntax | Description |
-|--------------|-------------|
-| `tag:=sin*` | PI Point name with wildcard |
-| `PointType:Float64` | Data type filter |
-| `PointSource:L` | Point source filter |
-| `Value:>100` | Current value filter |
-| `AND`, `OR` | Logical operators |
+| Sintaxe de Consulta | Descrição |
+|----------------------|-----------|
+| `tag:=sin*` | Nome do PI Point com curinga |
+| `PointType:Float64` | Filtro por tipo de dado |
+| `PointSource:L` | Filtro por origem do point |
+| `Value:>100` | Filtro por valor atual |
+| `AND`, `OR` | Operadores lógicos |
 
-### AF Element Search
+### Busca de AF Elements
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/elements
   ?searchQuery=Name:=Pump* Template:Centrifugal
 ```
 
-### AF Attribute Search
+### Busca de AF Attributes
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/attributes
   ?searchQuery=Name:=Temperature*
@@ -308,49 +308,49 @@ GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/attributes
 
 ---
 
-## System Information
+## Informações do Sistema
 
-### API Root (Discover All Links)
+### Raiz da API (Descobre Todos os Links)
 ```
 GET http://10.247.224.39/piwebapi/
 ```
 
-### Server Status
+### Status do Servidor
 ```
 GET http://10.247.224.39/piwebapi/system/status
 ```
 
-### Current User Info
+### Informações do Usuário Atual
 ```
 GET http://10.247.224.39/piwebapi/system/userinfo
 ```
 
-### List Data Servers
+### Listar Data Servers
 ```
 GET http://10.247.224.39/piwebapi/dataservers
 ```
 
-### Get Data Server Points
+### Obter Points de um Data Server
 ```
 GET http://10.247.224.39/piwebapi/dataservers/{webId}/points
 ```
 
 ---
 
-## Error Handling
+## Tratamento de Erros
 
-### Status Codes
-| Code | Meaning | Action |
-|------|---------|--------|
-| 200 | Success | Process response |
-| 400 | Bad Request | Check parameters |
-| 401 | Unauthorized | Check credentials |
-| 403 | Forbidden | Check permissions |
-| 404 | Not Found | Verify path/WebId |
-| 500 | Server Error | Retry later |
+### Códigos de Status
+| Código | Significado | Ação |
+|--------|-------------|------|
+| 200 | Sucesso | Processar resposta |
+| 400 | Requisição Inválida | Verificar parâmetros |
+| 401 | Não Autorizado | Verificar credenciais |
+| 403 | Proibido | Verificar permissões |
+| 404 | Não Encontrado | Verificar caminho/WebId |
+| 500 | Erro do Servidor | Tentar novamente depois |
 
-### Stream Value Errors
-Individual values may contain errors while the overall request succeeds:
+### Erros em Valores de Stream
+Valores individuais podem conter erros enquanto a requisição como um todo é bem-sucedida:
 ```json
 {
   "Timestamp": "2024-01-01T00:00:00Z",
@@ -367,54 +367,54 @@ Individual values may contain errors while the overall request succeeds:
 
 ---
 
-## Common Patterns
+## Padrões Comuns
 
-### Get Current Value of a PI Point
+### Obter Valor Atual de um PI Point
 ```bash
-# Step 1: Get WebId from path
+# Passo 1: Obter WebId a partir do caminho
 WEBID=$(curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid" | jq -r '.WebId')
 
-# Step 2: Get current value
+# Passo 2: Obter valor atual
 curl -s "http://10.247.224.39/piwebapi/streams/$WEBID/value"
 ```
 
-### Get Historical Data for a PI Point
+### Obter Dados Históricos de um PI Point
 ```bash
 WEBID=$(curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid" | jq -r '.WebId')
 curl -s "http://10.247.224.39/piwebapi/streams/$WEBID/recorded?startTime=-7d&endTime=*&maxCount=500"
 ```
 
-### Get Hourly Averages for Last 24h
+### Obter Médias Horárias das Últimas 24h
 ```bash
 WEBID=$(curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid" | jq -r '.WebId')
 curl -s "http://10.247.224.39/piwebapi/streams/$WEBID/summary?startTime=-1d&endTime=*&summaryType=Average&duration=1h"
 ```
 
-### Get All Attributes of an Element
+### Obter Todos os Attributes de um Element
 ```bash
 ELEMENT_WEBID=$(curl -s "http://10.247.224.39/piwebapi/elements?path=\\PIMS\MyDB\Pump1" | jq -r '.WebId')
 curl -s "http://10.247.224.39/piwebapi/elements/$ELEMENT_WEBID/attributes"
 ```
 
-### Get Current Values for Multiple Points
+### Obter Valores Atuais de Múltiplos Points
 ```bash
-# Using ad-hoc stream set
+# Usando stream set ad-hoc
 WEBID1=$(curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\sinusoid" | jq -r '.WebId')
 WEBID2=$(curl -s "http://10.247.224.39/piwebapi/points?path=\\PIMS\cdt158" | jq -r '.WebId')
 curl -s "http://10.247.224.39/piwebapi/streamsets/value?webId=$WEBID1&webId=$WEBID2"
 ```
 
-### Find Active Event Frames
+### Encontrar Event Frames Ativos
 ```bash
 curl -s "http://10.247.224.39/piwebapi/assetdatabases/{dbWebId}/eventframes?searchQuery=InProgress:true"
 ```
 
-### Export Database Structure as XML
+### Exportar Estrutura do Database como XML
 ```
 GET http://10.247.224.39/piwebapi/assetdatabases/{webId}/export?mode=Default
 ```
 
-### Performance Equation Calculation
+### Cálculo de Performance Equation
 ```
 GET http://10.247.224.39/piwebapi/calculations
   ?expression='sinusoid'*2
@@ -425,73 +425,73 @@ GET http://10.247.224.39/piwebapi/calculations
 
 ---
 
-## Quick Reference: Endpoint Selection
+## Referência Rápida: Seleção de Endpoint
 
-| Need | Endpoint |
-|------|----------|
-| Current value | `GET /streams/{webId}/value` |
-| Historical raw data | `GET /streams/{webId}/recorded` |
-| Gap-filled data | `GET /streams/{webId}/interpolated` |
-| Aggregated stats | `GET /streams/{webId}/summary` |
-| Chart data | `GET /streams/{webId}/plot` |
-| Multiple streams | `/streamsets/...` endpoints |
-| Find PI Point | `GET /points?path=\\...` |
-| Find Element | `GET /elements?path=\\...` |
-| Find Attribute | `GET /attributes?path=\\...` |
-| List elements in DB | `GET /assetdatabases/{webId}/elements` |
-| Element attributes | `GET /elements/{webId}/attributes` |
+| Necessidade | Endpoint |
+|-------------|----------|
+| Valor atual | `GET /streams/{webId}/value` |
+| Dados históricos brutos | `GET /streams/{webId}/recorded` |
+| Dados com preenchimento de lacunas | `GET /streams/{webId}/interpolated` |
+| Estatísticas agregadas | `GET /streams/{webId}/summary` |
+| Dados para gráfico | `GET /streams/{webId}/plot` |
+| Múltiplos streams | Endpoints `/streamsets/...` |
+| Encontrar PI Point | `GET /points?path=\\...` |
+| Encontrar Element | `GET /elements?path=\\...` |
+| Encontrar Attribute | `GET /attributes?path=\\...` |
+| Listar elements no DB | `GET /assetdatabases/{webId}/elements` |
+| Attributes de um element | `GET /elements/{webId}/attributes` |
 | Event frames | `GET /elements/{webId}/eventframes` |
-| Search points | `GET /points/{webId}/search?query=...` |
-| Server info | `GET /system/status` |
+| Buscar points | `GET /points/{webId}/search?query=...` |
+| Info do servidor | `GET /system/status` |
 
 ---
 
-## Time Strings
+## Strings de Tempo
 
-| Format | Meaning |
-|--------|---------|
-| `*` | Now |
-| `*-1h` | 1 hour ago |
-| `*-1d` | 1 day ago |
-| `*-7d` | 7 days ago |
-| `T` | Today at midnight |
-| `Y` | Yesterday at midnight |
-| `Monday` | Most recent Monday at midnight |
-| `2024-01-01T00:00:00Z` | Absolute UTC time |
-| `2024-01-01T00:00:00-05:00` | With timezone offset |
+| Formato | Significado |
+|---------|-------------|
+| `*` | Agora |
+| `*-1h` | 1 hora atrás |
+| `*-1d` | 1 dia atrás |
+| `*-7d` | 7 dias atrás |
+| `T` | Hoje à meia-noite |
+| `Y` | Ontem à meia-noite |
+| `Monday` | Segunda-feira mais recente à meia-noite |
+| `2024-01-01T00:00:00Z` | Hora UTC absoluta |
+| `2024-01-01T00:00:00-05:00` | Com offset de fuso horário |
 
-**Standard Intervals**: `ms`, `s`, `m`, `h`, `d`, `mo`, `w`, `wd`, `yd`
+**Intervalos Padrão**: `ms`, `s`, `m`, `h`, `d`, `mo`, `w`, `wd`, `yd`
 
 ---
 
-## URL Encoding
+## Codificação de URL
 
-Special characters in PI paths must be percent-encoded:
+Caracteres especiais em caminhos PI devem ser codificados por cento (percent-encoded):
 
-| Character | Encoding |
-|-----------|----------|
+| Caracter | Codificação |
+|----------|-------------|
 | `\` | `%5C` |
 | `|` | `%7C` |
 | `#` | `%23` |
-| Space | `%20` |
+| Espaço | `%20` |
 | `:` | `%3A` |
 
 ---
 
-## WebID Types
+## Tipos de WebID
 
-WebIDs identify PI/AF objects. The first character indicates the type:
+WebIDs identificam objetos PI/AF. O primeiro caractere indica o tipo:
 
-| Type | First Char | Description |
-|------|-----------|-------------|
-| Full | `F` | Complete identifier (recommended) |
-| ID Only | `I` | GUID-based |
-| Path Only | `P` | Path-based |
-| Local ID | `L` | Local GUID |
-| Default | `D` | Default identifier |
+| Tipo | 1º Caractere | Descrição |
+|------|-------------|-----------|
+| Full | `F` | Identificador completo (recomendado) |
+| ID Only | `I` | Baseado em GUID |
+| Path Only | `P` | Baseado em caminho |
+| Local ID | `L` | GUID local |
+| Default | `D` | Identificador padrão |
 
 ---
 
-## Server
+## Servidor
 
 `http://10.247.224.39/piwebapi`

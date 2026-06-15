@@ -1,4 +1,4 @@
-$porta = 11434
+$porta = 8080
 $wslIp = "172.30.43.212"
 
 New-NetFirewallRule `
