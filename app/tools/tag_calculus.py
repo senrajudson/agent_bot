@@ -32,7 +32,11 @@ class TagCalculusInput(BaseModel):
     )
 
     start_time: str = Field(
-        description="Início do período. Para períodos fechados, use data e hora completas."
+        description=(
+            "Início do período em formato PI Web API. "
+            "Relativos: '*-2h' (2h atrás), '*-1d' (1 dia atrás). "
+            "Absolutos: '2026-05-01T00:00:00', '2026-06-15T08:00:00Z'."
+        )
     )
 
     end_time: str = Field(

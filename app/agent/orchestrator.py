@@ -189,7 +189,6 @@ def build_router_message(state: dict) -> str:
 def build_agent_user_message(state: dict) -> str:
     memory_context = (state.get("memory_context") or "").strip()
     message = build_router_message(state)
-    now = datetime.now(ZoneInfo(DEFAULT_TIMEZONE)).isoformat(timespec="seconds")
 
     parts = []
 
@@ -197,12 +196,6 @@ def build_agent_user_message(state: dict) -> str:
         parts.append(memory_context)
 
     parts.append(message)
-
-    parts.append(
-        "Referência temporal atual:\n"
-        f"Data/hora: {now}\n"
-        f"Timezone: {DEFAULT_TIMEZONE}"
-    )
 
     return "\n\n".join(parts).strip()
 
@@ -238,7 +231,23 @@ async def _run_pims_route(
     user_message: str,
     state: dict,
 ) -> dict:
-    rag_context = build_rag_context(query=user_message, top_k=3)
+    rag_query_parts = []
+
+    original_msg = (state.get("message_original") or "").strip()
+    if original_msg:
+        rag_query_parts.append(original_msg)
+
+    ocr_text = (state.get("ocr_text") or "").strip()
+    if ocr_text:
+        rag_query_parts.append(ocr_text)
+
+    tags = state.get("tags_encontradas") or []
+    if tags:
+        rag_query_parts.append("Tags: " + ", ".join(tags))
+
+    rag_query = "\n".join(rag_query_parts) if rag_query_parts else user_message
+
+    rag_context = build_rag_context(query=rag_query, top_k=3)
 
     enriched_message = user_message
 

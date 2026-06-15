@@ -1,10 +1,8 @@
 # PI Web API - Guia Operacional para Agente RAG
 
-Documento feito para agentes de IA que consultam tags no PI System via PI Web API.
+Documento para orientar agentes de IA que consultam tags no PI System via PI Web API.
 
-Objetivo: ensinar o agente a consultar valores atuais, históricos, metadados, unidades de engenharia, descriptor, tipo da tag, instrumenttag, location, digital set e digital states.
-
-Este documento deve ser dividido em chunks pequenos por intenção de consulta. Cada seção abaixo foi escrita para funcionar como um documento recuperável independente em um RAG com top-k baixo.
+Foco: valor atual, histórico, metadados, unidades, descriptor, tipo da tag, atributos do PI Point, digital set, digital states, agregações e cálculos temporais.
 
 Base da API:
 
@@ -12,34 +10,22 @@ Base da API:
 http://10.247.224.39/piwebapi
 ```
 
-Servidor PI Data Archive padrão:
+Servidor padrão:
 
 ```text
 PIMS
 ```
 
-Formato padrão de path de uma tag:
+Path padrão de uma tag:
 
 ```text
 \\PIMS\NOME_DA_TAG
 ```
 
-Exemplo real:
-
-```text
-\\PIMS\LFI_RB3_VAZ_GN_TOTAL
-```
-
-Endpoint para encontrar uma tag pelo nome exato:
-
-```text
-GET /points?path=\\PIMS\NOME_DA_TAG
-```
-
 Exemplo:
 
 ```text
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
+GET /points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
 ```
 
 ---
@@ -48,100 +34,40 @@ GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar sobre:
+Use quando a consulta envolver valor atual, histórico, interpolado, summary, plot ou qualquer série temporal.
 
-* valor atual de uma tag
-* último valor
-* snapshot
-* valor agora
-* histórico de uma tag
-* média, máximo, mínimo ou soma
-* dados interpolados
-* dados gravados
-* qualquer consulta de série temporal
+## Fluxo essencial
 
-## Regra principal
-
-A PI Web API não consulta o stream diretamente pelo nome da tag. Primeiro é necessário buscar o `WebId` da tag.
-
-Fluxo padrão:
+A PI Web API usa `WebId` para consultar streams. O nome da tag serve para localizar o PI Point.
 
 ```text
-1. Receber o nome da tag do usuário.
-2. Montar o path: \\PIMS\NOME_DA_TAG
-3. Consultar: GET /points?path=\\PIMS\NOME_DA_TAG
-4. Extrair o campo WebId.
-5. Usar o WebId nos endpoints /streams/{webId}/...
+1. Montar path: \\PIMS\NOME_DA_TAG
+2. Buscar PI Point: GET /points?path=\\PIMS\NOME_DA_TAG
+3. Extrair WebId e metadados úteis.
+4. Consultar o endpoint de stream usando /streams/{webId}/...
 ```
 
-## Request para obter WebId
+## Endpoint
 
 ```http
 GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
 ```
 
-## Resposta esperada
-
-```json
-{
-  "WebId": "F1DPxhF1MCtATE6DjgaMSVY2gghOAAAAUE1NU1xMRklfUkIzX1ZBWl9HTl9UT1RBTA",
-  "Id": 57476,
-  "Name": "LFI_RB3_VAZ_GN_TOTAL",
-  "Path": "\\\\pims\\LFI_RB3_VAZ_GN_TOTAL",
-  "Descriptor": "VAZÃO DE GN TOTAL DO RB3",
-  "PointClass": "classic",
-  "PointType": "Float32",
-  "DigitalSetName": "",
-  "EngineeringUnits": "Nm3/h",
-  "Span": 12000.0,
-  "Zero": 0.0,
-  "Step": false,
-  "Future": false,
-  "DisplayDigits": 2,
-  "Links": {
-    "Self": "http://10.247.224.39/piwebapi/points/{webId}",
-    "DataServer": "http://10.247.224.39/piwebapi/dataservers/{dataServerWebId}",
-    "Attributes": "http://10.247.224.39/piwebapi/points/{webId}/attributes",
-    "InterpolatedData": "http://10.247.224.39/piwebapi/streams/{webId}/interpolated",
-    "RecordedData": "http://10.247.224.39/piwebapi/streams/{webId}/recorded",
-    "PlotData": "http://10.247.224.39/piwebapi/streams/{webId}/plot",
-    "SummaryData": "http://10.247.224.39/piwebapi/streams/{webId}/summary",
-    "Value": "http://10.247.224.39/piwebapi/streams/{webId}/value",
-    "EndValue": "http://10.247.224.39/piwebapi/streams/{webId}/end"
-  }
-}
-```
-
-## Campos mais importantes
+## Campos mais úteis
 
 ```text
-WebId            Identificador necessário para consultar /streams
-Name             Nome da tag
-Path             Caminho completo no PI
-Descriptor       Descrição da tag
-PointType        Tipo de dado da tag
-DigitalSetName   Nome do digital set, quando for tag digital
-EngineeringUnits Unidade de engenharia
-Span             Faixa máxima configurada
-Zero             Zero configurado
-Step             true para comportamento discreto/degrau
-Links.Value      Link direto para valor atual
-Links.Attributes Link direto para atributos do PI Point
+WebId             Identificador para /streams
+Name              Nome da tag
+Descriptor        Descrição
+PointType         Tipo do point
+EngineeringUnits  Unidade de engenharia
+DigitalSetName    Digital set, quando aplicável
+Links             URLs relacionadas, como Value, RecordedData e SummaryData
 ```
 
-## Regra para o agente
+## Diretriz
 
-Depois de obter o `WebId`, prefira usar os links retornados em `Links` quando estiverem disponíveis.
-
-Exemplo:
-
-```text
-Links.Value -> consultar valor atual
-Links.RecordedData -> consultar histórico bruto
-Links.InterpolatedData -> consultar interpolados
-Links.SummaryData -> consultar resumos estatísticos
-Links.Attributes -> consultar atributos do point
-```
+Quando `Links` estiver disponível, ele pode ser usado para navegar para `Value`, `RecordedData`, `InterpolatedData`, `SummaryData`, `PlotData` e `Attributes`.
 
 ---
 
@@ -149,310 +75,130 @@ Links.Attributes -> consultar atributos do point
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
-
-* qual o valor atual da tag
-* último valor
-* valor agora
-* snapshot
-* quanto está a tag
-* status atual
-* ler tag em tempo real
+Use quando o usuário pedir valor atual, último valor, snapshot, status atual ou “quanto está” uma tag.
 
 ## Fluxo
 
 ```text
-1. Buscar o PI Point pelo path.
+1. GET /points?path=\\PIMS\TAG
 2. Extrair WebId.
-3. Consultar /streams/{webId}/value.
-4. Interpretar Timestamp, Value, Good e Questionable.
-5. Responder com valor, unidade, timestamp e qualidade.
+3. GET /streams/{webId}/value
+4. Interpretar Value, Timestamp, Good e Questionable.
 ```
 
-## Request 1 - obter WebId
-
-```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
-```
-
-## Request 2 - obter valor atual
+## Endpoint
 
 ```http
 GET http://10.247.224.39/piwebapi/streams/{webId}/value
 ```
 
-Exemplo com WebId:
-
-```http
-GET http://10.247.224.39/piwebapi/streams/F1DPxhF1MCtATE6DjgaMSVY2gghOAAAAUE1NU1xMRklfUkIzX1ZBWl9HTl9UT1RBTA/value
-```
-
-## Resposta típica
-
-```json
-{
-  "Timestamp": "2026-06-15T13:10:00Z",
-  "Value": 4382.45,
-  "UnitsAbbreviation": "Nm3/h",
-  "Good": true,
-  "Questionable": false,
-  "Substituted": false
-}
-```
-
-## Como interpretar
+## Campos da resposta
 
 ```text
 Timestamp          Data/hora do valor
 Value              Valor retornado
 UnitsAbbreviation  Unidade, quando disponível
-Good               true significa valor válido
-Questionable       true significa valor suspeito
-Substituted        true significa valor substituído
+Good               Qualidade boa quando true
+Questionable       Valor suspeito quando true
+Substituted        Valor substituído quando true
 ```
 
-## Resposta ideal do agente
+## Resposta sugerida
 
 ```text
-A tag LFI_RB3_VAZ_GN_TOTAL está com valor atual de 4382,45 Nm3/h em 15/06/2026 10:10:00.
-Qualidade: boa.
+Tag: LFI_RB3_VAZ_GN_TOTAL
+Valor: 4382,45 Nm3/h
+Timestamp: 15/06/2026 10:10:00
+Qualidade: boa
 ```
-
-## Regras de qualidade
-
-Se `Good = false`, não trate o valor como valor confiável.
-
-Responder assim:
-
-```text
-A tag retornou valor inválido ou ruim no PI.
-Timestamp: ...
-Valor retornado: ...
-Good: false
-```
-
-Se `Questionable = true`, avisar que o valor está questionável.
-
-Se `Value` vier como objeto, verificar campos internos como `Name`, `Value` ou `IsSystem`.
 
 ---
 
-# CHUNK 03 - Metadados da tag: unidade, descriptor, tipo, span e step
+# CHUNK 03 - Metadados da tag
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
+Use quando o usuário pedir unidade, descrição, tipo, digital set, span, zero, step ou metadados básicos.
 
-* qual a unidade da tag
-* engunits
-* engineering units
-* descriptor
-* descrição da tag
-* tipo da tag
-* pointtype
-* span
-* zero
-* step
-* display digits
-* classe do point
-* metadados da tag
-
-## Endpoint principal
-
-Para a maioria dos metadados básicos, basta consultar o PI Point pelo path:
+## Endpoint
 
 ```http
 GET http://10.247.224.39/piwebapi/points?path=\\PIMS\NOME_DA_TAG
 ```
 
-Exemplo:
-
-```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
-```
-
-## Campos retornados no PI Point
+## Campos principais
 
 ```text
-Name              Nome da tag
+Name              Nome
 Path              Caminho completo
-Descriptor        Descrição da tag
-PointClass        Classe do point
+Descriptor        Descrição
+PointClass        Classe
 PointType         Tipo de dado
 DigitalSetName    Nome do digital set
 EngineeringUnits  Unidade de engenharia
-Span              Faixa máxima
+Span              Faixa
 Zero              Zero configurado
-Step              Indica se é tag discreta/degrau
-Future            Indica se é future data
-DisplayDigits     Casas/dígitos para exibição
-Links.Attributes  Link para atributos adicionais
+Step              Comportamento em degrau
+DisplayDigits     Dígitos de exibição
 ```
 
-## Exemplo de resposta
+## Exemplo reduzido
 
 ```json
 {
   "Name": "LFI_RB3_VAZ_GN_TOTAL",
   "Descriptor": "VAZÃO DE GN TOTAL DO RB3",
   "PointType": "Float32",
-  "DigitalSetName": "",
   "EngineeringUnits": "Nm3/h",
-  "Span": 12000.0,
-  "Zero": 0.0,
-  "Step": false,
-  "DisplayDigits": 2
+  "DigitalSetName": "",
+  "Step": false
 }
 ```
 
-## Resposta ideal do agente
+## Otimização de resposta
 
-```text
-Metadados da tag LFI_RB3_VAZ_GN_TOTAL:
-
-Descrição: VAZÃO DE GN TOTAL DO RB3
-Tipo: Float32
-Unidade: Nm3/h
-Span: 12000
-Zero: 0
-Step: false
-DigitalSetName: vazio, portanto não parece ser uma tag digital.
-```
-
-## Quando usar selectedFields
-
-Use `selectedFields` para reduzir a resposta:
+Use `selectedFields` para reduzir payload quando bastarem campos específicos:
 
 ```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL&selectedFields=WebId;Name;Descriptor;PointType;DigitalSetName;EngineeringUnits;Span;Zero;Step;DisplayDigits;Links
+GET /points?path=\\PIMS\TAG&selectedFields=WebId;Name;Descriptor;PointType;DigitalSetName;EngineeringUnits;Links
 ```
-
-## Atenção
-
-Em alguns ambientes, o nome do campo de digital set pode aparecer como:
-
-```text
-DigitalSetName
-```
-
-Não assumir que sempre será:
-
-```text
-DigitalSet
-```
-
-No ambiente atual, a resposta do navegador mostrou `DigitalSetName`.
 
 ---
 
-# CHUNK 04 - Atributos do PI Point: instrumenttag, location e atributos clássicos
+# CHUNK 04 - Atributos do PI Point
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
-
-* instrumenttag
-* tag do instrumento
-* engunits como atributo
-* location1
-* location2
-* location3
-* location4
-* location5
-* pointsource
-* pointid
-* atributos do point
-* atributos clássicos da tag
-
-## Regra
-
-Alguns metadados vêm diretamente em `/points?path=...`.
-
-Outros atributos devem ser buscados em:
-
-```http
-GET /points/{webId}/attributes
-```
-
-Ou pelo link retornado no PI Point:
-
-```text
-Links.Attributes
-```
+Use para `instrumenttag`, `location1` a `location5`, `pointsource`, `engunits` como atributo ou outros atributos clássicos do PI Point.
 
 ## Fluxo
 
 ```text
-1. Buscar o PI Point pelo path.
+1. Buscar PI Point por path.
 2. Extrair WebId.
 3. Consultar /points/{webId}/attributes.
-4. Filtrar o atributo desejado pelo nome.
+4. Filtrar pelo atributo desejado.
 ```
 
-## Request 1 - obter WebId
+## Endpoints
 
 ```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\NOME_DA_TAG
+GET /points/{webId}/attributes
+GET /points/{webId}/attributes?name=instrumenttag
+GET /points/{webId}/attributes?name=location1
 ```
 
-## Request 2 - listar atributos do point
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes
-```
-
-## Request para um atributo específico
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes?name=instrumenttag
-```
-
-Exemplos:
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes?name=instrumenttag
-```
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes?name=location1
-```
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes?name=location2
-```
-
-```http
-GET http://10.247.224.39/piwebapi/points/{webId}/attributes?name=engunits
-```
-
-## Exemplo de resposta
+## Resposta típica
 
 ```json
 {
-  "Items": [
-    {
-      "Name": "instrumenttag",
-      "Value": "FT-101"
-    }
-  ]
+  "Items": [{ "Name": "instrumenttag", "Value": "FT-101" }]
 }
 ```
 
-## Resposta ideal do agente
+## Diretriz
 
-```text
-O instrumenttag da tag LFI_RB3_VAZ_GN_TOTAL é FT-101.
-```
-
-## Regra de fallback
-
-Se o atributo não existir ou vier vazio:
-
-```text
-Não encontrei valor preenchido para instrumenttag nessa tag.
-```
-
-Não inventar valor.
+Quando o atributo vier vazio ou não existir, informe ausência de valor em vez de inferir um valor.
 
 ---
 
@@ -460,28 +206,11 @@ Não inventar valor.
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
+Use para digital states, digital set, estados possíveis, ligado/desligado, aberto/fechado ou interpretação de status digital.
 
-* digital states
-* digital set
-* estados digitais
-* estados possíveis da tag
-* valor 0 significa o quê
-* valor 1 significa o quê
-* ligado/desligado
-* aberto/fechado
-* status de tag digital
-* tag digital
+## Identificação
 
-## Como identificar tag digital
-
-Consultar o PI Point:
-
-```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\NOME_DA_TAG
-```
-
-Verificar:
+Consultar o PI Point e observar:
 
 ```text
 PointType
@@ -489,258 +218,80 @@ DigitalSetName
 Step
 ```
 
-Uma tag digital normalmente tem:
+Tags digitais costumam ter `PointType=Digital`, `DigitalSetName` preenchido e comportamento discreto.
+
+## Fluxo para estados digitais
 
 ```text
-PointType = Digital
-DigitalSetName preenchido
-Step = true
-```
-
-Mas nem todo status discreto necessariamente será `PointType = Digital`. Também pode haver status representado como inteiro.
-
-## Exemplo de tag não digital
-
-```json
-{
-  "Name": "LFI_RB3_VAZ_GN_TOTAL",
-  "PointType": "Float32",
-  "DigitalSetName": "",
-  "EngineeringUnits": "Nm3/h",
-  "Step": false
-}
-```
-
-Neste caso, não consultar Digital States, porque `DigitalSetName` está vazio.
-
-## Fluxo para obter estados digitais
-
-```text
-1. Buscar a tag em /points?path=\\PIMS\TAG.
+1. GET /points?path=\\PIMS\TAG
 2. Ler DigitalSetName.
-3. Se DigitalSetName estiver vazio, informar que a tag não possui digital set.
-4. Se DigitalSetName estiver preenchido, buscar o DataServer.
-5. Listar os enumeration sets do DataServer.
-6. Encontrar o enumeration set com o mesmo nome de DigitalSetName.
-7. Consultar enumerationvalues.
+3. Buscar DataServer PIMS em /dataservers.
+4. Listar /dataservers/{dataServerWebId}/enumerationsets.
+5. Encontrar o set pelo nome.
+6. Consultar /enumerationsets/{enumSetWebId}/enumerationvalues.
 ```
 
-## Request 1 - buscar PI Point
+## Endpoints
 
 ```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\NOME_DA_TAG
+GET /dataservers
+GET /dataservers/{dataServerWebId}/enumerationsets
+GET /enumerationsets/{enumSetWebId}/enumerationvalues
 ```
 
-## Request 2 - listar Data Servers
+## Valor digital
 
-```http
-GET http://10.247.224.39/piwebapi/dataservers
-```
-
-Encontrar o item com:
-
-```text
-Name = PIMS
-```
-
-Extrair:
-
-```text
-WebId
-```
-
-## Request 3 - listar Digital Sets do servidor
-
-```http
-GET http://10.247.224.39/piwebapi/dataservers/{dataServerWebId}/enumerationsets
-```
-
-Encontrar o item com:
-
-```text
-Name = DigitalSetName da tag
-```
-
-Extrair:
-
-```text
-WebId do enumeration set
-```
-
-## Request 4 - listar estados do Digital Set
-
-```http
-GET http://10.247.224.39/piwebapi/enumerationsets/{enumSetWebId}/enumerationvalues
-```
-
-## Exemplo de resposta
+O valor atual pode vir como número ou objeto.
 
 ```json
-{
-  "Items": [
-    {
-      "Value": 0,
-      "Name": "Desligado",
-      "Description": "Equipamento desligado"
-    },
-    {
-      "Value": 1,
-      "Name": "Ligado",
-      "Description": "Equipamento ligado"
-    }
-  ]
-}
+{ "Value": 1, "Good": true }
 ```
 
-## Como interpretar valor atual de tag digital
-
-Ao consultar:
-
-```http
-GET /streams/{webId}/value
-```
-
-O campo `Value` pode vir de duas formas.
-
-Forma 1: número simples:
+ou:
 
 ```json
-{
-  "Value": 1,
-  "Good": true
-}
+{ "Value": { "Name": "Ligado", "Value": 1 }, "Good": true }
 ```
 
-Neste caso, usar o Digital Set para mapear:
+## Resposta sugerida
 
 ```text
-1 -> Ligado
-```
+Tag: CPD_LP_SECADOR_STATUS
+DigitalSetName: SECADOR_STATUS
 
-Forma 2: objeto:
-
-```json
-{
-  "Value": {
-    "Name": "Ligado",
-    "Value": 1,
-    "IsSystem": false
-  },
-  "Good": true
-}
-```
-
-Neste caso, usar diretamente `Value.Name` e `Value.Value`.
-
-## Resposta ideal do agente
-
-```text
-A tag CPD_LP_SECADOR_STATUS usa o digital set SECADOR_STATUS.
-
-Estados possíveis:
+Estados:
 0 - Desligado
 1 - Ligado
 2 - Manutenção
 ```
 
-## Se a tag não tiver DigitalSetName
-
-Responder:
-
-```text
-A tag LFI_RB3_VAZ_GN_TOTAL não possui DigitalSetName preenchido. Ela é do tipo Float32, então não parece ser uma tag digital.
-```
-
 ---
 
-# CHUNK 06 - Histórico bruto: recorded values
+# CHUNK 06 - Histórico bruto: recorded
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
-
-* histórico da tag
-* valores gravados
-* recorded
-* eventos gravados
-* últimos valores
-* valores dos últimos minutos
-* valores das últimas horas
-* amostras reais gravadas
+Use quando o usuário pedir histórico bruto, eventos gravados, valores reais armazenados ou últimos eventos.
 
 ## Endpoint
 
 ```http
-GET /streams/{webId}/recorded
+GET /streams/{webId}/recorded?startTime=*-8h&endTime=*&maxCount=500
 ```
 
-## Fluxo
+## Parâmetros comuns
 
 ```text
-1. Buscar WebId em /points?path=\\PIMS\TAG.
-2. Consultar /streams/{webId}/recorded.
-3. Usar startTime, endTime e maxCount.
-4. Retornar os valores com Timestamp, Value e qualidade.
-```
-
-## Request
-
-```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/recorded?startTime=-1d&endTime=*&maxCount=1000
-```
-
-## Parâmetros principais
-
-```text
-startTime      Início do intervalo
-endTime        Fim do intervalo
-maxCount       Máximo de eventos retornados
+startTime      Início
+endTime        Fim
+maxCount       Limite de eventos
 boundaryType   Inside, Outside ou Interpolated
-retrievalMode  Auto, AtOrBefore, Before, AtOrAfter, After, Exact
+retrievalMode  Auto, Before, After, Exact, AtOrBefore, AtOrAfter
 ```
 
-## Exemplos de tempo
+## Diretriz
 
-```text
-*                 agora
-*-1h              uma hora atrás
-*-1d              um dia atrás
-2026-06-01T00:00:00Z
-2026-06-01T00:00:00-03:00
-```
-
-## Exemplo
-
-```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/recorded?startTime=*-8h&endTime=*&maxCount=500
-```
-
-## Resposta típica
-
-```json
-{
-  "Items": [
-    {
-      "Timestamp": "2026-06-15T10:00:00Z",
-      "Value": 4312.4,
-      "Good": true,
-      "Questionable": false
-    },
-    {
-      "Timestamp": "2026-06-15T10:05:00Z",
-      "Value": 4330.1,
-      "Good": true,
-      "Questionable": false
-    }
-  ]
-}
-```
-
-## Quando usar recorded
-
-Use `recorded` quando o usuário quiser os valores reais armazenados no PI, sem interpolação.
-
-Não usar `recorded` para “valor a cada 1 minuto” se a tag não grava a cada 1 minuto. Para intervalo fixo, usar `interpolated`.
+`recorded` retorna eventos gravados. Para uma série em intervalo fixo, `interpolated` costuma ser mais adequado.
 
 ---
 
@@ -748,254 +299,122 @@ Não usar `recorded` para “valor a cada 1 minuto” se a tag não grava a cada
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
-
-* valor a cada 1 minuto
-* valor de 5 em 5 minutos
-* série regular
-* interpolado
-* preencher lacunas
-* amostragem fixa
-* histórico com intervalo fixo
+Use quando o usuário pedir valores a cada 1 minuto, 5 minutos, 1 hora ou outra frequência regular.
 
 ## Endpoint
 
 ```http
-GET /streams/{webId}/interpolated
+GET /streams/{webId}/interpolated?startTime=*-8h&endTime=*&interval=5m
 ```
 
-## Fluxo
+## Parâmetros
 
 ```text
-1. Buscar WebId em /points?path=\\PIMS\TAG.
-2. Consultar /streams/{webId}/interpolated.
-3. Informar startTime, endTime e interval.
-4. Retornar série com timestamps regulares.
+startTime   Início
+endTime     Fim
+interval    Espaçamento entre pontos: 1m, 5m, 15m, 1h
+syncTime    Hora âncora, quando precisar alinhar intervalos
 ```
 
-## Request
+## Diretriz
+
+Interpolado é adequado para amostragem regular. Para eventos exatamente gravados no PI, use `recorded`.
+
+---
+
+# CHUNK 08 - Summary: média, mínimo, máximo e total
+
+## Intenção
+
+Use para média, mínimo, máximo, soma, total, contagem, desvio padrão, percent good ou agregações por período.
+
+## Endpoint
 
 ```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/interpolated?startTime=-1d&endTime=*&interval=1h
-```
-
-## Parâmetros principais
-
-```text
-startTime   Início do intervalo
-endTime     Fim do intervalo
-interval    Espaçamento entre valores
-syncTime    Hora âncora para alinhamento do intervalo
-```
-
-## Exemplos de interval
-
-```text
-1m
-5m
-15m
-30m
-1h
-1d
+GET /streams/{webId}/summary
 ```
 
 ## Exemplo
 
 ```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/interpolated?startTime=*-8h&endTime=*&interval=5m
-```
-
-## Quando usar interpolated
-
-Use quando o usuário pedir dados em uma frequência fixa.
-
-Exemplo:
-
-```text
-Me traga a temperatura de 10 em 10 minutos nas últimas 6 horas.
-```
-
-Não usar interpolated quando o usuário pedir “eventos reais gravados”. Nesse caso, usar `recorded`.
-
----
-
-# CHUNK 08 - Summary: média, mínimo, máximo, total e percent good
-
-## Intenção
-
-Use este chunk quando o usuário perguntar:
-
-* média
-* máximo
-* mínimo
-* soma
-* total
-* desvio padrão
-* percent good
-* estatística
-* agregação
-* média horária
-* média diária
-* resumo da tag
-
-## Endpoint
-
-```http
-GET /streams/{webId}/summary
-```
-
-## Fluxo
-
-```text
-1. Buscar WebId em /points?path=\\PIMS\TAG.
-2. Consultar /streams/{webId}/summary.
-3. Definir startTime e endTime.
-4. Definir summaryType.
-5. Definir summaryDuration quando quiser janelas, por exemplo médias horárias.
-6. Definir calculationBasis.
-```
-
-## Request simples
-
-```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/summary?startTime=-1d&endTime=*&summaryType=Average
-```
-
-## Request com médias horárias
-
-```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/summary?startTime=-1d&endTime=*&summaryType=Average&summaryDuration=1h&calculationBasis=TimeWeighted
+GET /streams/{webId}/summary?startTime=-1d&endTime=*&summaryType=Average&summaryDuration=1h&calculationBasis=TimeWeighted
 ```
 
 ## summaryType comuns
 
 ```text
-Average       Média
-Minimum       Mínimo
-Maximum       Máximo
-Range         Máximo - mínimo
-StdDev        Desvio padrão
-Count         Contagem
-PercentGood   Percentual de dados bons
-Total         Totalização
-All           Todos os resumos disponíveis
+Average
+Minimum
+Maximum
+Range
+StdDev
+Count
+PercentGood
+Total
+All
 ```
 
-## calculationBasis
+## Diretrizes
 
 ```text
-TimeWeighted   Ponderado pelo tempo. Usar para temperatura, pressão, vazão, nível e variáveis contínuas.
-EventWeighted  Cada evento tem o mesmo peso. Usar quando cada amostra gravada deve ter peso igual.
+TimeWeighted  Variáveis contínuas: temperatura, pressão, vazão, nível.
+EventWeighted Cada evento tem o mesmo peso.
+summaryDuration divide o período em blocos, como 1h ou 1d.
 ```
-
-## summaryDuration
-
-Use `summaryDuration` quando quiser dividir o período em blocos.
-
-Exemplos:
-
-```text
-summaryDuration=1h    médias horárias
-summaryDuration=1d    médias diárias
-summaryDuration=15m   médias de 15 minutos
-```
-
-## Exemplo de resposta
-
-```json
-{
-  "Items": [
-    {
-      "Type": "Average",
-      "Value": {
-        "Timestamp": "2026-06-15T10:00:00Z",
-        "Value": 4320.5,
-        "Good": true
-      }
-    }
-  ]
-}
-```
-
-## Regra de qualidade
-
-Se o item retornado tiver `Good = false`, não usar o valor como confiável.
-
-Se o usuário pedir estatística e houver itens ruins, informar a quantidade de itens ignorados ou sinalizar que a qualidade do cálculo pode estar comprometida.
 
 ---
 
-# CHUNK 09 - Consumo de vazão em Nm3 usando médias horárias
+# CHUNK 09 - Consumo de vazão usando médias horárias
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
+Use para consumo de gás, consumo total, total de vazão, consumo mensal, consumo diário, consumo no período ou volume acumulado a partir de uma tag de vazão.
 
-* consumo de gás
-* consumo total
-* total de vazão
-* somar vazão
-* consumo mensal
-* consumo diário
-* consumo no período
-* Nm3 a partir de Nm3/h
+## Conceito
 
-## Contexto
-
-Para uma tag de vazão em `Nm3/h`, o consumo em `Nm3` pode ser calculado usando médias horárias.
-
-Regra operacional:
+Consumo é uma grandeza acumulada. Quando a tag mede vazão, por exemplo `Nm3/h`, a resposta de consumo representa volume no período.
 
 ```text
-1. Consultar médias horárias da vazão com summaryType=Average.
-2. Usar summaryDuration=1h.
-3. Usar calculationBasis=TimeWeighted.
-4. Somar os valores médios horários no cliente/agente.
-5. Como cada média representa 1 hora, cada média em Nm3/h equivale a Nm3 no bloco de 1 hora.
+média horária em Nm3/h × 1h = volume em Nm3 no bloco
 ```
+
+A unidade calculada deve ser inferida pela natureza do resultado. Para consumo, a unidade esperada é volume; para média de vazão, a unidade continua sendo vazão.
+
+## Diretriz operacional
+
+```text
+data_method        summary
+summary_type       Average
+summary_duration   1h
+calculation_basis  TimeWeighted
+operation          sum
+```
+
+A soma considera os blocos horários válidos retornados pela consulta de summary.
 
 ## Endpoint
 
 ```http
-GET /streams/{webId}/summary
+GET /streams/{webId}/summary?startTime=2026-05-01T00:00:00-03:00&endTime=2026-06-01T00:00:00-03:00&summaryType=Average&summaryDuration=1h&calculationBasis=TimeWeighted
 ```
 
-## Exemplo para consumo mensal
+## Período mensal
 
-```http
-GET http://10.247.224.39/piwebapi/streams/{webId}/summary?startTime=2026-05-01T00:00:00-03:00&endTime=2026-06-01T00:00:00-03:00&summaryType=Average&summaryDuration=1h&calculationBasis=TimeWeighted
-```
-
-## Cálculo no agente
-
-Para cada item retornado:
+Para cálculo de um mês completo, use o primeiro dia do mês calculado como início e o primeiro dia do mês seguinte como fim. Esse padrão representa início inclusivo e fim exclusivo.
 
 ```text
-Se Good = true:
-    consumo_total += Value.Value
-Se Good = false:
-    ignorar ou sinalizar item ruim
+Maio/2026:
+start_time = 2026-05-01T00:00:00-03:00
+end_time   = 2026-06-01T00:00:00-03:00
 ```
 
-## Exemplo conceitual
+## Resposta sugerida
 
 ```text
-Hora 01: média = 100 Nm3/h
-Hora 02: média = 120 Nm3/h
-Hora 03: média = 130 Nm3/h
-
-Consumo = 100 + 120 + 130 = 350 Nm3
+Consumo estimado: 350 Nm3
+Critério: soma das médias horárias TimeWeighted da tag de vazão.
+Período: 01/05/2026 00:00 até 01/06/2026 00:00
 ```
-
-## Resposta ideal do agente
-
-```text
-O consumo estimado no período foi de 350 Nm3, calculado pela soma das médias horárias TimeWeighted da tag de vazão.
-```
-
-## Atenção
-
-A chamada `/summary` retorna os blocos de média. Ela não soma automaticamente todos os blocos horários. A soma final deve ser feita pelo agente ou pela aplicação cliente.
 
 ---
 
@@ -1003,94 +422,46 @@ A chamada `/summary` retorna os blocos de média. Ela não soma automaticamente 
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
+Use para consultar várias tags, combinar WebId + valor atual ou reduzir múltiplas chamadas HTTP.
 
-* valor atual de várias tags
-* consultar múltiplas tags
-* pegar metadados e valores juntos
-* otimizar várias consultas
-* reduzir chamadas HTTP
-* batch
-* streamsets
+## Streamsets ad-hoc
 
-## Opção 1 - streamsets ad-hoc para valor atual de múltiplos WebIds
-
-Use quando já tiver os WebIds e quiser o valor atual de várias tags.
+Use quando já houver WebIds:
 
 ```http
-GET http://10.247.224.39/piwebapi/streamsets/value?webId={webId1}&webId={webId2}
+GET /streamsets/value?webId={id1}&webId={id2}
 ```
 
-Exemplo:
+Também existem variações para `recorded` e `interpolated`.
+
+## Batch
+
+Use quando for preciso resolver points e consultar valores na mesma chamada.
 
 ```http
-GET http://10.247.224.39/piwebapi/streamsets/value?webId=WEBID_1&webId=WEBID_2&webId=WEBID_3
+POST /batch
 ```
 
-## Opção 2 - batch para buscar WebId e valor na mesma chamada
-
-Use quando o agente recebeu nomes de tags e precisa buscar WebId + valor atual.
-
-```http
-POST http://10.247.224.39/piwebapi/batch
-Content-Type: application/json
-```
-
-Exemplo:
+Exemplo reduzido:
 
 ```json
 {
   "point_0": {
     "Method": "GET",
-    "Resource": "http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL"
+    "Resource": "http://10.247.224.39/piwebapi/points?path=\\PIMSTAG"
   },
   "value_0": {
     "Method": "GET",
     "ParentIds": ["point_0"],
     "Parameters": ["$.point_0.Content.WebId"],
     "Resource": "http://10.247.224.39/piwebapi/streams/{0}/value"
-  },
-  "point_1": {
-    "Method": "GET",
-    "Resource": "http://10.247.224.39/piwebapi/points?path=\\PIMS\SINUSOID"
-  },
-  "value_1": {
-    "Method": "GET",
-    "ParentIds": ["point_1"],
-    "Parameters": ["$.point_1.Content.WebId"],
-    "Resource": "http://10.247.224.39/piwebapi/streams/{0}/value"
   }
 }
 ```
 
-## Resposta típica do batch
+## Diretriz
 
-```json
-{
-  "point_0": {
-    "Status": 200,
-    "Content": {
-      "WebId": "..."
-    }
-  },
-  "value_0": {
-    "Status": 200,
-    "Content": {
-      "Timestamp": "2026-06-15T10:00:00Z",
-      "Value": 4382.45,
-      "Good": true
-    }
-  }
-}
-```
-
-## Regra para o agente
-
-Para poucas tags, pode usar chamadas simples.
-
-Para muitas tags, preferir batch ou streamsets.
-
-Se o batch retornar status diferente de 200 em algum item, tratar aquele item individualmente e não falhar toda a resposta.
+Trate o status de cada item do batch individualmente.
 
 ---
 
@@ -1098,83 +469,26 @@ Se o batch retornar status diferente de 200 em algum item, tratar aquele item in
 
 ## Intenção
 
-Use este chunk quando o usuário perguntar:
-
-* procurar tag
-* buscar tags parecidas
-* não sei o nome completo
-* tags que começam com
-* tags que contêm
-* listar tags
-* encontrar tag por parte do nome
-
-## Regra
-
-Se o usuário informou o nome exato da tag, usar:
-
-```http
-GET /points?path=\\PIMS\NOME_DA_TAG
-```
-
-Se o usuário informou apenas parte do nome, usar busca de points.
+Use quando o usuário informar parte do nome, pedir tags parecidas, procurar tags por padrão ou listar candidatos.
 
 ## Fluxo
 
 ```text
-1. Obter o DataServer WebId do servidor PIMS.
-2. Buscar points no DataServer.
-3. Retornar lista curta de candidatos.
-4. Se houver muitas opções, pedir para o usuário escolher.
+1. GET /dataservers
+2. Encontrar DataServer Name=PIMS.
+3. GET /dataservers/{dataServerWebId}/points?nameFilter=*TRECHO*
+4. Retornar candidatos curtos com nome e descriptor.
 ```
 
-## Request 1 - listar dataservers
+## Exemplo
 
 ```http
-GET http://10.247.224.39/piwebapi/dataservers
+GET /dataservers/{dataServerWebId}/points?nameFilter=*VAZ_GN*
 ```
 
-Encontrar:
+## Diretriz
 
-```text
-Name = PIMS
-```
-
-Extrair:
-
-```text
-WebId
-```
-
-## Request 2 - buscar points no DataServer
-
-```http
-GET http://10.247.224.39/piwebapi/dataservers/{dataServerWebId}/points?nameFilter=*VAZ_GN*
-```
-
-## Exemplos de filtros
-
-```text
-*VAZ_GN*
-LFI_RB3*
-*TEMP*
-*PRESS*
-```
-
-## Resposta ideal do agente
-
-```text
-Encontrei algumas tags parecidas:
-
-1. LFI_RB3_VAZ_GN_TOTAL - VAZÃO DE GN TOTAL DO RB3
-2. LFI_RB3_VAZ_GN_FORNO - VAZÃO DE GN DO FORNO
-3. LFI_RB3_VAZ_GN_ZONA1 - VAZÃO DE GN ZONA 1
-
-Qual delas você quer consultar?
-```
-
-## Regra importante
-
-Não escolher uma tag automaticamente se houver ambiguidade forte.
+Quando houver várias tags parecidas, apresente uma lista curta e peça desambiguação.
 
 ---
 
@@ -1182,23 +496,9 @@ Não escolher uma tag automaticamente se houver ambiguidade forte.
 
 ## Intenção
 
-Use este chunk quando ocorrer:
+Use quando houver erro HTTP, tag não encontrada, WebId inválido, valor ruim, No Data, timeout ou falha de consulta.
 
-* tag não encontrada
-* WebId inválido
-* erro 400
-* erro 401
-* erro 403
-* erro 404
-* erro 500
-* Good false
-* Questionable true
-* valor bad
-* No Data
-* Calc Failed
-* Timeout
-
-## Status HTTP
+## HTTP status
 
 ```text
 200  Sucesso
@@ -1206,78 +506,22 @@ Use este chunk quando ocorrer:
 401  Não autorizado
 403  Sem permissão
 404  Objeto não encontrado
-500  Erro interno do servidor
+500  Erro do servidor
 ```
 
-## Erro 404 ao buscar point
-
-Se:
-
-```http
-GET /points?path=\\PIMS\TAG
-```
-
-retornar 404, responder:
+## Qualidade do valor
 
 ```text
-Não encontrei a tag TAG no servidor PIMS. Verifique se o nome está correto.
+Good=false       Valor não confiável para cálculo.
+Questionable    Valor disponível, mas suspeito.
+Value=null      Ausência de valor útil.
 ```
 
-## Erro 401 ou 403
+## Diretrizes
 
-Responder:
-
-```text
-A API recusou a consulta por autenticação ou permissão. O usuário usado pela aplicação pode não ter acesso a essa tag ou endpoint.
-```
-
-## Valor com Good false
-
-Exemplo:
-
-```json
-{
-  "Timestamp": "2026-06-15T10:00:00Z",
-  "Value": null,
-  "Good": false,
-  "Questionable": false
-}
-```
-
-Resposta:
-
-```text
-A tag retornou dado ruim no PI. Não vou considerar esse valor como confiável.
-Timestamp: ...
-Good: false
-```
-
-## Valor Questionable
-
-Se:
-
-```json
-{
-  "Good": true,
-  "Questionable": true
-}
-```
-
-Responder:
-
-```text
-A tag retornou valor, mas a qualidade está questionável.
-```
-
-## Regra geral
-
-Não ocultar qualidade ruim.
-
-Não inventar valor quando `Value` vier nulo.
-
-Não transformar `Good=false` em zero.
-
-Não transformar erro de API em valor zero.
+- Preserve a informação de qualidade.
+- Diferencie erro de API de valor ruim.
+- Em cálculos, sinalize itens ruins ou a quantidade desconsiderada quando essa informação estiver disponível.
 
 ---
 
@@ -1285,19 +529,9 @@ Não transformar erro de API em valor zero.
 
 ## Intenção
 
-Use este chunk quando o usuário pedir:
+Use para interpretar hoje, ontem, últimas horas, mês fechado, período específico ou turno.
 
-* últimas 24 horas
-* hoje
-* ontem
-* mês passado
-* desde meia-noite
-* período específico
-* data inicial e final
-* turno
-* intervalo de tempo
-
-## Strings PI comuns
+## Strings comuns
 
 ```text
 *       agora
@@ -1310,37 +544,28 @@ Y       ontem à meia-noite
 
 ## Datas absolutas
 
-Preferir usar ISO 8601 com offset quando o usuário falar em horário local do Brasil:
+Quando o usuário falar em horário local, prefira ISO 8601 com offset:
 
 ```text
 2026-06-15T00:00:00-03:00
-2026-06-15T23:59:59-03:00
+2026-06-16T00:00:00-03:00
 ```
 
-## Exemplo: hoje
+## Períodos fechados
 
-```http
-GET /streams/{webId}/recorded?startTime=2026-06-15T00:00:00-03:00&endTime=2026-06-15T23:59:59-03:00
-```
-
-## Exemplo: últimas 8 horas
-
-```http
-GET /streams/{webId}/recorded?startTime=*-8h&endTime=*
-```
-
-## Exemplo: mês de maio de 2026
+Para períodos por dia, mês ou ano, use início inclusivo e fim exclusivo.
 
 ```text
-startTime=2026-05-01T00:00:00-03:00
-endTime=2026-06-01T00:00:00-03:00
+Dia 15/06/2026:
+start_time = 2026-06-15T00:00:00-03:00
+end_time   = 2026-06-16T00:00:00-03:00
 ```
 
-## Regra para o agente
-
-Quando o usuário pedir “mês passado”, calcular o primeiro dia do mês anterior até o primeiro dia do mês atual.
-
-Não usar dia 30 ou 31 manualmente se o mês puder variar.
+```text
+Maio/2026:
+start_time = 2026-05-01T00:00:00-03:00
+end_time   = 2026-06-01T00:00:00-03:00
+```
 
 ---
 
@@ -1348,55 +573,28 @@ Não usar dia 30 ou 31 manualmente se o mês puder variar.
 
 ## Intenção
 
-Use este chunk quando a URL falhar por caracteres especiais ou quando for necessário montar path de PI Point, AF Attribute ou Element.
+Use quando o path tiver caracteres especiais ou quando a URL falhar por codificação.
 
-## Caracteres importantes
-
-```text
-\   pode precisar ser codificado como %5C
-|   pode precisar ser codificado como %7C
-#   pode precisar ser codificado como %23
-espaço pode precisar ser codificado como %20
-:   pode precisar ser codificado como %3A
-```
-
-## Path normal em exemplos
+## Caracteres comuns
 
 ```text
-\\PIMS\LFI_RB3_VAZ_GN_TOTAL
+\       %5C
+|       %7C
+#       %23
+espaço  %20
+:       %3A
 ```
 
-## URL com path direto
+## Diretriz
 
-```http
-GET http://10.247.224.39/piwebapi/points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
-```
-
-## URL percent-encoded equivalente
-
-```http
-GET http://10.247.224.39/piwebapi/points?path=%5C%5CPIMS%5CLFI_RB3_VAZ_GN_TOTAL
-```
-
-## Regra para o agente
-
-Se estiver usando biblioteca HTTP, passar `path` como parâmetro de query e deixar a biblioteca codificar.
-
-Em Python com requests:
+Ao usar biblioteca HTTP, passe o path como parâmetro de query e deixe a biblioteca codificar.
 
 ```python
-import requests
-
-base_url = "http://10.247.224.39/piwebapi"
-tag = "LFI_RB3_VAZ_GN_TOTAL"
-
-response = requests.get(
+requests.get(
     f"{base_url}/points",
-    params={"path": f"\\\\PIMS\\{tag}"},
+    params={"path": r"\\PIMS\LFI_RB3_VAZ_GN_TOTAL"},
     timeout=30,
 )
-response.raise_for_status()
-point = response.json()
 ```
 
 ---
@@ -1405,11 +603,9 @@ point = response.json()
 
 ## Intenção
 
-Use este chunk para padronizar a forma como o agente responde ao usuário.
+Use para padronizar respostas ao usuário.
 
 ## Valor atual
-
-Formato:
 
 ```text
 Tag: NOME_DA_TAG
@@ -1418,18 +614,7 @@ Timestamp: DATA/HORA
 Qualidade: boa/questionável/ruim
 ```
 
-Exemplo:
-
-```text
-Tag: LFI_RB3_VAZ_GN_TOTAL
-Valor: 4382,45 Nm3/h
-Timestamp: 15/06/2026 10:10:00
-Qualidade: boa
-```
-
 ## Metadados
-
-Formato:
 
 ```text
 Tag: NOME_DA_TAG
@@ -1437,14 +622,9 @@ Descrição: DESCRIPTOR
 Tipo: POINTTYPE
 Unidade: ENGINEERINGUNITS
 DigitalSetName: DIGITALSETNAME
-Span: SPAN
-Zero: ZERO
-Step: STEP
 ```
 
 ## Digital states
-
-Formato:
 
 ```text
 Tag: NOME_DA_TAG
@@ -1453,52 +633,11 @@ DigitalSetName: NOME_DO_SET
 Estados:
 0 - Desligado
 1 - Ligado
-2 - Manutenção
 ```
 
-## Histórico
+## Cálculos
 
-Para poucos valores, pode listar em tabela.
-
-Para muitos valores, resumir:
-
-```text
-Foram encontrados 500 eventos no período.
-Primeiro valor: ...
-Último valor: ...
-Menor valor: ...
-Maior valor: ...
-```
-
-## Erros
-
-Tag não encontrada:
-
-```text
-Não encontrei a tag NOME_DA_TAG no servidor PIMS.
-```
-
-Sem permissão:
-
-```text
-A consulta foi recusada por permissão ou autenticação.
-```
-
-Dado ruim:
-
-```text
-A tag retornou dado ruim no PI. Não vou considerar esse valor como confiável.
-```
-
-## Regra final
-
-Sempre que possível, responder com:
-
-```text
-valor + unidade + timestamp + qualidade
-```
-
-Nunca responder apenas o número sem contexto.
+Inclua valor calculado, unidade inferida, período, critério usado e observação de qualidade quando aplicável.
 
 ---
 
@@ -1506,319 +645,266 @@ Nunca responder apenas o número sem contexto.
 
 ## Intenção
 
-Use este chunk quando o agente precisa escolher rapidamente qual endpoint usar.
-
-## Tabela de decisão
+Use como mapa curto de decisão.
 
 ```text
-Usuário pediu valor atual:
-    /points?path=... -> /streams/{webId}/value
+Valor atual:
+  /points?path=... -> /streams/{webId}/value
 
-Usuário pediu último valor:
-    /points?path=... -> /streams/{webId}/value
+Metadados:
+  /points?path=...
 
-Usuário pediu unidade:
-    /points?path=... -> EngineeringUnits
+Instrumenttag/location:
+  /points?path=... -> /points/{webId}/attributes?name=...
 
-Usuário pediu descrição:
-    /points?path=... -> Descriptor
+Digital states:
+  /points?path=... -> DigitalSetName -> enumerationvalues
 
-Usuário pediu tipo:
-    /points?path=... -> PointType
+Histórico bruto:
+  /points?path=... -> /streams/{webId}/recorded
 
-Usuário pediu digital set:
-    /points?path=... -> DigitalSetName
+Intervalo fixo:
+  /points?path=... -> /streams/{webId}/interpolated
 
-Usuário pediu estados digitais:
-    /points?path=... -> DigitalSetName -> /dataservers/{webId}/enumerationsets -> /enumerationsets/{webId}/enumerationvalues
+Média/mínimo/máximo/total:
+  /points?path=... -> /streams/{webId}/summary
 
-Usuário pediu instrumenttag:
-    /points?path=... -> /points/{webId}/attributes?name=instrumenttag
-
-Usuário pediu location1 a location5:
-    /points?path=... -> /points/{webId}/attributes?name=location1
-
-Usuário pediu histórico bruto:
-    /points?path=... -> /streams/{webId}/recorded
-
-Usuário pediu valores em intervalo fixo:
-    /points?path=... -> /streams/{webId}/interpolated
-
-Usuário pediu média/mínimo/máximo:
-    /points?path=... -> /streams/{webId}/summary
-
-Usuário pediu gráfico:
-    /points?path=... -> /streams/{webId}/plot
-
-Usuário pediu várias tags:
-    batch ou streamsets/value
+Várias tags:
+  batch ou streamsets
 ```
 
 ---
 
-# CHUNK 17 - Exemplo completo em Python para valor atual
+# CHUNK 17 - Exemplo Python: valor atual
 
 ## Intenção
 
-Use este chunk quando for necessário implementar uma tool que consulta o valor atual de uma tag.
-
-## Código
+Use como referência compacta para implementação.
 
 ```python
 import requests
 
-
 PIWEBAPI_URL = "http://10.247.224.39/piwebapi"
 PI_SERVER = "PIMS"
-TIMEOUT_SECONDS = 30
 
-
-def get_point_by_tag(tag_name: str) -> dict:
-    tag_name = tag_name.strip()
-
-    if not tag_name:
-        raise ValueError("Nome da tag não informado.")
-
-    response = requests.get(
+def get_point(tag: str) -> dict:
+    r = requests.get(
         f"{PIWEBAPI_URL}/points",
-        params={"path": f"\\\\{PI_SERVER}\\{tag_name}"},
-        timeout=TIMEOUT_SECONDS,
+        params={"path": f"\\\\{PI_SERVER}\\{tag}"},
+        timeout=30,
     )
-    response.raise_for_status()
-    return response.json()
+    r.raise_for_status()
+    return r.json()
 
-
-def get_current_value(tag_name: str) -> dict:
-    point = get_point_by_tag(tag_name)
-    web_id = point["WebId"]
-
+def get_current_value(tag: str) -> dict:
+    point = get_point(tag)
     value_url = point.get("Links", {}).get(
         "Value",
-        f"{PIWEBAPI_URL}/streams/{web_id}/value",
+        f"{PIWEBAPI_URL}/streams/{point['WebId']}/value",
     )
-
-    response = requests.get(value_url, timeout=TIMEOUT_SECONDS)
-    response.raise_for_status()
-    value = response.json()
-
-    return {
-        "tag": point.get("Name", tag_name),
-        "descriptor": point.get("Descriptor"),
-        "point_type": point.get("PointType"),
-        "engineering_units": point.get("EngineeringUnits"),
-        "digital_set_name": point.get("DigitalSetName"),
-        "timestamp": value.get("Timestamp"),
-        "value": value.get("Value"),
-        "units_abbreviation": value.get("UnitsAbbreviation"),
-        "good": value.get("Good"),
-        "questionable": value.get("Questionable"),
-        "substituted": value.get("Substituted"),
-    }
-
-
-if __name__ == "__main__":
-    result = get_current_value("LFI_RB3_VAZ_GN_TOTAL")
-    print(result)
+    r = requests.get(value_url, timeout=30)
+    r.raise_for_status()
+    return {"point": point, "value": r.json()}
 ```
 
 ---
 
-# CHUNK 18 - Exemplo completo em Python para metadados e instrumenttag
+# CHUNK 18 - Exemplo Python: metadados e atributos
 
 ## Intenção
 
-Use este chunk quando for necessário implementar uma tool que consulta metadados e atributos clássicos de uma tag.
-
-## Código
+Use como referência compacta para buscar atributos clássicos.
 
 ```python
 import requests
 
-
 PIWEBAPI_URL = "http://10.247.224.39/piwebapi"
 PI_SERVER = "PIMS"
-TIMEOUT_SECONDS = 30
 
-
-def get_point_by_tag(tag_name: str) -> dict:
-    tag_name = tag_name.strip()
-
-    if not tag_name:
-        raise ValueError("Nome da tag não informado.")
-
-    response = requests.get(
+def get_point(tag: str) -> dict:
+    r = requests.get(
         f"{PIWEBAPI_URL}/points",
-        params={"path": f"\\\\{PI_SERVER}\\{tag_name}"},
-        timeout=TIMEOUT_SECONDS,
+        params={"path": f"\\\\{PI_SERVER}\\{tag}"},
+        timeout=30,
     )
-    response.raise_for_status()
-    return response.json()
+    r.raise_for_status()
+    return r.json()
 
-
-def get_point_attribute(web_id: str, attribute_name: str):
-    response = requests.get(
+def get_point_attribute(web_id: str, name: str):
+    r = requests.get(
         f"{PIWEBAPI_URL}/points/{web_id}/attributes",
-        params={"name": attribute_name},
-        timeout=TIMEOUT_SECONDS,
+        params={"name": name},
+        timeout=30,
     )
-    response.raise_for_status()
-
-    data = response.json()
-    items = data.get("Items", [])
-
-    if not items:
-        return None
-
-    return items[0].get("Value")
-
-
-def get_tag_metadata(tag_name: str) -> dict:
-    point = get_point_by_tag(tag_name)
-    web_id = point["WebId"]
-
-    instrumenttag = get_point_attribute(web_id, "instrumenttag")
-    location1 = get_point_attribute(web_id, "location1")
-    location2 = get_point_attribute(web_id, "location2")
-    location3 = get_point_attribute(web_id, "location3")
-    location4 = get_point_attribute(web_id, "location4")
-    location5 = get_point_attribute(web_id, "location5")
-
-    return {
-        "tag": point.get("Name", tag_name),
-        "path": point.get("Path"),
-        "descriptor": point.get("Descriptor"),
-        "point_class": point.get("PointClass"),
-        "point_type": point.get("PointType"),
-        "digital_set_name": point.get("DigitalSetName"),
-        "engineering_units": point.get("EngineeringUnits"),
-        "span": point.get("Span"),
-        "zero": point.get("Zero"),
-        "step": point.get("Step"),
-        "future": point.get("Future"),
-        "display_digits": point.get("DisplayDigits"),
-        "instrumenttag": instrumenttag,
-        "location1": location1,
-        "location2": location2,
-        "location3": location3,
-        "location4": location4,
-        "location5": location5,
-    }
-
-
-if __name__ == "__main__":
-    result = get_tag_metadata("LFI_RB3_VAZ_GN_TOTAL")
-    print(result)
+    r.raise_for_status()
+    items = r.json().get("Items", [])
+    return items[0].get("Value") if items else None
 ```
 
 ---
 
-# CHUNK 19 - O que não fazer
+# CHUNK 19 - Diretrizes de qualidade e anti-padrões
 
 ## Intenção
 
-Use este chunk para evitar erros comuns do agente.
+Use para evitar interpretações frágeis em consulta e cálculo.
 
-## Regras negativas
+## Diretrizes
 
-Não consultar stream usando nome da tag:
-
-```text
-Errado:
-GET /streams/LFI_RB3_VAZ_GN_TOTAL/value
-```
-
-Correto:
-
-```text
-GET /points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
-GET /streams/{webId}/value
-```
-
-Não assumir que uma tag tem digital set se `DigitalSetName` estiver vazio.
-
-Não tratar `Good=false` como zero.
-
-Não inventar unidade se `EngineeringUnits` vier vazio.
-
-Não inventar instrumenttag se o atributo não existir ou vier vazio.
-
-Não usar `recorded` quando o usuário pediu intervalo fixo. Usar `interpolated`.
-
-Não usar `interpolated` quando o usuário pediu eventos reais gravados. Usar `recorded`.
-
-Não somar vazão sem explicar o critério de cálculo.
-
-Não escolher automaticamente uma tag se a busca retornar múltiplas tags parecidas.
+| Situação                           | Interpretação recomendada                             |
+| ---------------------------------- | ----------------------------------------------------- |
+| Stream solicitado pelo nome da tag | Primeiro resolver `WebId` com `/points?path=...`      |
+| `DigitalSetName` vazio             | Tratar como ausência de digital set                   |
+| `Good=false`                       | Considerar dado ruim, não valor numérico confiável    |
+| `EngineeringUnits` vazio           | Responder sem inventar unidade                        |
+| Atributo vazio                     | Informar que o atributo não foi encontrado/preenchido |
+| Série em intervalo fixo            | Preferir `interpolated`                               |
+| Eventos reais gravados             | Preferir `recorded`                                   |
+| Busca com muitos candidatos        | Solicitar escolha da tag correta                      |
+| Consumo de vazão                   | Explicar o critério de cálculo e a unidade inferida   |
 
 ---
 
-# CHUNK 20 - Documento mínimo que sempre deveria ser recuperado
+# CHUNK 20 - Seleção de tool e resumo operacional
 
 ## Intenção
 
-Este chunk deve ter alta prioridade no RAG. Ele resume o comportamento central da PI Web API para consultas de tags.
+Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
-## Resumo operacional
+## Mapa de tools
 
-Para consultar qualquer tag no PI Web API:
+| Intenção                                                          | Interpretação              | Tool sugerida         |
+| ----------------------------------------------------------------- | -------------------------- | --------------------- |
+| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `consultar_tag_tool`  |
+| Média, máximo, mínimo, soma, consumo, total por período           | Agregação histórica        | `tag_statistics_tool` |
+| Integral, derivada, taxa de variação, área sob curva              | Cálculo temporal explícito | `tag_calculus_tool`   |
+| Status do PIMS, servidores, logs                                  | Consulta operacional       | `status_pims_tool`    |
+
+## Consumo de vazão
+
+Para consumo, interprete o resultado como volume acumulado. Uma tag em `Nm3/h` mede vazão; o consumo calculado no período é apresentado em unidade de volume, como `Nm3`.
 
 ```text
-1. Monte o path da tag:
-   \\PIMS\NOME_DA_TAG
-
-2. Busque o PI Point:
-   GET http://10.247.224.39/piwebapi/points?path=\\PIMS\NOME_DA_TAG
-
-3. Extraia:
-   WebId
-   Name
-   Descriptor
-   PointType
-   DigitalSetName
-   EngineeringUnits
-   Links
-
-4. Para valor atual:
-   GET /streams/{WebId}/value
-
-5. Para histórico bruto:
-   GET /streams/{WebId}/recorded
-
-6. Para interpolado:
-   GET /streams/{WebId}/interpolated
-
-7. Para média/mínimo/máximo/total:
-   GET /streams/{WebId}/summary
-
-8. Para instrumenttag/location:
-   GET /points/{WebId}/attributes?name=instrumenttag
-   GET /points/{WebId}/attributes?name=location1
-
-9. Para digital states:
-   usar DigitalSetName -> dataservers/PIMS/enumerationsets -> enumerationvalues
+tag_statistics_tool:
+  data_method = "summary"
+  summary_type = "Average"
+  summary_duration = "1h"
+  calculation_basis = "TimeWeighted"
+  operation = "sum"
 ```
 
-## Resposta sempre deve considerar
+## Estatística simples
 
 ```text
-Valor
-Unidade
-Timestamp
-Qualidade
-Descrição da tag
+tag_statistics_tool:
+  data_method = "summary"
+  summary_type = Average, Maximum, Minimum, Total, Count, Range ou StdDev
+  summary_duration = usado quando o cálculo for por blocos
+  calculation_basis = TimeWeighted para variáveis contínuas
 ```
 
-## Campos reais importantes no ambiente atual
+## Cálculo temporal
 
 ```text
-EngineeringUnits
-DigitalSetName
-Descriptor
-PointType
-Links.Value
-Links.Attributes
-Links.RecordedData
-Links.InterpolatedData
-Links.SummaryData
-Links.PlotData
+tag_calculus_tool:
+  data_method = "interpolated"
+  interval = "1m" ou outra frequência
+  operation = "integral" ou "derivative"
+  time_unit = "hour", "minute", "second" ou "none"
+```
+
+## Períodos fechados
+
+Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Exemplo de maio de 2026:
+
+```text
+start_time = 2026-05-01T00:00:00-03:00
+end_time   = 2026-06-01T00:00:00-03:00
+```
+
+## Resposta
+
+Inclua valor, unidade retornada ou inferida, período/timestamp, qualidade e descriptor quando disponível.
+
+---
+
+# CHUNK 21 - Cálculos temporais: integral e derivada
+
+## Intenção
+
+Use quando o usuário pedir explicitamente integral, derivada, taxa de variação, área sob a curva ou velocidade de mudança.
+
+## Tool
+
+`tag_calculus_tool` é voltada para cálculo temporal matemático explícito.
+
+## Parâmetros principais
+
+```text
+operation    integral ou derivative
+data_method  geralmente interpolated
+interval     frequência de amostragem, como 1m ou 5m
+time_unit    unidade temporal do cálculo: second, minute, hour ou none
+start_time   início do período
+end_time     fim do período
+```
+
+## Exemplo compacto
+
+```text
+Usuário: "Integre VAZAO_LINHA_01 nas últimas 6 horas com pontos a cada 5 minutos"
+
+tag_calculus_tool:
+  tags = ["VAZAO_LINHA_01"]
+  operation = "integral"
+  data_method = "interpolated"
+  interval = "5m"
+  time_unit = "hour"
+  start_time = "*-6h"
+  end_time = "*"
+```
+
+## Diferença de intenção
+
+| Pedido                      | Interpretação                          | Tool sugerida         |
+| --------------------------- | -------------------------------------- | --------------------- |
+| consumo total de vazão      | consolidação operacional por período   | `tag_statistics_tool` |
+| integral da vazão           | cálculo matemático da área sob a curva | `tag_calculus_tool`   |
+| soma dos valores horários   | agregação dos blocos retornados        | `tag_statistics_tool` |
+| taxa de variação por minuto | derivada temporal                      | `tag_calculus_tool`   |
+
+## Unidade
+
+`time_unit` descreve unidade temporal do cálculo, não a unidade de engenharia da tag. A unidade final da resposta é inferida combinando unidade da tag, operação e unidade temporal.
+
+---
+
+# CHUNK 22 - RAG e recuperação recomendada
+
+## Intenção
+
+Use para orientar montagem de contexto em um RAG com top-k baixo.
+
+## Diretriz
+
+Mantenha um chunk base com o fluxo `tag -> WebId -> endpoint` e recupere chunks específicos pela intenção atual.
+
+## Sugestão de contexto final
+
+```text
+1. Chunk base de fluxo PI Web API.
+2. Chunk específico da intenção: valor atual, summary, digital states, consumo, erro etc.
+3. Chunk de qualidade/resposta ou seleção de tool, quando útil.
+```
+
+## Query de recuperação
+
+Monte a query com a mensagem atual, tags detectadas e termos técnicos da intenção. Evite usar stacktraces ou erros antigos como texto principal da busca.
+
+Exemplo:
+
+```text
+consumo vazão mês passado
+Tags: LFI_RB3_VAZ_GN_TOTAL
+Termos: summary Average 1h TimeWeighted consumo
 ```

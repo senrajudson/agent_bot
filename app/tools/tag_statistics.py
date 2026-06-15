@@ -34,12 +34,20 @@ class TagStatisticsInput(BaseModel):
     )
 
     start_time: str = Field(
-        description="Início do período. Para períodos fechados, use data e hora completas."
+        description=(
+            "Início do período em formato PI Web API. "
+            "Relativos: '*-2h' (2h atrás), '*-1d' (1 dia atrás), '*-7d' (7 dias atrás). "
+            "Absolutos: '2026-05-01T00:00:00', '2026-06-15T08:00:00Z'. "
+            "Para mês fechado, use início do mês: '2026-05-01T00:00:00-03:00'."
+        )
     )
 
     end_time: str = Field(
         default="*",
-        description="Fim do período. Use '*' para agora.",
+        description=(
+            "Fim do período. Use '*' para agora. "
+            "Para mês fechado, use início do próximo mês: '2026-06-01T00:00:00-03:00'."
+        ),
     )
 
     data_method: TemporalDataMethod = Field(
@@ -117,32 +125,11 @@ async def tag_statistics_tool(
     context_text: str | None = None,
     max_count: int = 200000,
 ) -> str:
-    """
-    Executa estatísticas históricas de tags do PI System.
-
-    Use esta tool quando o usuário pedir agregações históricas, consolidações
-    de valores em um período ou consumo calculado por resumo.
-
-    Exemplos de intenção que usam esta tool:
-    - média, máximo, mínimo de uma tag
-    - soma de valores
-    - consumo de vazão, consumo de gás
-    - consumo diário, consumo mensal
-    - total no período, totalização
-    - estatística histórica
-    - volume acumulado
-
-    Para consumo de vazão em tags com unidade Nm3/h:
-    - Use data_method='summary', summary_type='Average', summary_duration='1h'
-    - Use calculation_basis='TimeWeighted' e operation='sum'
-    - Cada média horária em Nm3/h equivale a 1 Nm3 naquele bloco de 1 hora
-    - A soma final representa o consumo estimado em Nm3
-
-    Contrato:
-    - Sempre envie todos os campos do schema.
-    - Quando um campo não se aplicar ao data_method, envie null.
-    - Não envie campos fora do schema.
-    """
+    """Executa estatísticas históricas de tags do PI System."""
+    if data_method == "summary":
+        summary_type = summary_type or "Average"
+        summary_duration = summary_duration or "1h"
+        calculation_basis = calculation_basis or "TimeWeighted"
 
     result = await executar_estatistica_tags_service(
         tags=tags,
