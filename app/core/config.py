@@ -56,5 +56,7 @@ class Settings(BaseSettings):
     CHAT_MEMORY_TTL_SECONDS: int = 604800
     CHAT_MEMORY_MAX_TURNS: int = 8
 
+    MCP_SERVER_URL: str = "http://localhost:8003/mcp"
+
 
 settings = Settings()

@@ -402,10 +402,21 @@ GET /streams/{webId}/summary?startTime=2026-05-01T00:00:00-03:00&endTime=2026-06
 
 Para cálculo de um mês completo, use o primeiro dia do mês calculado como início e o primeiro dia do mês seguinte como fim. Esse padrão representa início inclusivo e fim exclusivo.
 
+Antes de chamar a tool, resolva o período para `start_time` e `end_time` em ISO 8601 explícito com offset local. Para mês fechado, não envie períodos relativos como `*`, `*-1M`, `*-30d` ou equivalentes.
+
 ```text
 Maio/2026:
 start_time = 2026-05-01T00:00:00-03:00
 end_time   = 2026-06-01T00:00:00-03:00
+```
+
+Formato esperado na chamada da tool:
+
+```json
+{
+  "start_time": "2026-05-01T00:00:00-03:00",
+  "end_time": "2026-06-01T00:00:00-03:00"
+}
 ```
 
 ## Resposta sugerida
@@ -555,6 +566,8 @@ Quando o usuário falar em horário local, prefira ISO 8601 com offset:
 
 Para períodos por dia, mês ou ano, use início inclusivo e fim exclusivo.
 
+Em períodos fechados, `start_time` e `end_time` devem ser enviados em ISO 8601 explícito com offset local. Não envie `*`, `*-1M`, `*-1d`, `T`, `Y` ou outras strings relativas quando o usuário pedir um período calendário fechado, como `mês passado`, `maio de 2026`, `ontem`, `dia 15/06/2026` ou `ano passado`.
+
 ```text
 Dia 15/06/2026:
 start_time = 2026-06-15T00:00:00-03:00
@@ -565,6 +578,15 @@ end_time   = 2026-06-16T00:00:00-03:00
 Maio/2026:
 start_time = 2026-05-01T00:00:00-03:00
 end_time   = 2026-06-01T00:00:00-03:00
+```
+
+Formato esperado na chamada da tool:
+
+```json
+{
+  "start_time": "2026-05-01T00:00:00-03:00",
+  "end_time": "2026-06-01T00:00:00-03:00"
+}
 ```
 
 ---
@@ -815,11 +837,24 @@ tag_calculus_tool:
 
 ## Períodos fechados
 
-Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Exemplo de maio de 2026:
+Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Antes da execução, converta expressões como `mês passado`, `ontem`, `dia anterior`, `mês atual` e `ano passado` para `start_time` e `end_time` em ISO 8601 explícito com offset local.
+
+Não chame `tag_statistics_tool` com períodos relativos como `*`, `*-1M`, `*-30d` ou `*-1d` quando a intenção for período fechado.
+
+Exemplo de maio de 2026:
 
 ```text
 start_time = 2026-05-01T00:00:00-03:00
 end_time   = 2026-06-01T00:00:00-03:00
+```
+
+Formato esperado na chamada da tool:
+
+```json
+{
+  "start_time": "2026-05-01T00:00:00-03:00",
+  "end_time": "2026-06-01T00:00:00-03:00"
+}
 ```
 
 ## Resposta
@@ -906,5 +941,5 @@ Exemplo:
 ```text
 consumo vazão mês passado
 Tags: LFI_RB3_VAZ_GN_TOTAL
-Termos: summary Average 1h TimeWeighted consumo
+Termos: summary Average 1h TimeWeighted consumo start_time end_time ISO período fechado
 ```

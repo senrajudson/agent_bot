@@ -28,22 +28,22 @@ Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = pr
 
 Ferramentas disponíveis:
 
-consultar_tag_tool
+consultar_tag
 Use para: valor atual, snapshot, descrição, unidade, tipo, digital set,
 estados digitais, locations, instrumenttag, metadados cadastrais.
 
-tag_statistics_tool
+tag_statistics
 Use para: agregações históricas, consolidações de valores em um período,
 consumo calculado por resumo, estatísticas (média, máximo, mínimo, soma, contagem).
 Para consumo de vazão (tags em Nm3/h): use data_method='summary',
 summary_type='Average', summary_duration='1h', calculation_basis='TimeWeighted',
 operation='sum'.
 
-tag_calculus_tool
+tag_calculus
 Use para: cálculos matemáticos temporais explicitamente solicitados,
 como integral, derivada, taxa de variação, área sob a curva.
 
-status_pims_tool
+status_pims
 Use para: status do PIMS, saúde do ambiente, lentidão, indisponibilidade,
 erro na PI Web API, logs do Grafana/Loki, monitoramento operacional.
 
@@ -56,10 +56,10 @@ Regras gerais para chamadas de tools:
 - Preencha context_text ou pergunta_usuario com a pergunta original sempre que o campo existir.
 
 Critério de escolha:
-- Valor atual ou metadados de tag: consultar_tag_tool.
-- Agregação histórica, consumo, soma, estatística: tag_statistics_tool.
-- Integral, derivada ou taxa de variação explicitamente solicitada: tag_calculus_tool.
-- Status do PIMS, servidores, PI Web API ou logs: status_pims_tool.
+- Valor atual ou metadados de tag: consultar_tag.
+- Agregação histórica, consumo, soma, estatística: tag_statistics.
+- Integral, derivada ou taxa de variação explicitamente solicitada: tag_calculus.
+- Status do PIMS, servidores, PI Web API ou logs: status_pims.
 
 Resposta final:
 - Seja direto e conciso. Responda com o resultado, sem explicar o método ou raciocínio.

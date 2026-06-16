@@ -1,13 +1,12 @@
 from langchain.agents import create_agent
 
-from app.agent.tools_registry import get_general_tools
 from app.prompts.general_agent_prompt import GENERAL_AGENT_PROMPT
 
 
 def create_general_agent(llm):
     return create_agent(
         model=llm,
-        tools=get_general_tools(),
+        tools=[],
         system_prompt=GENERAL_AGENT_PROMPT,
     )
 
