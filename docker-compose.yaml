@@ -9,11 +9,23 @@ services:
     ports:
       - "8001:8001"
 
+  mcp_server:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    image: pi_mcp_server:0.1.0
+    container_name: mcp_server
+    restart: always
+    ports:
+      - "8003:8003"
+    env_file:
+      - ./mcp_server/.env
+
   agent_bot:
     build:
       context: .
       dockerfile: Dockerfile
-    image: agent_bot:0.1.0
+    image: agent_bot:0.2.0
     container_name: agent_bot
     restart: always
     ports:
@@ -22,3 +34,4 @@ services:
       - ./app/.env
     depends_on:
       - math_tool
+      - mcp_server
