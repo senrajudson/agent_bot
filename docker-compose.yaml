@@ -35,3 +35,21 @@ services:
     depends_on:
       - math_tool
       - mcp_server
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent_bot:0.2.0
+    container_name: agent_bot_worker
+    restart: always
+    command: ["python", "-m", "app.worker_main"]
+    env_file:
+      - ./app/.env
+    volumes:
+      - ${GOOGLE_APPLICATION_CREDENTIALS:-./secrets/gcp-key.json}:/secrets/gcp-key.json:ro
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-key.json
+    depends_on:
+      - math_tool
+      - mcp_server

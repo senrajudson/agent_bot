@@ -29,8 +29,24 @@ from app.tasks.ocr_query import run_ocr_for_images
 
 
 def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content.strip()
+
+    parts_attr = getattr(content, "parts", None)
+    if parts_attr is not None:
+        text_parts: list[str] = []
+        for part in parts_attr:
+            if part is None:
+                continue
+            if getattr(part, "thought", False):
+                continue
+            text = getattr(part, "text", None)
+            if text:
+                text_parts.append(str(text))
+        if text_parts:
+            return "\n".join(text_parts).strip()
 
     if isinstance(content, list):
         parts: list[str] = []

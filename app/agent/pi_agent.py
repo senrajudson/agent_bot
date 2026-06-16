@@ -54,6 +54,21 @@ def _safe_text(content: Any) -> str:
         return ""
     if isinstance(content, str):
         return content
+
+    parts_attr = getattr(content, "parts", None)
+    if parts_attr is not None:
+        text_parts: list[str] = []
+        for part in parts_attr:
+            if part is None:
+                continue
+            if getattr(part, "thought", False):
+                continue
+            text = getattr(part, "text", None)
+            if text:
+                text_parts.append(str(text))
+        if text_parts:
+            return "\n".join(text_parts).strip()
+
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
@@ -66,7 +81,8 @@ def _safe_text(content: Any) -> str:
             else:
                 parts.append(str(item))
         return "\n".join(parts).strip()
-    return str(content)
+
+    return str(content).strip()
 
 
 def _event_to_message(event: Any) -> dict[str, Any] | None:

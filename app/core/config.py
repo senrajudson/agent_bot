@@ -58,5 +58,15 @@ class Settings(BaseSettings):
 
     MCP_SERVER_URL: str = "http://localhost:8003/mcp"
 
+    PUBSUB_ENABLED: bool = False
+    PUBSUB_PROJECT_ID: str | None = None
+    PUBSUB_INCOMING_SUBSCRIPTION: str = "projects/your-gcp-project/subscriptions/agent-bot-incoming-sub"
+    PUBSUB_OUTGOING_TOPIC: str = "projects/your-gcp-project/topics/agent-bot-outgoing"
+    PUBSUB_WORKER_CONCURRENCY: int = 4
+    PUBSUB_DEDUP_TTL_SECONDS: int = 3600
+    PUBSUB_SHUTDOWN_TIMEOUT_SECONDS: float = 30.0
+
+    GOOGLE_APPLICATION_CREDENTIALS: str | None = None
+
 
 settings = Settings()
