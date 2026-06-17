@@ -14,6 +14,29 @@ class GoogleChatUser:
 
 
 @dataclass(slots=True)
+class GoogleChatAttachment:
+    name: str = ""
+    content_name: str = ""
+    content_type: str = ""
+    resource_name: str = ""
+    source: str = ""
+    thumbnail_uri: str = ""
+    download_uri: str = ""
+
+    @property
+    def is_uploaded_content(self) -> bool:
+        return self.source.upper() == "UPLOADED_CONTENT"
+
+    @property
+    def is_image(self) -> bool:
+        return self.content_type.lower().startswith("image/")
+
+    @property
+    def can_download_with_chat_api(self) -> bool:
+        return self.is_uploaded_content and bool(self.resource_name)
+
+
+@dataclass(slots=True)
 class GoogleChatIncomingMessage:
     pubsub_message_id: str = ""
     event_type: str = "UNKNOWN"
@@ -33,6 +56,7 @@ class GoogleChatIncomingMessage:
     event_time: str = ""
 
     user: GoogleChatUser = field(default_factory=GoogleChatUser)
+    attachments: list[GoogleChatAttachment] = field(default_factory=list)
 
     user_locale: str = ""
     time_zone_id: str = ""
@@ -57,10 +81,18 @@ class GoogleChatIncomingMessage:
         return bool(self.clean_text)
 
     @property
+    def has_attachments(self) -> bool:
+        return bool(self.attachments)
+
+    @property
+    def has_image_attachments(self) -> bool:
+        return any(attachment.is_image for attachment in self.attachments)
+
+    @property
     def can_process(self) -> bool:
         return (
             self.event_type == "MESSAGE"
-            and self.has_text
+            and (self.has_text or self.has_image_attachments)
             and bool(self.space_name)
             and bool(self.message_name)
             and not self.is_from_bot
@@ -78,5 +110,7 @@ class GoogleChatIncomingMessage:
             "user_display_name": self.user.display_name,
             "user_email": self.user.email,
             "user_type": self.user.type,
+            "attachments_count": len(self.attachments),
+            "image_attachments_count": sum(1 for item in self.attachments if item.is_image),
             "can_process": self.can_process,
         }

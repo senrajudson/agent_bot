@@ -16,10 +16,16 @@ from app.bridge.google_chat.config import (
     get_google_chat_bridge_settings,
 )
 from app.bridge.google_chat.dedupe_store import DedupeStore
+from app.bridge.google_chat.media_downloader import GoogleChatMediaDownloader
 from app.bridge.google_chat.parser import parse_google_chat_event
 from app.bridge.google_chat.pubsub_subscriber import GoogleChatPubSubSubscriber
 
 logger = logging.getLogger(__name__)
+
+FAILURE_MESSAGE = (
+    "Não consegui processar essa mensagem. "
+    "A solicitação foi encerrada para evitar repetição automática."
+)
 
 
 class GoogleChatBridgeWorker:
@@ -46,6 +52,7 @@ class GoogleChatBridgeWorker:
         self.agent_adapter = AgentAdapter(settings=self.settings)
         self.chat_client = GoogleChatClient(settings=self.settings)
         self.dedupe_store = DedupeStore(settings=self.settings)
+        self.media_downloader = GoogleChatMediaDownloader(settings=self.settings)
 
     def run_once(self, timeout_seconds: int = 120) -> None:
         finished = threading.Event()
@@ -168,7 +175,19 @@ class GoogleChatBridgeWorker:
                     event.message_name,
                 )
 
-            answer = self.agent_adapter.ask(event)
+            downloaded_images = self.media_downloader.download_images_from_event(event)
+
+            if downloaded_images:
+                logger.info(
+                    "Imagens baixadas para OCR. count=%s total_bytes=%s",
+                    len(downloaded_images),
+                    sum(image.size_bytes for image in downloaded_images),
+                )
+
+            answer = self.agent_adapter.ask(
+                event=event,
+                images=downloaded_images,
+            )
 
             logger.info("Resposta do agente:")
             logger.info("\n%s", answer)
@@ -209,11 +228,59 @@ class GoogleChatBridgeWorker:
                 json.dumps(payload, ensure_ascii=False) if payload else None,
             )
 
-            if event is not None and dedupe_started:
-                self.dedupe_store.release_processing(event)
+            self._finish_after_error(
+                pubsub_message=message,
+                event=event,
+                dedupe_started=dedupe_started,
+                thinking_message_name=thinking_message_name,
+            )
 
-            message.nack()
-            logger.info("NACK enviado após erro.")
+    def _finish_after_error(
+        self,
+        pubsub_message: pubsub_v1.subscriber.message.Message,
+        event,
+        dedupe_started: bool,
+        thinking_message_name: str | None,
+    ) -> None:
+        if event is not None and dedupe_started:
+            try:
+                self.dedupe_store.mark_done(event)
+                logger.info(
+                    "Erro marcado como finalizado no dedupe. message_name=%s",
+                    event.message_name,
+                )
+            except Exception:
+                logger.exception("Falha ao marcar erro como finalizado no dedupe.")
+
+        if self.send_to_chat:
+            if thinking_message_name:
+                try:
+                    self.chat_client.update_text(
+                        message_name=thinking_message_name,
+                        text=FAILURE_MESSAGE,
+                    )
+
+                    logger.info(
+                        "Mensagem de espera atualizada com falha controlada. message_name=%s",
+                        thinking_message_name,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Falha ao atualizar mensagem de espera após erro."
+                    )
+
+            pubsub_message.ack()
+            logger.info("ACK enviado após erro para evitar loop.")
+            return
+
+        if event is not None and dedupe_started:
+            try:
+                self.dedupe_store.release_processing(event)
+            except Exception:
+                logger.exception("Falha ao liberar processing no dedupe.")
+
+        pubsub_message.nack()
+        logger.info("Modo teste: NACK enviado após erro.")
 
 
 def main() -> None:

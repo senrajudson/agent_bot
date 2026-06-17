@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     PIMS_STATUS_LOOKBACK_MINUTES: int = 20
     PIMS_STATUS_LIMIT: int = 5000
 
-    MATH_TOOL_BASE_URL: str = "http://localhost:8001"
+    MATH_TOOL_BASE_URL: str = "http://math_tool:8001"
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
 
     MCP_HOST: str = "0.0.0.0"

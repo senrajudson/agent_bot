@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     PHOENIX_COLLECTOR_ENDPOINT: str = "http://localhost:6006/v1/traces"
     PHOENIX_PROTOCOL: str = "http/protobuf"
 
-    MATH_TOOL_BASE_URL: str = "http://localhost:8001"
+    MATH_TOOL_BASE_URL: str = "http://math_tool:8001"
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
 
     QDRANT_URL: str = "http://10.247.179.197:6333"

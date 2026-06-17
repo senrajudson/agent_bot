@@ -34,6 +34,7 @@ services:
       - ./app/.env
     environment:
       - MCP_SERVER_URL=http://host.docker.internal:8005/mcp
+      - MATH_TOOL_BASE_URL=http://math_tool:8001
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

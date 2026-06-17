@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.bridge.google_chat.models import GoogleChatIncomingMessage, GoogleChatUser
+from app.bridge.google_chat.models import (
+    GoogleChatAttachment,
+    GoogleChatIncomingMessage,
+    GoogleChatUser,
+)
 
 
 def parse_google_chat_event(data: dict[str, Any]) -> GoogleChatIncomingMessage:
@@ -21,6 +25,8 @@ def parse_google_chat_event(data: dict[str, Any]) -> GoogleChatIncomingMessage:
     time_zone = _as_dict(common_event_object.get("timeZone"))
 
     event_type = _detect_event_type(event=event, message_payload=message_payload)
+
+    attachments = _parse_attachments(message)
 
     return GoogleChatIncomingMessage(
         pubsub_message_id=str(data.get("pubsubMessageId", "") or ""),
@@ -42,11 +48,42 @@ def parse_google_chat_event(data: dict[str, Any]) -> GoogleChatIncomingMessage:
             type=str(sender.get("type", "") or ""),
             domain_id=str(sender.get("domainId", "") or ""),
         ),
+        attachments=attachments,
         user_locale=str(common_event_object.get("userLocale", "") or ""),
         time_zone_id=str(time_zone.get("id", "") or ""),
         time_zone_offset=_parse_optional_int(time_zone.get("offset")),
         raw_event=event,
     )
+
+
+def _parse_attachments(message: dict[str, Any]) -> list[GoogleChatAttachment]:
+    raw_attachments = message.get("attachment")
+
+    if raw_attachments is None:
+        raw_attachments = message.get("attachments")
+
+    if not isinstance(raw_attachments, list):
+        return []
+
+    parsed_attachments: list[GoogleChatAttachment] = []
+
+    for raw_attachment in raw_attachments:
+        attachment = _as_dict(raw_attachment)
+        attachment_data_ref = _as_dict(attachment.get("attachmentDataRef"))
+
+        parsed_attachments.append(
+            GoogleChatAttachment(
+                name=str(attachment.get("name", "") or ""),
+                content_name=str(attachment.get("contentName", "") or ""),
+                content_type=str(attachment.get("contentType", "") or ""),
+                resource_name=str(attachment_data_ref.get("resourceName", "") or ""),
+                source=str(attachment.get("source", "") or ""),
+                thumbnail_uri=str(attachment.get("thumbnailUri", "") or ""),
+                download_uri=str(attachment.get("downloadUri", "") or ""),
+            )
+        )
+
+    return parsed_attachments
 
 
 def _extract_event(data: dict[str, Any]) -> dict[str, Any]:

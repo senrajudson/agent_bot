@@ -9,6 +9,7 @@ from app.bridge.google_chat.config import (
     GoogleChatBridgeSettings,
     get_google_chat_bridge_settings,
 )
+from app.bridge.google_chat.media_downloader import DownloadedGoogleChatImage
 from app.bridge.google_chat.models import GoogleChatIncomingMessage
 
 logger = logging.getLogger(__name__)
@@ -24,20 +25,30 @@ class AgentAdapter:
         self.settings.validate_google_chat_config()
         self.timeout_seconds = timeout_seconds
 
-    def ask(self, event: GoogleChatIncomingMessage) -> str:
+    def ask(
+        self,
+        event: GoogleChatIncomingMessage,
+        images: list[DownloadedGoogleChatImage] | None = None,
+    ) -> str:
         if not event.can_process:
             raise ValueError(
                 "Evento não pode ser processado pelo agente. "
                 f"Dados: {event.to_log_dict()}"
             )
 
-        payload = self._build_agent_payload(event)
+        images = images or []
+
+        payload = self._build_agent_payload(
+            event=event,
+            images=images,
+        )
 
         logger.info(
-            "Enviando mensagem para o agente. url=%s message_name=%s space_name=%s",
+            "Enviando mensagem para o agente. url=%s message_name=%s space_name=%s images=%s",
             self.settings.agent_internal_url,
             event.message_name,
             event.space_name,
+            len(images),
         )
 
         try:
@@ -87,17 +98,35 @@ class AgentAdapter:
     def _build_agent_payload(
         self,
         event: GoogleChatIncomingMessage,
+        images: list[DownloadedGoogleChatImage],
     ) -> dict[str, Any]:
-        session_id = event.space_name
-        conversation_id = event.thread_name or event.space_name
         user_id = event.user.name or event.user.email or "google-chat-user"
 
-        return {
-            "message": event.clean_text,
-            "session_id": session_id,
-            "conversation_id": conversation_id,
+        message = event.clean_text
+
+        if images and not message:
+            message = (
+                "Faça OCR da imagem enviada e responda com base no texto extraído. "
+                "Se a imagem contiver apenas uma tag, retorne a tag identificada."
+            )
+
+        payload: dict[str, Any] = {
+            "message": message,
             "user_id": user_id,
         }
+
+        if images:
+            payload["images"] = [
+                {
+                    "image_base64": image.base64_data,
+                    "mime_type": image.content_type or "image/png",
+                    "file_name": image.filename,
+                    "image_index": index,
+                }
+                for index, image in enumerate(images)
+            ]
+
+        return payload
 
     @staticmethod
     def _extract_answer(response: httpx.Response) -> str:
