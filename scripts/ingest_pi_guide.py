@@ -108,7 +108,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 # ---------------------------------------------------------------------------
 def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
     """Create collection (if needed) and upsert all chunks."""
-    client = QdrantClient(url=QDRANT_URL)
+    client = QdrantClient(url=QDRANT_URL, timeout=120)
 
     # Delete collection if it exists
     collections = [c.name for c in client.get_collections().collections]

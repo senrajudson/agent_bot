@@ -19,3 +19,5 @@ debug_responses/
 
 auth*
 phoenix_data/
+
+*secret*

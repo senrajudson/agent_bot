@@ -17,7 +17,7 @@ services:
     container_name: mcp_server
     restart: always
     ports:
-      - "8003:8003"
+      - "8005:8005"
     env_file:
       - ./mcp_server/.env
 
@@ -32,24 +32,29 @@ services:
       - "8002:8002"
     env_file:
       - ./app/.env
+    environment:
+      - MCP_SERVER_URL=http://host.docker.internal:8005/mcp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - math_tool
       - mcp_server
 
-  worker:
+  agent_bot_chat_bridge:
     build:
       context: .
       dockerfile: Dockerfile
     image: agent_bot:0.2.0
-    container_name: agent_bot_worker
+    container_name: agent_bot_chat_bridge
     restart: always
-    command: ["python", "-m", "app.worker_main"]
+    command: python -m app.bridge.google_chat.worker --send
     env_file:
       - ./app/.env
-    volumes:
-      - ${GOOGLE_APPLICATION_CREDENTIALS:-./secrets/gcp-key.json}:/secrets/gcp-key.json:ro
     environment:
-      - GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp-key.json
-    depends_on:
-      - math_tool
-      - mcp_server
+      - AGENT_INTERNAL_URL=http://host.docker.internal:8003/chat
+      - GOOGLE_APPLICATION_CREDENTIALS=./secrets/chat_secret.json
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./secrets:/app/secrets:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -12,8 +12,9 @@ COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --only=main
 
-# Copy app code
+# Copy app code and RAG guide
 COPY app ./app
+COPY PI_WEB_API_AGENT_GUIDE.md ./PI_WEB_API_AGENT_GUIDE.md
 
 EXPOSE 8002
 

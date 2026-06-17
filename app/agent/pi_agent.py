@@ -82,7 +82,7 @@ def _safe_text(content: Any) -> str:
                 parts.append(str(item))
         return "\n".join(parts).strip()
 
-    return str(content).strip()
+    return str(content)
 
 
 def _event_to_message(event: Any) -> dict[str, Any] | None:
