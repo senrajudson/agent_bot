@@ -1,6 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
+  "small_model": "opencode-go/deepseek-v4-flash",
+
   "permission": {
     "webfetch": "allow",
     "websearch": "allow",

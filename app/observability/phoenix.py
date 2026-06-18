@@ -1,17 +1,22 @@
 """
 Phoenix / OpenTelemetry observability.
 
-Google ADK emits OpenTelemetry spans natively (gen_ai.* attributes) for
-LlmAgent, Runner and tool calls, so Phoenix picks them up via
-auto_instrument=True. LiteLLM calls are also instrumented via the OTel
-HTTPX exporter for outbound HTTP.
+Instruments:
+- FastAPI (HTTP request/response spans)
+- LiteLLM (LLM call spans via openinference-instrumentation-litellm)
+- Google ADK native telemetry (agent, tool, LLM spans)
 """
+
+import logging
 
 from phoenix.otel import register
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from openinference.instrumentation.litellm import LiteLLMInstrumentor
 
 from app.core.config import settings
 
+
+logger = logging.getLogger(__name__)
 
 _tracer_provider = None
 
@@ -33,7 +38,21 @@ def setup_phoenix_tracing():
         batch=False,
     )
 
+    _instrument_litellm()
+
     return _tracer_provider
+
+
+def _instrument_litellm():
+    try:
+        instrumentor = LiteLLMInstrumentor()
+        if not instrumentor.is_instrumented_by_opentelemetry:
+            instrumentor.instrument()
+            logger.info("LiteLLM instrumented successfully")
+        else:
+            logger.debug("LiteLLM already instrumented")
+    except Exception as e:
+        logger.warning("Failed to instrument LiteLLM: %s", e)
 
 
 def instrument_fastapi_app(app):

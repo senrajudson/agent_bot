@@ -33,6 +33,7 @@ services:
     env_file:
       - ./app/.env
     environment:
+      - LLM_PROVIDER=ollama
       - MCP_SERVER_URL=http://mcp_server:8005/mcp
       - MATH_TOOL_BASE_URL=http://math_tool:8001
       - PHOENIX_ENABLED=true
@@ -43,9 +44,6 @@ services:
       - mcp_server
 
   agent_bot_chat_bridge:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: agent_bot:0.2.0
     container_name: agent_bot_chat_bridge
     restart: always
