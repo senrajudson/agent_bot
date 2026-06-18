@@ -33,10 +33,11 @@ services:
     env_file:
       - ./app/.env
     environment:
-      - MCP_SERVER_URL=http://host.docker.internal:8005/mcp
+      - MCP_SERVER_URL=http://mcp_server:8005/mcp
       - MATH_TOOL_BASE_URL=http://math_tool:8001
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - PHOENIX_ENABLED=true
+      - PHOENIX_PROJECT_NAME=pi-chat-api
+      - PHOENIX_COLLECTOR_ENDPOINT=http://10.247.179.197:6006/v1/traces
     depends_on:
       - math_tool
       - mcp_server
@@ -52,10 +53,10 @@ services:
     env_file:
       - ./app/.env
     environment:
-      - AGENT_INTERNAL_URL=http://host.docker.internal:8003/chat
+      - AGENT_INTERNAL_URL=http://agent_bot:8002/chat
       - GOOGLE_APPLICATION_CREDENTIALS=./secrets/chat_secret.json
       - PYTHONUNBUFFERED=1
     volumes:
       - ./secrets:/app/secrets:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - agent_bot

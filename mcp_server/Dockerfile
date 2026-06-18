@@ -11,6 +11,6 @@ RUN poetry config virtualenvs.create false \
 
 COPY . .
 
-EXPOSE 8003
+EXPOSE 8005
 
 CMD ["python", "server.py"]

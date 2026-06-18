@@ -13,8 +13,6 @@ class GoogleChatBridgeSettings(BaseSettings):
         case_sensitive=False,
     )
 
-    google_chat_enabled: bool = Field(default=False, alias="GOOGLE_CHAT_ENABLED")
-
     google_cloud_project: str = Field(default="", alias="GOOGLE_CLOUD_PROJECT")
 
     google_chat_subscription: str = Field(
