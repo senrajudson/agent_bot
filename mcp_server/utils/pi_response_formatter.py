@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 
 def get_attr_value(content: dict[str, Any] | None, default_value: Any = None) -> Any:
-    if not content:
+    if not content or not isinstance(content, dict):
         return default_value
 
     items = content.get("Items") or []
@@ -77,19 +77,49 @@ def format_pi_batch_response(raw_data: dict[str, Any]) -> dict[str, Any]:
         point_entry = raw_data.get(f"point_{idx}", {})
         value_entry = raw_data.get(f"value_{idx}", {})
 
-        point_data = point_entry.get("Content") or {}
-        value_data = value_entry.get("Content") or {}
+        point_status = point_entry.get("Status", 200) if isinstance(point_entry, dict) else 200
+        point_data = point_entry.get("Content") or {} if isinstance(point_entry, dict) else {}
 
-        instrumenttag_data = (raw_data.get(f"instrumenttag_{idx}", {}) or {}).get("Content") or {}
-        engunits_data = (raw_data.get(f"engunits_{idx}", {}) or {}).get("Content") or {}
-        pointtype_data = (raw_data.get(f"pointtype_{idx}", {}) or {}).get("Content") or {}
-        digitalset_data = (raw_data.get(f"digitalset_{idx}", {}) or {}).get("Content") or {}
+        if point_status != 200 or not isinstance(point_data, dict) or not point_data.get("Name"):
+            errors = point_data.get("Errors") if isinstance(point_data, dict) else None
+            error_msg = errors[0] if errors else f"Status HTTP {point_status}"
+            tags_limpas.append(
+                {
+                    "nome": None,
+                    "descricao": None,
+                    "instrumenttag": "N/A",
+                    "valor": None,
+                    "data_atualizacao": None,
+                    "engineeringUnits": "N/A",
+                    "pointType": "N/A",
+                    "digitalSet": "N/A",
+                    "locations": {},
+                    "digital_states_found": False,
+                    "digital_states": [],
+                    "erro": error_msg,
+                }
+            )
+            continue
 
-        location1_data = (raw_data.get(f"location1_{idx}", {}) or {}).get("Content") or {}
-        location2_data = (raw_data.get(f"location2_{idx}", {}) or {}).get("Content") or {}
-        location3_data = (raw_data.get(f"location3_{idx}", {}) or {}).get("Content") or {}
-        location4_data = (raw_data.get(f"location4_{idx}", {}) or {}).get("Content") or {}
-        location5_data = (raw_data.get(f"location5_{idx}", {}) or {}).get("Content") or {}
+        def _attr_content(attr_name: str) -> dict[str, Any]:
+            entry = raw_data.get(f"{attr_name}_{idx}", {})
+            if not isinstance(entry, dict):
+                return {}
+            content = entry.get("Content")
+            return content if isinstance(content, dict) else {}
+
+        value_data = _attr_content("value")
+
+        instrumenttag_data = _attr_content("instrumenttag")
+        engunits_data = _attr_content("engunits")
+        pointtype_data = _attr_content("pointtype")
+        digitalset_data = _attr_content("digitalset")
+
+        location1_data = _attr_content("location1")
+        location2_data = _attr_content("location2")
+        location3_data = _attr_content("location3")
+        location4_data = _attr_content("location4")
+        location5_data = _attr_content("location5")
 
         instrument_tag = get_attr_value(instrumenttag_data, "Não cadastrado")
 
@@ -192,6 +222,13 @@ def formatar_mensagem_tags(tags_limpas: list[dict[str, Any]]) -> str:
     blocos: list[str] = []
 
     for tag_data in tags_limpas:
+        erro = tag_data.get("erro")
+
+        if erro:
+            nome = tag_data.get("nome") or "desconhecida"
+            blocos.append(f"Tag: {nome}\nErro: {erro}")
+            continue
+
         nome = tag_data.get("nome") or "N/A"
         descricao = tag_data.get("descricao") or "N/A"
         instrumenttag = tag_data.get("instrumenttag") or ""

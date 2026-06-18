@@ -37,6 +37,7 @@ def _build_pi_agent() -> LlmAgent:
     model = get_llm(
         LLMParams(
             temperature=0,
+            num_ctx=8192,
             num_predict=1024,
             top_p=0.1,
         )

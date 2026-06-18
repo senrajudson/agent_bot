@@ -16,6 +16,7 @@ from app.utils.ocr_treatment import tratar_saida_ocr
 
 OCR_LLM_PARAMS = LLMParams(
     temperature=0,
+    num_ctx=8192,
     num_predict=512,
     top_p=0.1,
 )
@@ -44,6 +45,8 @@ def _build_completion_kwargs() -> dict[str, Any]:
         kwargs["api_base"] = settings.OLLAMA_BASE_URL
         if OCR_LLM_PARAMS.keep_alive is not None:
             kwargs["keep_alive"] = str(OCR_LLM_PARAMS.keep_alive)
+        if OCR_LLM_PARAMS.num_ctx is not None:
+            kwargs["num_ctx"] = OCR_LLM_PARAMS.num_ctx
     elif provider in {"openai_compatible", "openai-compatible", "openai"}:
         kwargs["model"] = f"openai/{settings.OPENAI_COMPATIBLE_MODEL}"
         kwargs["api_key"] = settings.OPENAI_COMPATIBLE_API_KEY

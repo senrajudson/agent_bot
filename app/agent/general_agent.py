@@ -17,6 +17,7 @@ from app.schemas.llm import LLMParams
 
 GENERAL_LLM_PARAMS = LLMParams(
     temperature=0,
+    num_ctx=8192,
     num_predict=1024,
     top_p=0.1,
 )
@@ -47,6 +48,8 @@ def _build_completion_kwargs() -> dict[str, Any]:
             kwargs["format"] = GENERAL_LLM_PARAMS.format
         if GENERAL_LLM_PARAMS.keep_alive is not None:
             kwargs["keep_alive"] = str(GENERAL_LLM_PARAMS.keep_alive)
+        if GENERAL_LLM_PARAMS.num_ctx is not None:
+            kwargs["num_ctx"] = GENERAL_LLM_PARAMS.num_ctx
     elif provider in {"openai_compatible", "openai-compatible", "openai"}:
         kwargs["model"] = f"openai/{settings.OPENAI_COMPATIBLE_MODEL}"
         kwargs["api_key"] = settings.OPENAI_COMPATIBLE_API_KEY

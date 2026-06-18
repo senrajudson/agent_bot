@@ -79,6 +79,9 @@ def _get_ollama_llm(params: LLMParams) -> BaseLlm:
     if params.format is not None:
         kwargs["format"] = params.format
 
+    if params.num_ctx is not None:
+        kwargs["num_ctx"] = params.num_ctx
+
     return LiteLlm(**kwargs)
 
 
