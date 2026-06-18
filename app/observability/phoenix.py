@@ -4,7 +4,9 @@ Phoenix / OpenTelemetry observability.
 Instruments:
 - FastAPI (HTTP request/response spans)
 - LiteLLM (LLM call spans via openinference-instrumentation-litellm)
-- Google ADK native telemetry (agent, tool, LLM spans)
+- Google GenAI (LLM spans from google.genai SDK used by ADK via openinference)
+- HTTPX (outbound HTTP spans — PI Web API, Qdrant, Grafana, MCP, Math Tool)
+- ADK native telemetry (agent, tool spans) uses the global TracerProvider automatically
 """
 
 import logging
@@ -12,6 +14,8 @@ import logging
 from phoenix.otel import register
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from openinference.instrumentation.litellm import LiteLLMInstrumentor
+from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from app.core.config import settings
 
@@ -39,6 +43,8 @@ def setup_phoenix_tracing():
     )
 
     _instrument_litellm()
+    _instrument_google_genai()
+    _instrument_httpx()
 
     return _tracer_provider
 
@@ -53,6 +59,30 @@ def _instrument_litellm():
             logger.debug("LiteLLM already instrumented")
     except Exception as e:
         logger.warning("Failed to instrument LiteLLM: %s", e)
+
+
+def _instrument_google_genai():
+    try:
+        instrumentor = GoogleGenAIInstrumentor()
+        if not instrumentor.is_instrumented_by_opentelemetry:
+            instrumentor.instrument()
+            logger.info("Google GenAI instrumented successfully")
+        else:
+            logger.debug("Google GenAI already instrumented")
+    except Exception as e:
+        logger.warning("Failed to instrument Google GenAI: %s", e)
+
+
+def _instrument_httpx():
+    try:
+        instrumentor = HTTPXClientInstrumentor()
+        if not instrumentor.is_instrumented_by_opentelemetry:
+            instrumentor.instrument()
+            logger.info("HTTPX instrumented successfully")
+        else:
+            logger.debug("HTTPX already instrumented")
+    except Exception as e:
+        logger.warning("Failed to instrument HTTPX: %s", e)
 
 
 def instrument_fastapi_app(app):
