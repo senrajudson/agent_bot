@@ -20,6 +20,8 @@ services:
       - "8005:8005"
     env_file:
       - ./mcp_server/.env
+    environment:
+      - MCP_PORT=8005
 
   agent_bot:
     build:
