@@ -10,6 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from typing import Any
+
 from fastmcp import FastMCP
 
 from core.config import settings
@@ -21,7 +23,8 @@ mcp = FastMCP(
     "PI System Tools",
     instructions=(
         "Tools for querying PI System tags via PI Web API. "
-        "Use consultar_tag for current values and metadata. "
+        "Use pi_request for any PI Web API call: tag lookup, search, value, "
+        "metadata, attributes, streams, digital states, and batch. "
         "Use tag_statistics for historical aggregations (mean, max, min, sum, consumption). "
         "Use tag_calculus for temporal math (integral, derivative). "
         "Use status_pims for PIMS operational status via Grafana/Loki logs."
@@ -30,36 +33,77 @@ mcp = FastMCP(
 
 
 # ---------------------------------------------------------------------------
-# Tool: consultar_tag
+# Tool: pi_request (generic PI Web API caller)
 # ---------------------------------------------------------------------------
 @mcp.tool
-async def consultar_tag(
-    tags: list[str],
-    pergunta_usuario: str | None = None,
+async def pi_request(
+    method: str,
+    path_template: str,
+    path_params: dict[str, str] | None = None,
+    query_params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+    context_text: str | None = None,
 ) -> str:
     """
-    Consulta valor atual, descrição, unidade de engenharia, tipo, digital set,
-    locations, estados digitais e metadados de tags do PI System.
+    Generic PI Web API caller for any endpoint documented in the guide.
 
-    Use quando o usuário pedir:
-    - valor atual de uma tag
-    - descrição, unidade, tipo da tag
-    - digital set, estados digitais
-    - instrumenttag, locations
-    - metadados cadastrais de tags
+    Use for:
+    - Tag lookup: GET /points?path=\\PIMS\\TAG_NAME
+    - Tag search: GET /dataservers/{PIMS_DATASERVER_WEBID}/points with
+      nameFilter, descriptorFilter, or instrumenttagFilter
+    - Current value: GET /streams/{WebId}/value
+    - Metadata: GET /points?path=... with selectedFields
+    - Attributes: GET /points/{WebId}/attributes?name=...
+    - Recorded/interpolated/summary streams
+    - Digital states: GET /enumerationsets/{WebId}/enumerationvalues
+    - Batch requests: POST /batch
+
+    Path templates (whitelist):
+      IMPORTANTE: path_template recebe SOMENTE o path (sem método).
+      O método HTTP vai no campo "method".
+      Exemplo: path_template="/streams/{WebId}/value", method="GET".
+
+      /points
+      /points/{WebId}
+      /points/{WebId}/attributes
+      /streams/{WebId}/value
+      /streams/{WebId}/recorded
+      /streams/{WebId}/interpolated
+      /streams/{WebId}/summary
+      /streams/{WebId}/plot
+      /dataservers
+      /dataservers/{WebId}/points
+      /dataservers/{WebId}/enumerationsets
+      /enumerationsets/{WebId}/enumerationvalues
+      /streamsets/value
+      /streamsets/recorded
+      /streamsets/interpolated
+      /batch
+
+    Path placeholders:
+      {WebId} — point or data server WebId (discovered via prior call)
+      PIMS_DATASERVER_WEBID — auto-resolved for /dataservers/{WebId}/points
 
     Args:
-        tags: Lista de nomes de tags do PI System (preservar nomes exatos)
-        pergunta_usuario: Pergunta original do usuário (para contexto)
+        method: HTTP method ("GET" or "POST")
+        path_template: One of the whitelisted path templates above
+        path_params: Dict of path placeholders to resolve (e.g. {"WebId": "P0DPm..."})
+        query_params: Query string parameters (e.g. {"path": "\\PIMS\\TAG"})
+        json_body: Request body for POST /batch
+        context_text: Original user question (for tracing/logging)
     """
-    from services.consultar_tag_service import consultar_tags_pi
+    from clients.pi_web_api_client import pi_request as _pi_request
 
-    result = await consultar_tags_pi(
-        tags=tags,
-        pergunta_usuario=pergunta_usuario or "",
-        include_raw_response=False,
+    result = await _pi_request(
+        method=method,
+        path_template=path_template,
+        path_params=path_params,
+        query_params=query_params,
+        json_body=json_body,
     )
-    return result["output"]
+
+    import json
+    return json.dumps(result, ensure_ascii=False, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -80,14 +124,12 @@ async def tag_statistics(
     max_count: int = 200000,
 ) -> str:
     """
-    Executa estatísticas históricas de tags do PI System.
+    Shortcut for historical statistics — internally uses /points + /streams/{webId}/summary.
 
-    Use quando o usuário pedir: média, máximo, mínimo, soma, contagem,
-    mediana, amplitude, variância, desvio padrão, consumo total ou volume acumulado.
-
-    Para consumo de vazão (Nm3/h): use data_method='summary',
-    summary_type='Average', summary_duration='1h', calculation_basis='TimeWeighted',
-    operation='sum'.
+    Use when the user asks for: mean, max, min, sum, count, consumption,
+    median, range, variance, stddev. For consumption of flow tags (Nm3/h):
+    data_method='summary', summary_type='Average', summary_duration='1h',
+    calculation_basis='TimeWeighted', operation='sum'.
 
     Args:
         tags: Lista de tags do PI System
@@ -143,10 +185,10 @@ async def tag_calculus(
     max_count: int = 200000,
 ) -> str:
     """
-    Executa cálculos matemáticos temporais sobre curvas de tags do PI System.
+    Shortcut for temporal calculus — internally uses /points + /streams/{webId}/interpolated.
 
-    Use quando o usuário pedir explicitamente: integral, derivada,
-    taxa de variação, variação por segundo/minuto/hora, área sob a curva.
+    Use when the user explicitly asks for: integral, derivative, rate of change,
+    area under curve, second/minute/hour variation.
 
     Args:
         tags: Lista de tags do PI System
@@ -194,8 +236,8 @@ async def status_pims(
     queda, indisponibilidade ou instabilidade do PIMS, PI Web API, servidores
     e serviços monitorados.
 
-    Use quando o usuário perguntar sobre: status do PIMS, erros, lentidão,
-    indisponibilidade, timeout, erro 500/503, saúde do ambiente.
+    Use when the user asks about: PIMS status, errors, slowness,
+    downtime, timeout, HTTP 500/503, environment health.
 
     Args:
         pergunta_usuario: Texto original da pergunta do usuário

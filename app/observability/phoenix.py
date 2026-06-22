@@ -2,19 +2,16 @@
 Phoenix / OpenTelemetry observability.
 
 Instruments:
-- FastAPI (HTTP request/response spans)
-- LiteLLM (LLM call spans via openinference-instrumentation-litellm)
-- Google GenAI (LLM spans from google.genai SDK used by ADK via openinference)
+- FastAPI (HTTP request/response spans) — via FastAPIInstrumentor
+- LiteLLM (LLM call spans) — auto-instrumented by Phoenix register(auto_instrument=True)
 - HTTPX (outbound HTTP spans — PI Web API, Qdrant, Grafana, MCP, Math Tool)
-- ADK native telemetry (agent, tool spans) uses the global TracerProvider automatically
+- ADK native telemetry (agent, tool spans) — uses the global TracerProvider automatically
 """
 
 import logging
 
 from phoenix.otel import register
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from openinference.instrumentation.litellm import LiteLLMInstrumentor
-from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
 from app.core.config import settings
@@ -34,43 +31,21 @@ def setup_phoenix_tracing():
     if _tracer_provider is not None:
         return _tracer_provider
 
+    # register() with auto_instrument=True auto-instruments all installed
+    # OpenInference libraries (litellm, google_genai) via entry points.
+    # This is enough for LLM spans — no manual LiteLLMInstrumentor call needed.
     _tracer_provider = register(
         project_name=settings.PHOENIX_PROJECT_NAME,
         endpoint=settings.PHOENIX_COLLECTOR_ENDPOINT,
         protocol=settings.PHOENIX_PROTOCOL,
         auto_instrument=True,
         batch=False,
+        verbose=False,
     )
 
-    _instrument_litellm()
-    _instrument_google_genai()
     _instrument_httpx()
 
     return _tracer_provider
-
-
-def _instrument_litellm():
-    try:
-        instrumentor = LiteLLMInstrumentor()
-        if not instrumentor.is_instrumented_by_opentelemetry:
-            instrumentor.instrument()
-            logger.info("LiteLLM instrumented successfully")
-        else:
-            logger.debug("LiteLLM already instrumented")
-    except Exception as e:
-        logger.warning("Failed to instrument LiteLLM: %s", e)
-
-
-def _instrument_google_genai():
-    try:
-        instrumentor = GoogleGenAIInstrumentor()
-        if not instrumentor.is_instrumented_by_opentelemetry:
-            instrumentor.instrument()
-            logger.info("Google GenAI instrumented successfully")
-        else:
-            logger.debug("Google GenAI already instrumented")
-    except Exception as e:
-        logger.warning("Failed to instrument Google GenAI: %s", e)
 
 
 def _instrument_httpx():

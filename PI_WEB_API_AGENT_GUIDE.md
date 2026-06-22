@@ -797,7 +797,11 @@ Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
 | Intenção                                                          | Interpretação              | Tool sugerida         |
 | ----------------------------------------------------------------- | -------------------------- | --------------------- |
-| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `consultar_tag_tool`  |
+| Busca por nome, descrição ou instrumenttag                        | Pesquisa de candidatos     | `pi_request`          |
+| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `pi_request`          |
+| Atributos (instrumenttag, location, engunits)                     | Atributos do PI Point      | `pi_request`          |
+| Digital states (ligado/desligado, etc.)                           | Estados discretos          | `pi_request`          |
+| Streamsets / batch                                                | Múltiplas tags             | `pi_request`          |
 | Média, máximo, mínimo, soma, consumo, total por período           | Agregação histórica        | `tag_statistics_tool` |
 | Integral, derivada, taxa de variação, área sob curva              | Cálculo temporal explícito | `tag_calculus_tool`   |
 | Status do PIMS, servidores, logs                                  | Consulta operacional       | `status_pims_tool`    |
@@ -942,4 +946,144 @@ Exemplo:
 consumo vazão mês passado
 Tags: LFI_RB3_VAZ_GN_TOTAL
 Termos: summary Average 1h TimeWeighted consumo start_time end_time ISO período fechado
+```
+
+---
+
+# CHUNK 23 - Ferramenta genérica pi_request
+
+## Intenção
+
+Use como referência completa para a tool genérica `pi_request`, que permite chamar qualquer endpoint da PI Web API documentado neste guia.
+
+## Whitelist de path_templates
+
+A tool aceita somente estes templates:
+
+| Method | Path template                              | Descrição                                         | Placeholders         |
+| ------ | ------------------------------------------ | ------------------------------------------------- | -------------------- |
+| GET    | `/points`                                  | Buscar PI Point por path ou listar raiz           | —                    |
+| GET    | `/points/{WebId}`                         | Buscar PI Point por WebId                         | WebId                |
+| GET    | `/points/{WebId}/attributes`              | Atributos (instrumenttag, location1..5, etc.)     | WebId                |
+| GET    | `/streams/{WebId}/value`                  | Valor atual                                       | WebId                |
+| GET    | `/streams/{WebId}/recorded`               | Histórico bruto                                   | WebId                |
+| GET    | `/streams/{WebId}/interpolated`           | Valores interpolados                              | WebId                |
+| GET    | `/streams/{WebId}/summary`                | Agregações (Average, Max, Min, Total, Count)      | WebId                |
+| GET    | `/streams/{WebId}/plot`                   | Dados de plot                                     | WebId                |
+| GET    | `/dataservers`                            | Listar data servers                               | —                    |
+| GET    | `/dataservers/{WebId}/points`             | Buscar/listar pontos (nameFilter, etc.)           | WebId                |
+| GET    | `/dataservers/{WebId}/enumerationsets`    | Listar enumeration sets                           | WebId                |
+| GET    | `/enumerationsets/{WebId}/enumerationvalues` | Estados digitais                              | WebId                |
+| GET    | `/streamsets/value`                       | Valor atual de múltiplas tags (?webId=...)        | —                    |
+| GET    | `/streamsets/recorded`                    | Histórico de múltiplas tags                       | —                    |
+| GET    | `/streamsets/interpolated`                | Interpolado de múltiplas tags                     | —                    |
+| POST   | `/batch`                                  | Batch com múltiplas sub-requests                  | —                    |
+
+## Placeholders
+
+- `{WebId}` — preencha com o WebId retornado por uma chamada anterior (ex: `GET /points?path=...` retorna um WebId).
+- `PIMS_DATASERVER_WEBID` — resolvido automaticamente pela tool para o Data Server configurado (PIMS). Não é necessário chamá-lo manualmente.
+
+## Fluxos multi-step
+
+### Valor atual de uma tag conhecida
+
+```text
+1. pi_request(GET, /points, query_params={"path": "\\PIMS\\TAG"})
+2. Extrair WebId do resultado (data.Items[0].WebId)
+3. pi_request(GET, /streams/{WebId}/value)
+```
+
+### Busca por descrição
+
+```text
+1. pi_request(GET, /dataservers/{PIMS_DATASERVER_WEBID}/points,
+              query_params={"descriptorFilter": "*bomba*agua*", "maxCount": 10})
+2. Retornar lista curta (Nome + Descrição)
+```
+
+### Atributos de uma tag
+
+```text
+1. pi_request(GET, /points?path=\\PIMS\\TAG) → WebId
+2. pi_request(GET, /points/{WebId}/attributes?name=instrumenttag)
+```
+
+### Digital states
+
+```text
+1. pi_request(GET, /points?path=\\PIMS\\TAG) → DigitalSetName
+2. pi_request(GET, /dataservers/{PIMS_DATASERVER_WEBID}/enumerationsets)
+3. Encontrar enumeration set com mesmo nome → enumerationsets WebId
+4. pi_request(GET, /enumerationsets/{WebId}/enumerationvalues)
+```
+
+### Batch
+
+```text
+pi_request(POST, /batch, json_body={
+  "point_0": {"Method": "GET", "Resource": "http://10.247.224.39/piwebapi/points?path=\\PIMS\\TAG"},
+  "value_0": {"Method": "GET", "ParentIds": ["point_0"], "Parameters": ["$.point_0.Content.WebId"], "Resource": "http://10.247.224.39/piwebapi/streams/{0}/value"}
+})
+```
+
+## Respostas de busca
+
+Para endpoints de lista (como `/dataservers/{WebId}/points`), a tool retorna:
+
+- `Items`: lista truncada para no máximo 10 itens (Name, WebId, Descriptor, PointType, EngineeringUnits)
+- `items_count`: total de itens encontrados
+- `truncated`: true se houver mais de 10
+- `hint`: instrução para refinar a busca
+
+## Respostas de stream
+
+Para endpoints de stream (`/streams/{WebId}/value`, etc.), a tool retorna:
+
+- `ok`: true
+- `path_called`: path completo chamado
+- `data`: resposta completa da PI Web API
+
+## Erros
+
+Se o path não estiver na whitelist ou o method não corresponder, a tool retorna `ok=false` com a lista de templates permitidos.
+
+Se a PI Web API retornar HTTP 4xx/5xx, a tool retorna `ok=false` com o código de status.
+
+---
+
+# CHUNK 24 - Padrões de busca e desambiguação
+
+## Intenção
+
+Use para orientar a tool `pi_request` quando o usuário não sabe o nome exato da tag.
+
+## Decisão de filtro
+
+| O usuário diz                            | Filtro sugerido        | Exemplo de query_params                     |
+| ---------------------------------------- | ---------------------- | ------------------------------------------- |
+| "tag com nome VAZ_GN"                    | `nameFilter`           | `{"nameFilter": "*VAZ_GN*", "maxCount": 10}` |
+| "tags de bomba d'agua"                   | `descriptorFilter`     | `{"descriptorFilter": "*bomba*agua*", "maxCount": 10}` |
+| "instrumenttag FT-101"                   | `instrumenttagFilter`  | `{"instrumenttagFilter": "*FT-101*", "maxCount": 10}`  |
+| "tag que mede pressão"                   | `descriptorFilter`     | `{"descriptorFilter": "*pressao*", "maxCount": 10}`     |
+| "tagName" parcial ou abreviação          | `nameFilter`           | `{"nameFilter": "*TRECHO*", "maxCount": 10}`            |
+
+## Regras
+
+- Sempre inclua `maxCount=10` (a tool aplica por padrão).
+- Se retornar mais de 10 resultados, apresente uma amostra e peça ao usuário uma busca mais específica.
+- Se não retornar nada, sugira termos diferentes (sinônimos, abreviações, termos em inglês).
+- Se retornar exatamente 1 resultado, pode prosseguir com consultas adicionais (valor, metadados, etc.).
+- Apresente resultados como: Nome | Descrição | Tipo | Unidade.
+
+## Exemplo de resposta
+
+```text
+Encontrei 3 tags relacionadas a "bomba d'agua":
+
+1. Bomba_Agua_P1 - Bomba d'água da planta 1 - Float32 - m³/h
+2. Bomba_Agua_P2 - Bomba d'água da planta 2 - Float32 - m³/h
+3. Bomba_Agua_Eletr - Bomba d'água elétrica - Float32 - kW
+
+Precisa de mais alguma informação sobre alguma dessas tags?
 ```

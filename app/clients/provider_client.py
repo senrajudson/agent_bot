@@ -2,7 +2,7 @@
 LLM Provider factory — Google ADK based.
 
 Returns ADK `BaseLlm` instances for the configured provider:
-- gemini       -> google.adk.models.google_llm.Gemini
+- gemini       -> google.adk.models.lite_llm.LiteLlm (model: gemini/<model>)
 - groq         -> google.adk.models.lite_llm.LiteLlm (model: groq/<model>)
 - ollama       -> google.adk.models.lite_llm.LiteLlm (model: ollama_chat/<model>)
 - openai_compatible -> google.adk.models.lite_llm.LiteLlm (model: openai/<model>)
@@ -12,43 +12,28 @@ from typing import Any
 
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.lite_llm import LiteLlm
-from google.adk.models.google_llm import Gemini
-from google.genai import types as genai_types
 
 from app.core.config import settings
 from app.schemas.llm import LLMParams
-
-
-def _common_generation_config(params: LLMParams) -> dict[str, Any]:
-    cfg: dict[str, Any] = {
-        "temperature": params.temperature,
-    }
-
-    if params.num_predict is not None or params.max_tokens is not None:
-        cfg["max_output_tokens"] = params.num_predict or params.max_tokens
-
-    if params.top_p is not None:
-        cfg["top_p"] = params.top_p
-
-    if params.top_k is not None:
-        cfg["top_k"] = params.top_k
-
-    return cfg
 
 
 def _get_gemini_llm(params: LLMParams) -> BaseLlm:
     if not settings.GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY não configurada no .env.")
 
-    generation_config = genai_types.GenerateContentConfig(
-        **_common_generation_config(params),
-    )
+    kwargs: dict[str, Any] = {
+        "model": f"gemini/{settings.GEMINI_MODEL}",
+        "api_key": settings.GEMINI_API_KEY,
+        "temperature": params.temperature,
+    }
 
-    return Gemini(
-        model=settings.GEMINI_MODEL,
-        api_key=settings.GEMINI_API_KEY,
-        generation_config=generation_config,
-    )
+    if params.num_predict is not None:
+        kwargs["max_tokens"] = params.num_predict
+
+    if params.top_p is not None:
+        kwargs["top_p"] = params.top_p
+
+    return LiteLlm(**kwargs)
 
 
 def _get_ollama_llm(params: LLMParams) -> BaseLlm:

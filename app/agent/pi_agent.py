@@ -42,10 +42,14 @@ def _build_pi_agent() -> LlmAgent:
             top_p=0.1,
         )
     )
+
+    async def _instruction(ctx):
+        return AGENT_SYSTEM_PROMPT
+
     return LlmAgent(
         name=PI_AGENT_NAME,
         model=model,
-        instruction=AGENT_SYSTEM_PROMPT,
+        instruction=_instruction,
         tools=[_mcp_toolset()],
     )
 

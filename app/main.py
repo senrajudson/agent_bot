@@ -1,3 +1,11 @@
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*PLUGGABLE_AUTH.*",
+    category=UserWarning,
+)
+
 from fastapi import FastAPI
 
 from app.core.config import settings

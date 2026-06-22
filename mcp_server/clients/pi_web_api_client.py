@@ -15,6 +15,270 @@ POINT_SELECTED_FIELDS = (
     "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet"
 )
 
+MAX_SEARCH_ITEMS = 10
+
+ALLOWED_PI_ENDPOINTS: dict[str, dict[str, Any]] = {
+    "/points": {
+        "method": "GET",
+        "description": "Get PI Point by path or list points root",
+        "placeholders": [],
+    },
+    "/points/{WebId}": {
+        "method": "GET",
+        "description": "Get PI Point by WebId",
+        "placeholders": ["WebId"],
+    },
+    "/points/{WebId}/attributes": {
+        "method": "GET",
+        "description": "Get attributes (instrumenttag, location1..5, engunits, etc.)",
+        "placeholders": ["WebId"],
+    },
+    "/streams/{WebId}/value": {
+        "method": "GET",
+        "description": "Current value of a tag",
+        "placeholders": ["WebId"],
+    },
+    "/streams/{WebId}/recorded": {
+        "method": "GET",
+        "description": "Raw recorded history",
+        "placeholders": ["WebId"],
+    },
+    "/streams/{WebId}/interpolated": {
+        "method": "GET",
+        "description": "Fixed-interval interpolated values",
+        "placeholders": ["WebId"],
+    },
+    "/streams/{WebId}/summary": {
+        "method": "GET",
+        "description": "Aggregations (Average, Max, Min, Total, Count, etc.)",
+        "placeholders": ["WebId"],
+    },
+    "/streams/{WebId}/plot": {
+        "method": "GET",
+        "description": "Plot data for a tag",
+        "placeholders": ["WebId"],
+    },
+    "/dataservers": {
+        "method": "GET",
+        "description": "List all data servers",
+        "placeholders": [],
+    },
+    "/dataservers/{WebId}/points": {
+        "method": "GET",
+        "description": "Search/list points by nameFilter, descriptorFilter, or instrumenttagFilter",
+        "placeholders": ["WebId"],
+    },
+    "/dataservers/{WebId}/enumerationsets": {
+        "method": "GET",
+        "description": "List enumeration sets for a data server",
+        "placeholders": ["WebId"],
+    },
+    "/enumerationsets/{WebId}/enumerationvalues": {
+        "method": "GET",
+        "description": "Get digital states for an enumeration set",
+        "placeholders": ["WebId"],
+    },
+    "/streamsets/value": {
+        "method": "GET",
+        "description": "Current value for multiple tags (use ?webId=...)",
+        "placeholders": [],
+    },
+    "/streamsets/recorded": {
+        "method": "GET",
+        "description": "Recorded values for multiple tags",
+        "placeholders": [],
+    },
+    "/streamsets/interpolated": {
+        "method": "GET",
+        "description": "Interpolated values for multiple tags",
+        "placeholders": [],
+    },
+    "/batch": {
+        "method": "POST",
+        "description": "Multi-subrequest batch (point + value + attributes)",
+        "placeholders": [],
+    },
+}
+
+PIMS_DATASERVER_WEBID: str | None = None
+
+
+async def _get_pims_dataserver_webid() -> str:
+    global PIMS_DATASERVER_WEBID
+    if PIMS_DATASERVER_WEBID:
+        return PIMS_DATASERVER_WEBID
+    ds = await get_data_server()
+    wid = ds.get("WebId")
+    if not wid:
+        raise RuntimeError("PIMS Data Server has no WebId.")
+    PIMS_DATASERVER_WEBID = wid
+    return wid
+
+
+def _resolve_placeholders(
+    path_template: str,
+    path_params: dict[str, str] | None,
+    method: str,
+) -> str:
+    required = ALLOWED_PI_ENDPOINTS[path_template]["placeholders"]
+    params = dict(path_params or {})
+
+    if required and PIMS_DATASERVER_WEBID:
+        for placeholder in required:
+            if placeholder not in params or not params[placeholder]:
+                params[placeholder] = PIMS_DATASERVER_WEBID
+
+    for placeholder in required:
+        value = params.get(placeholder)
+        if not value:
+            raise ValueError(
+                f"O path_template '{path_template}' exige o path_param '{placeholder}'."
+            )
+
+    path = path_template
+    all_params = dict(params)
+    for key in required:
+        if key in all_params:
+            path = path.replace("{" + key + "}", all_params[key])
+
+    return path
+
+
+def _format_search_items(data: dict[str, Any]) -> dict[str, Any]:
+    items = data.get("Items") or []
+    total = len(items)
+    truncated = total > MAX_SEARCH_ITEMS
+    limited_items = items[:MAX_SEARCH_ITEMS]
+
+    summary: list[dict[str, Any]] = []
+    for item in limited_items:
+        summary.append(
+            {
+                "Name": item.get("Name"),
+                "WebId": item.get("WebId"),
+                "Descriptor": item.get("Descriptor"),
+                "PointType": item.get("PointType"),
+                "EngineeringUnits": item.get("EngineeringUnits"),
+            }
+        )
+
+    result: dict[str, Any] = {
+        "ok": True,
+        "items_count": total,
+        "truncated": truncated,
+    }
+
+    if truncated:
+        result["hint"] = (
+            f"{total} resultados encontrados. "
+            f"Retornando os primeiros {MAX_SEARCH_ITEMS}. "
+            "Refine a busca com termos mais específicos."
+        )
+
+    result["Items"] = summary
+    return result
+
+
+async def pi_request(
+    method: str,
+    path_template: str,
+    path_params: dict[str, str] | None = None,
+    query_params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    method = (method or "").strip().upper()
+
+    if method not in {"GET", "POST"}:
+        allowed = list({ep["method"] for ep in ALLOWED_PI_ENDPOINTS.values()})
+        return {
+            "ok": False,
+            "error": f"Method '{method}' não suportado. Métodos permitidos: {', '.join(sorted(allowed))}.",
+        }
+
+    if path_template not in ALLOWED_PI_ENDPOINTS:
+        allowed = sorted(ALLOWED_PI_ENDPOINTS.keys())
+        return {
+            "ok": False,
+            "error": (
+                f"Path '{path_template}' não está na whitelist. "
+                f"Templates permitidos:\n" + "\n".join(f"- {p}" for p in allowed)
+            ),
+        }
+
+    ep_method = ALLOWED_PI_ENDPOINTS[path_template]["method"]
+
+    if method != ep_method:
+        return {
+            "ok": False,
+            "error": (
+                f"Path '{path_template}' espera method '{ep_method}', "
+                f"mas recebeu '{method}'."
+            ),
+        }
+
+    if method == "GET":
+        params = path_params or {}
+        if path_template == "/dataservers/{WebId}/points" and "PIMS_DATASERVER_WEBID" in params:
+            wid = await _get_pims_dataserver_webid()
+            params["PIMS_DATASERVER_WEBID"] = wid
+
+        resolved_path = _resolve_placeholders(path_template, params, method)
+        full_url = f"{_base_url()}{resolved_path}"
+
+        try:
+            data = await _pi_get(full_url, params=query_params)
+        except httpx.HTTPStatusError as e:
+            return {
+                "ok": False,
+                "status_code": e.response.status_code,
+                "path_called": resolved_path,
+                "params_called": query_params,
+                "error": f"PI Web API retornou HTTP {e.response.status_code}.",
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "path_called": resolved_path,
+                "params_called": query_params,
+                "error": f"Erro ao chamar PI Web API: {e}",
+            }
+
+        search_templates = {"/dataservers/{WebId}/points"}
+        if path_template in search_templates:
+            return _format_search_items(data)
+
+        return {
+            "ok": True,
+            "path_called": resolved_path,
+            "params_called": query_params,
+            "data": data,
+        }
+
+    resolved_path = _resolve_placeholders(path_template, path_params, method)
+    full_url = f"{_base_url()}{resolved_path}"
+
+    try:
+        data = await _pi_post(full_url, json_body=json_body or {})
+    except httpx.HTTPStatusError as e:
+        return {
+            "ok": False,
+            "status_code": e.response.status_code,
+            "path_called": resolved_path,
+            "error": f"PI Web API retornou HTTP {e.response.status_code}.",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "path_called": resolved_path,
+            "error": f"Erro ao chamar PI Web API: {e}",
+        }
+
+    return {
+        "ok": True,
+        "path_called": resolved_path,
+        "data": data,
+    }
+
 
 def _get_auth() -> tuple[str, str] | None:
     if settings.PI_WEB_API_USERNAME and settings.PI_WEB_API_PASSWORD:
