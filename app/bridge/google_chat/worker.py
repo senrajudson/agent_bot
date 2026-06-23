@@ -19,6 +19,7 @@ from app.bridge.google_chat.dedupe_store import DedupeStore
 from app.bridge.google_chat.media_downloader import GoogleChatMediaDownloader
 from app.bridge.google_chat.parser import parse_google_chat_event
 from app.bridge.google_chat.pubsub_subscriber import GoogleChatPubSubSubscriber
+from app.infrastructure.locking.redis_lock import RedisDistributedLock
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,15 @@ class GoogleChatBridgeWorker:
 
         self.agent_adapter = AgentAdapter(settings=self.settings)
         self.chat_client = GoogleChatClient(settings=self.settings)
-        self.dedupe_store = DedupeStore(settings=self.settings)
+
+        # Create Redis lock for deduplication
+        import redis as sync_redis
+        redis_client = sync_redis.Redis.from_url(
+            self.settings.redis_url, decode_responses=True
+        )
+        lock = RedisDistributedLock(redis_client, prefix="google_chat:dedupe_lock")
+        self.dedupe_store = DedupeStore(settings=self.settings, lock=lock)
+
         self.media_downloader = GoogleChatMediaDownloader(settings=self.settings)
 
     def run_once(self, timeout_seconds: int = 120) -> None:

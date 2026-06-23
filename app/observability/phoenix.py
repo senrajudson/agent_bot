@@ -16,6 +16,8 @@ prevents the Phoenix UI from summing the same tokens across nested spans
 """
 
 import logging
+import os
+import re
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from phoenix.otel import register
@@ -160,6 +162,44 @@ def _wrap_default_exporter(tracer_provider) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Excluded URLs — suppress noisy health-check spans from auxiliary services
+# ---------------------------------------------------------------------------
+
+def _configure_excluded_urls() -> None:
+    """Configure OTel HTTP excluded URLs for httpx to suppress noisy
+    health-check spans from auxiliary services (e.g. Qdrant root GET).
+
+    The regex targets only the ROOT path of the Qdrant URL — vector
+    search calls during /chat are NOT excluded.
+
+    Reads ``QDRANT_URL`` from settings and sets
+    ``OTEL_PYTHON_HTTPX_EXCLUDED_URLS`` before any instrumentor runs.
+    """
+    try:
+        qdrant_url = (settings.QDRANT_URL or "").rstrip("/")
+        if not qdrant_url:
+            return
+
+        # ^http://10\.247\.179\.197:6333/?$
+        qdrant_root_regex = rf"^{re.escape(qdrant_url)}/?$"
+
+        existing = os.environ.get("OTEL_PYTHON_HTTPX_EXCLUDED_URLS", "").strip()
+        merged = (
+            qdrant_root_regex
+            if not existing
+            else f"{existing},{qdrant_root_regex}"
+        )
+        os.environ["OTEL_PYTHON_HTTPX_EXCLUDED_URLS"] = merged
+
+        logger.info(
+            "OTel HTTPX excluded URLs configured: %s",
+            merged,
+        )
+    except Exception as exc:
+        logger.warning("Failed to configure OTel excluded URLs: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # Public setup
 # ---------------------------------------------------------------------------
 def setup_phoenix_tracing():
@@ -170,6 +210,8 @@ def setup_phoenix_tracing():
 
     if _tracer_provider is not None:
         return _tracer_provider
+
+    _configure_excluded_urls()
 
     _tracer_provider = register(
         project_name=settings.PHOENIX_PROJECT_NAME,

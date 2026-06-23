@@ -1,7 +1,7 @@
 # Agent Bot — Guia Completo do Projeto
 
-> Documento gerado em 2026-06-22. Reflete o estado real do código-fonte
-> neste commit.
+> Documento atualizado em 2026-06-23. Reflete o estado atual do código-fonte
+> após refatoração arquitetural (Etapas 0-8).
 
 ---
 
@@ -27,11 +27,19 @@
 | 16 | [Variáveis de Ambiente](#16-variáveis-de-ambiente) |
 | 17 | [Comandos](#17-comandos) |
 | 18 | [Endpoints e Entrypoints](#18-endpoints-e-entrypoints) |
-| 19 | [Reg de Negócio](#19-regras-de-negócio) |
+| 19 | [Regras de Negócio](#19-regras-de-negócio) |
 | 20 | [Utilitários](#20-utilitários) |
 | 21 | [Estrutura de Testes](#21-estrutura-de-testes) |
 | 22 | [Problemas Comuns](#22-problemas-comuns) |
 | 23 | [Arquivo de Documentação RAG](#23-arquivo-de-documentação-rag) |
+| 24 | [Refatoração Arquitetural (Etapas 0-8)](#24-refatoração-arquitetural-etapas-0-8) |
+| 25 | [Arquitetura em Camadas (DDD/CQRS/ES)](#25-arquitetura-em-camadas-dddcqres) |
+| 26 | [Domain Layer Detalhado](#26-domain-layer-detalhado) |
+| 27 | [Application Layer Detalhado](#27-application-layer-detalhado) |
+| 28 | [Infrastructure Layer Detalhado](#28-infrastructure-layer-detalhado) |
+| 29 | [ConversationSaga — Fluxo Detalhado](#29-conversationsaga--fluxo-detalhado) |
+| 30 | [Ambientes (Local / QA / PRD)](#30-ambientes-local--qa--prd) |
+| 31 | [Regras de Negócio Detalhadas](#31-regras-de-negócio-detalhadas) |
 
 ---
 
@@ -217,7 +225,7 @@ process_message(ChatRequest)
   │     │
   │     └─→ "pims" → run_pi_agent()
   │           ├─→ build_rag_context()
-  │           │     ├─→ CHUNK 20 (fixo, sempre injetado)
+  │           │     ├─→ CHUNK 01 (fixo, sempre injetado)
   │           │     └─→ top-3 chunks do Qdrant (Ollama embeddings)
   │           │
   │           ├─→ monta LlmAgent(instruction=AGENT_SYSTEM_PROMPT)
@@ -298,32 +306,32 @@ AGENT_DEFAULT = {
 
 | Componente | Valor |
 |---|---|
-| Documento fonte | `PI_WEB_API_AGENT_GUIDE.md` (22 CHUNKs) |
+| Documento fonte | `PI_WEB_API_AGENT_GUIDE.md` (21 CHUNKs) |
 | Vector Store | Qdrant (`pi_web_api_guide`, 768-dim, cosine) |
 | Embeddings | Ollama `nomic-embed-text-v2-moe` (via `POST /api/embed`) |
 | Ingestão | `scripts/ingest_pi_guide.py` |
-| CHUNK fixo | CHUNK 20 (sempre injetado, excluído do Qdrant) |
+| CHUNK fixo | CHUNK 01 (sempre injetado, excluído do Qdrant) |
 
 ### Como funciona
 
-1. O documento é dividido em **22 CHUNKs** por headers (`# CHUNK 01`, `# CHUNK 02`, ..., `# CHUNK 22`)
-2. Cada CHUNK (exceto o 20) é embedded e armazenado no Qdrant com metadados (`chunk_number`, `title`, `content`)
-3. **CHUNK 20** ("Seleção de tool e resumo operacional") é sempre injetado como contexto fixo
+1. O documento é dividido em **21 CHUNKs** por headers (`# CHUNK 01`, `# CHUNK 02`, ..., `# CHUNK 21`)
+2. Cada CHUNK (exceto o 01) é embedded e armazenado no Qdrant com metadados (`chunk_number`, `title`, `content`)
+3. **CHUNK 01** ("Seleção de tool e resumo operacional") é sempre injetado como contexto fixo
 4. A cada query, o texto do usuário é embedded e busca os top-3 chunks mais similares
-5. O contexto final = **CHUNK 20** (fixo) + **top-3 chunks** (retrieved)
+5. O contexto final = **CHUNK 01** (fixo) + **top-3 chunks** (retrieved)
 
 ### Fluxo RAG
 
 ```
 build_rag_context(query, top_k=3)
-  ├─→ _load_chunk_20()              ← Lê CHUNK 20 do .md (cached, regex por header)
-  ├─→ retrieve_relevant_chunks()    ← Embed query → Qdrant search
+  ├─→ _load_fixed_chunk()            ← Lê CHUNK 01 do .md (cached, regex por header)
+  ├─→ retrieve_relevant_chunks()     ← Embed query → Qdrant search
   └─→ Retorna string com contexto concatenado
 ```
 
-### CHUNK 20 — Contexto Fixo
+### CHUNK 01 — Contexto Fixo
 
-O CHUNK 20 contém o resumo operacional mínimo da PI Web API:
+O CHUNK 01 contém o resumo operacional mínimo da PI Web API:
 - Fluxo de 2 passos: path → WebId → stream endpoints
 - Lista de campos importantes (WebId, Name, Descriptor, PointType, etc.)
 - Todos os endpoints de stream (value, recorded, interpolated, summary)
@@ -941,10 +949,15 @@ poetry run uvicorn app.main:app --reload --port 8002
 ### Rodar o MCP Server (porta 8003 local)
 
 ```bash
-cd mcp_server && poetry run uvicorn server:app --reload --port 8003
-# ou
-cd mcp_server && python server.py
+poetry --directory mcp_server run python server.py
+# ou, a partir da raiz do repo (recomendado)
+poetry --directory mcp_server run python mcp_server/server.py
 ```
+
+> **Nota**: o pacote `domain/` é uma *path dependency* compartilhada. Em Docker ele é
+> copiado para `/app/domain/` dentro do WORKDIR, mas em local o Poetry não injeta o
+> repositório raiz no `sys.path` automaticamente. Por isso o `server.py` adiciona o
+> diretório pai ao `sys.path` ao iniciar.
 
 ### Rodar o Math Tool (porta 8001)
 
@@ -1097,16 +1110,48 @@ Para consumo de vazão em Nm3:
 
 ## 21. Estrutura de Testes
 
-O diretório `tests/` existe com subdiretórios preparados mas **vazio de arquivos `.py`**:
+O projeto possui **317 testes** distribuídos em 7 suites.
 
-```
-tests/
-├── unit/
-├── integration/
-└── agent/
+### Mapeamento Suite → Arquivo → O que Valida
+
+| Suite | Arquivo | Testes | O que valida |
+|---|---|---|---|
+| `tests/unit/` | `test_domain.py` | VOs, Enums, Protocols, Errors | Contratos do domain layer |
+| `tests/unit/` | `test_events.py` | 25 Domain Events | Imutabilidade, serialização, payload |
+| `tests/unit/` | `test_event_store.py` | EventStore InMemory + Redis | Append, replay, stream partitioning |
+| `tests/unit/` | `test_projection.py` | ConversationMemoryProjection | Reconstrução de turns a partir de eventos |
+| `tests/unit/` | `test_conversation_memory_v2.py` | RedisConversationMemory | Append, replay, max_turns, metadata |
+| `tests/unit/` | `test_tag_extractor.py` | Regex de tags + merge | Extração, deduplicação, preservação de underscores |
+| `tests/unit/` | `test_qdrant_client.py` | Qdrant RAG client | Embedding, busca, CHUNK 01 fixo |
+| `tests/unit/` | `test_ingest_pi_guide.py` | Ingestão RAG | Chunking do documento PI Web API |
+| `tests/application/` | `test_commands.py` | 6 Commands + Handlers | Extrair, route, run_agent, retrieve_rag, save_memory, invoke_mcp |
+| `tests/application/` | `test_queries.py` | 5 Queries + Handlers | Memory, knowledge, PI tag, historical, PIMS status |
+| `tests/application/` | `test_saga.py` | ConversationSaga (6 steps) | Fluxo completo: memory → ocr → route → rag → agent → save |
+| `tests/application/` | `test_saga_with_events.py` | Saga + Event Publishing | Cada step publica evento correto |
+| `tests/application/` | `test_saga_with_memory_v2.py` | Saga + Event Sourcing memory | Memory v2 com event replay |
+| `tests/agent/` | `test_orchestrator_characterization.py` | Orchestrator (state dict) | 28 testes de caracterização (Etapa 0) |
+| `tests/infrastructure/` | `test_distributed_lock.py` | DistributedLock (Redis + InMemory) | Acquire, release, TTL, atômico |
+| `tests/infrastructure/` | `test_math_tool_client.py` | Math Tool client retry | Retry, timeout, erros retryáveis, API pública |
+| `tests/bridge/` | `test_dedupe_store.py` | DedupeStore (Redis + InMemory) | Deduplicação, TTL, DistributedLock |
+| `tests/integration/` | `test_integration_orchestrator.py` | Smoke test (@integration) | Orchestrator end-to-end (requer Docker) |
+
+### Comandos
+
+```bash
+poetry run pytest tests/ -v                           # Suite completa (317 testes)
+poetry run pytest tests/unit/ -v                      # Domain + utilitários
+poetry run pytest tests/application/ -v               # Commands + Queries + Saga
+poetry run pytest tests/agent/ -v                     # Caracterização orchestrator
+poetry run pytest tests/infrastructure/ -v            # Lock + math_tool_client
+poetry run pytest tests/bridge/ -v                    # Dedupe store
+pytest -m integration                                 # Integração (requer Docker)
 ```
 
-Todos contêm apenas `__pycache__/`. Não há suíte de testes atualmente.
+### Marcadores
+
+| Marcador | Arquivo | Descrição |
+|---|---|---|
+| `@pytest.mark.integration` | `test_integration_orchestrator.py` | Smoke test end-to-end |
 
 ---
 
@@ -1127,34 +1172,627 @@ Todos contêm apenas `__pycache__/`. Não há suíte de testes atualmente.
 | `MAX_AGENT_STEPS=8` atingido | Reformular pergunta; pode indicar prompt vago ou tool com erro |
 | Loop de tool calls | Sistema aborta após 3 repetições da mesma chamada (`_detect_repeated_tool_calls`) |
 | Erro "ClosedResourceError" | Conexão MCP fechada; reiniciar mcp_server ou retry |
+| Math Tool `[Errno -3] Temporary failure in name resolution` | DNS intermitente no WSL2 para IPs da rede corporativa (`10.247.179.197`). O `math_tool_client` agora faz retry automático (3 tentativas, backoff 0.5/1/2s). Se persistir, verificar `MATH_TOOL_BASE_URL` em `mcp_server/.env` e conectividade de rede. |
+| Math Tool `ConnectTimeout` em todo request | **Causa raiz**: `domain/core/config.py` não carrega `.env` e usa o default Docker `http://math_tool:8001` (hostname inacessível fora de Docker). **Correção**: `domain/core/config.py` agora carrega `mcp_server/.env` via `env_file`. Verificar que `MATH_TOOL_BASE_URL` aponta para IP correto no `.env`. |
+| Phoenix exibe span órfão `GET` para `http://10.247.179.197:6333` | **Causa**: o `QdrantClient` faz health check no root durante init, e o `HTTPXClientInstrumentor` auto-instrumenta a chamada. **Correção**: `_configure_excluded_urls()` em `app/observability/phoenix.py` define `OTEL_PYTHON_HTTPX_EXCLUDED_URLS` com regex `^<QDRANT_URL>/?$` antes do `register()`. Spans de busca vetorial (`/collections/.../points/search`) permanecem rastreados. |
 
 ---
 
 ## 23. Arquivo de Documentação RAG
 
-O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém **22 CHUNKs**:
+O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém **21 CHUNKs**:
 
 | CHUNK | Conteúdo |
 |-------|----------|
-| 01 | Fluxo base: tag para WebId |
-| 02 | Valor atual de uma tag |
-| 03 | Metadados: unidade, descriptor, tipo, span, step |
-| 04 | Atributos: instrumenttag, location, atributos clássicos |
-| 05 | DigitalSetName e Digital States |
-| 06 | Histórico bruto: recorded values |
-| 07 | Valores interpolados |
-| 08 | Summary: média, mínimo, máximo, total, percent good |
-| 09 | Consumo de vazão em Nm3 usando médias horárias |
-| 10 | Múltiplas tags: streamsets e batch |
-| 11 | Buscar tag quando o nome não é exato |
-| 12 | Tratamento de erros e qualidade |
-| 13 | Strings de tempo e timezone |
-| 14 | Codificação de URL |
-| 15 | Respostas finais do agente |
+| 01 | **FIXO** — Seleção de tool e resumo operacional (sempre injetado, excluído do Qdrant) |
+| 02 | Fluxo base: tag para WebId |
+| 03 | Valor atual de uma tag |
+| 04 | Metadados: unidade, descriptor, tipo, span, step |
+| 05 | Atributos: instrumenttag, location, atributos clássicos |
+| 06 | DigitalSetName e Digital States |
+| 07 | Histórico bruto: recorded values |
+| 08 | Valores interpolados |
+| 09 | Summary: média, mínimo, máximo, total, percent good |
+| 10 | Consumo de vazão em Nm3 usando médias horárias |
+| 11 | Múltiplas tags: streamsets e batch |
+| 12 | Buscar tag quando o nome não é exato |
+| 13 | Tratamento de erros e qualidade |
+| 14 | Strings de tempo e timezone |
+| 15 | Codificação de URL |
 | 16 | Decisão rápida de endpoint |
 | 17 | Exemplo Python: valor atual |
 | 18 | Exemplo Python: metadados e atributos |
 | 19 | Diretrizes de qualidade e anti-padrões |
-| 20 | **FIXO** — Seleção de tool e resumo operacional (sempre injetado) |
-| 21 | Cálculos temporais: integral e derivada |
+| 20 | Cálculos temporais: integral e derivada |
+| 21 | RAG e recuperação recomendada |
 | 22 | RAG e recuperação recomendada |
+
+---
+
+## 24. Refatoração Arquitetural (Etapas 0-8)
+
+O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Sourcing**, implementada em 8 etapas incrementais. Cada etapa foi precedida de testes de caracterização e validada com suite completa.
+
+### Etapas executadas
+
+| Etapa | Descrição | Testes |
+|---|---|---|
+| 0 | Testes de caracterização do orchestrator (`tests/agent/`) | 28 testes |
+| 1 | Domain layer (`app/domain/`): VOs, Enums, Protocols, Errors | 46 testes |
+| 2 | Application layer (`app/application/`): Commands/Queries + Handlers | 28 testes |
+| 3 | ConversationSaga + ConversationContext (substitui state: dict) | 27 testes |
+| 4 | Pacote `domain/` compartilhado (resolução de duplicação app ↔ mcp_server) | 0 (validação) |
+| 5 | Domain Events (23 eventos) + EventStore (InMemory + Redis Streams) | 25 testes |
+| 6 | ChatMemoryTurn → Event Sourcing (ConversationMemoryProjection) | 33 testes |
+| 7 | Distributed Lock no DedupeStore (resolução P1 #11) | 35 testes |
+| 8 | Polimento: consolidação `_build_completion_kwargs`, testes tag_extractor, AGENTS.md | 10 testes |
+
+### Resultado
+
+- **273+ testes** passando
+- **0 duplicações** entre `app/` e `mcp_server/`
+- **`domain/`** é pacote compartilhado via Poetry path dependency
+- **25 Domain Events** (imutáveis, serializáveis)
+- **ConversationSaga** orquestra 6 steps com event publishing
+- **DistributedLock** substitui fallback in-memory no DedupeStore
+- **10 Bounded Contexts** mapeados (Conversation, PIMS, Analytics, OCR, RAG, PIMS Ops, LLM Provider, MCP Gateway, Google Chat, Observability)
+
+### Estrutura arquitetural atual
+
+```
+app/
+├── domain/                          # Camada de domínio (abstrações puras)
+│   ├── enums.py                     # 5 enums de domínio
+│   ├── errors.py                    # 3 exceptions de domínio
+│   ├── events.py                    # 25 Domain Events (frozen)
+│   ├── projections.py               # ConversationMemoryProjection
+│   └── value_objects.py             # 6 VOs imutáveis
+├── application/                     # Camada de aplicação (orqueta)
+│   ├── commands/                    # 6 Commands + Handlers
+│   ├── queries/                     # 5 Queries + Handlers
+│   └── sagas/                       # ConversationSaga + EventPublisher
+├── infrastructure/                  # Camada de infraestrutura
+│   ├── event_store/                 # EventStore (InMemory + Redis Streams)
+│   ├── locking/                     # DistributedLock (Redis SET NX EX)
+│   └── conversation/                # RedisConversationMemory (v2)
+├── agent/                           # Orquestração (adaptadores)
+│   ├── orchestrator.py              # process_message → Saga
+│   ├── shared.py                    # build_completion_kwargs (único)
+│   ├── router.py                    # Classificador de intenção
+│   ├── general_agent.py             # Agente geral
+│   └── pi_agent.py                  # Agente PI (ADK + MCP)
+└── bridge/google_chat/              # Bridge (DistributedLock)
+```
+
+### Bounded Contexts mapeados
+
+| # | Bounded Context | Responsabilidade |
+|---|---|---|
+| 1 | Conversation/Chat | Lifecycle da mensagem, memória, turns |
+| 2 | PIMS/Industrial Telemetry | Leitura de tags PI, metadados, digital states |
+| 3 | Time-Series Analytics | Estatísticas e cálculos temporais |
+| 4 | OCR/Image Understanding | Extração de texto de imagens |
+| 5 | RAG/Knowledge Retrieval | Contexto de documentação |
+| 6 | PIMS Operations | Status operacional via Grafana/Loki |
+| 7 | LLM Provider | Abstração de provedores LLM |
+| 8 | MCP Tool Gateway | Interface MCP sobre domínio |
+| 9 | Google Chat Integration | ACL entre Chat API e Conversation |
+| 10 | Observability | Cross-cutting (Phoenix, OTel) |
+
+### Ubiquitous Language (termos de domínio)
+
+| Termo | Significado |
+|---|---|
+| **PiTag** | Identificador de ponto industrial (ex: `LFI_RB3_VAZ_GN_TOTAL`) |
+| **PiPoint** | Recurso de configuração (WebId, Descriptor, PointType, EngUnits) |
+| **TimeWindow** | Par `(start, end)` para consultas temporais |
+| **TimeSeriesMethod** | `recorded`, `interpolated`, ou `summary` |
+| **AgentRoute** | Classificação: `GeneralChat`, `PiAssistant`, `Calculator` |
+| **ConversationTurn** | Par user+assistant armazenado na memória |
+| **AgentRun** | Execução do agente PI com tool calls |
+| **ToolInvocation** | Chamada de tool pelo agente (name + args) |
+| **KnowledgeContext** | CHUNK 01 fixo + top-3 retrieved chunks |
+| **OcrExtraction** | Texto extraído + tags de imagem |
+| **InboundMessage** | Mensagem recebida (texto + imagens) |
+| **OutboundReply** | Resposta gerada pelo agente |
+| **MessageDedupeEntry** | Estado de deduplicação de mensagem Google Chat |
+
+### Domain Events (25)
+
+| Evento | Quando é publicado |
+|---|---|
+| `InboundMessageReceived` | Mensagem recebida |
+| `OcrExtractionCompleted` | OCR finalizado |
+| `ConversationMemoryLoaded` | Memória carregada |
+| `AgentRouteSelected` | Roteamento decidido |
+| `RagContextRetrieved` | RAG recuperado |
+| `AgentRunStarted` | Execução do agente iniciada |
+| `AgentToolInvocationRequested` | Tool chamada |
+| `AgentToolInvocationCompleted` | Tool retornou |
+| `AgentRunCompleted` | Agente finalizou |
+| `AgentRunAborted` | Agente abortado (loop/erro) |
+| `PiTagQueried` | Tag consultada |
+| `PiHistoricalSeriesRetrieved` | Série temporal recuperada |
+| `StatisticsComputed` | Estatísticas calculadas |
+| `CalculusComputed` | Calculus calculado |
+| `PimsStatusChecked` | Status PIMS verificado |
+| `OutboundReplyGenerated` | Resposta gerada |
+| `ConversationMemorySaved` | Memória salva |
+| `UserMessageRecorded` | Mensagem do usuário registrada (memory v2) |
+| `AssistantMessageRecorded` | Resposta do assistente registrada (memory v2) |
+| `GoogleChatEventReceived` | Evento Google Chat recebido |
+| `GoogleChatDedupeStarted` | Dedupe iniciado |
+| `GoogleChatReplySent` | Resposta Google Chat enviada |
+| `GoogleChatDedupeCompleted` | Dedupe finalizado |
+| `GoogleChatAttachmentDownloaded` | Anexo baixado |
+| `MessageProcessingFailed` | Erro no processamento |
+
+### Comandos (CQRS)
+
+| Command | Handler | Descrição |
+|---|---|---|
+| `ExtractOcr` | `ExtractOcrHandler` | Extrai texto de imagens |
+| `RouteMessage` | `RouteMessageHandler` | Classifica intenção |
+| `RunAgentForMessage` | `RunAgentForMessageHandler` | Executa agente PI ou geral |
+| `RetrieveKnowledgeContext` | `RetrieveKnowledgeContextHandler` | Recupera contexto RAG |
+| `SaveConversationTurn` | `SaveConversationTurnHandler` | Salva turn na memória |
+| `InvokeMcpTool` | `InvokeMcpToolHandler` | Invoca tool MCP (placeholder) |
+
+### Queries (CQRS)
+
+| Query | Handler | Descrição |
+|---|---|---|
+| `GetConversationMemory` | `GetConversationMemoryHandler` | Carrega turns da memória |
+| `GetKnowledgeContext` | `GetKnowledgeContextHandler` | Recupera contexto RAG |
+| `GetPiTagCurrentValue` | `GetPiTagCurrentValueHandler` | Valor atual de tag |
+| `GetPiHistoricalSeries` | `GetPiHistoricalSeriesHandler` | Série temporal |
+| `GetPimsStatus` | `GetPimsStatusHandler` | Status PIMS |
+
+### DistributedLock (Etapa 7)
+
+O `DedupeStore` da Bridge usa `DistributedLock` em vez de fallback in-memory:
+- **RedisDistributedLock**: SET NX EX (acquire) + Lua script (release atômico)
+- **InMemoryDistributedLock**: para testes
+- **Sem fallback**: Redis indisponível → fail-fast (P1 #11 resolvido)
+
+### Testes
+
+| Suite | Testes | Cobertura |
+|---|---|---|
+| `tests/agent/` | 28 (caracterização) | Orchestrator: ≥60% |
+| `tests/unit/` | 115 (domain, event_store, projection, etc.) | 100% em domain/ |
+| `tests/application/` | 76 (commands, queries, saga, events, memory v2) | 100% em application/ |
+| `tests/infrastructure/` | 12 (distributed lock) | 100% em locking/ |
+| `tests/bridge/` | 10 (dedupe store) | 100% em dedupe |
+| `tests/unit/test_tag_extractor.py` | 10 | 100% em tag_extractor |
+| `tests/integration/` | 2 (marcados @pytest.mark.integration) | Smoke test |
+| **Total** | **273+** | |
+
+### Comandos úteis
+
+```bash
+# Rodar todos os testes
+poetry run pytest tests/ -v
+
+# Rodar testes de caracterização (Etapa 0)
+poetry run pytest tests/agent/ -v
+
+# Rodar testes de domain
+poetry run pytest tests/unit/ -v
+
+# Rodar testes de application (commands + queries + saga)
+poetry run pytest tests/application/ -v
+
+# Rodar testes de infrastructure
+poetry run pytest tests/infrastructure/ -v
+
+# Rodar testes de bridge
+poetry run pytest tests/bridge/ -v
+
+# Rodar testes de integração (requer Docker)
+pytest -m integration
+
+# Rodar suite completa
+poetry run pytest tests/ -v
+```
+
+---
+
+## 25. Arquitetura em Camadas (DDD/CQRS/ES)
+
+O projeto segue **Domain-Driven Design** com **CQRS** (Command Query Responsibility Segregation) e **Event Sourcing** para o ciclo de vida da conversa.
+
+### Diagrama de Camadas
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AGENT LAYER (entrypoints)                 │
+│  orchestrator.py · router.py · general_agent.py · pi_agent.py│
+├─────────────────────────────────────────────────────────────┤
+│                 APPLICATION LAYER (orquestra)                │
+│  commands/ · queries/ · sagas/ · events.py · projections.py │
+├─────────────────────────────────────────────────────────────┤
+│                INFRASTRUCTURE LAYER (adaptadores)            │
+│  event_store/ · locking/ · conversation/ · clients/          │
+├─────────────────────────────────────────────────────────────┤
+│                  DOMAIN LAYER (puro)                         │
+│  enums.py · value_objects.py · errors.py · events.py         │
+│  domain/{pims,analytics,pims_ops,conversation,shared}/       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Regra de Dependência
+
+```
+Domain ← Application ← Infrastructure ← Agent
+```
+
+- **Domain** não importa nada (puro)
+- **Application** importa apenas Domain
+- **Infrastructure** importa Domain + Application
+- **Agent** importa tudo (entrypoint)
+
+### Bounded Contexts
+
+| # | Contexto | Pacote | Responsabilidade |
+|---|---|---|---|
+| 1 | Conversation/Chat | `domain/conversation/` | Lifecycle da mensagem, memória, turns |
+| 2 | PIMS/Industrial Telemetry | `domain/pims/` | Leitura de tags PI, metadados, digital states |
+| 3 | Time-Series Analytics | `domain/analytics/` | Estatísticas e cálculos temporais |
+| 4 | OCR/Image Understanding | `app/tasks/` | Extração de texto de imagens |
+| 5 | RAG/Knowledge Retrieval | `app/clients/qdrant_client.py` | Contexto de documentação |
+| 6 | PIMS Operations | `domain/pims_ops/` | Status operacional via Grafana/Loki |
+| 7 | LLM Provider | `app/clients/provider_client.py` | Abstração de provedores LLM |
+| 8 | MCP Tool Gateway | `mcp_server/` | Interface MCP sobre domínio |
+| 9 | Google Chat Integration | `app/bridge/` | ACL entre Chat API e Conversation |
+| 10 | Observability | `app/observability/` | Cross-cutting (Phoenix, OTel) |
+
+---
+
+## 26. Domain Layer Detalhado
+
+### Enums (`app/domain/enums.py`)
+
+| Enum | Valores | Uso |
+|---|---|---|
+| `PointType` | `DIGITAL`, `ANALOG`, `STRING` | Tipo do PI Point |
+| `TemporalDataMethod` | `RECORDED`, `INTERPOLATED`, `SUMMARY` | Método de busca temporal |
+| `CalculusOperation` | `INTEGRAL`, `DERIVATIVE` | Operações de cálculo temporal |
+| `StatisticalOperation` | `MEAN`, `MAX`, `MIN`, `SUM`, `COUNT`, `MEDIAN`, `RANGE`, `VARIANCE_POPULATION`, `VARIANCE_SAMPLE`, `STDDEV_POPULATION`, `STDDEV_SAMPLE` | Operações estatísticas |
+| `AgentRoute` | `GENERAL_CHAT`, `CALCULATOR`, `PIMS` | Roteamento de intenção |
+
+### Value Objects (`app/domain/value_objects.py`)
+
+| VO | Tipo | Invariantes | Uso |
+|---|---|---|---|
+| `PiWebId` | `str` | Não-vazio | WebId do PI Web API |
+| `EngineeringUnit` | `str` | Pode ser None | Unidade de engenharia (Nm3/h, °C) |
+| `TimeWindow` | `(start, end)` | Ambos required, strings | Janela temporal para queries |
+| `TimeUnit` | `TimeUnitValue` | `second`, `minute`, `hour`, `none` | Unidade temporal do cálculo |
+| `SummaryType` | `SummaryTypeValue` | `Average`, `Minimum`, `Maximum`, `Range`, `StdDev`, `Total`, `Count` | Tipo de agregação |
+| `CalculationBasis` | `CalculationBasisValue` | `TimeWeighted`, `EventWeighted` | Base de cálculo |
+
+### Domain Errors (`app/domain/errors.py`)
+
+| Exceção | Quando Levantada |
+|---|---|
+| `DomainError` | Base para todas as exceções de domínio |
+| `TagNotFoundError` | PI tag não existe no servidor |
+| `InvalidTimeWindowError` | Janela temporal inválida ou inconsistente |
+| `MathToolTimeoutError` | Math Tool não respondeu dentro do timeout |
+
+### Domain Events (`app/domain/events.py`)
+
+23 eventos imutáveis (frozen dataclasses) com `event_id` (UUID), `occurred_at` (UTC), `conversation_id` (partição do stream).
+
+| Evento | Payload Principal | Quando Publicado |
+|---|---|---|
+| `InboundMessageReceived` | `message_id`, `user_id`, `text`, `has_images` | Mensagem recebida |
+| `OcrExtractionCompleted` | `image_count`, `tags_found`, `total_text_length` | OCR finalizado |
+| `ConversationMemoryLoaded` | `turns_count`, `max_turns` | Memória carregada |
+| `AgentRouteSelected` | `message_id`, `route`, `latency_ms` | Roteamento decidido |
+| `RagContextRetrieved` | `query_length`, `chunks_retrieved`, `fixed_chunk_included` | RAG recuperado |
+| `AgentRunStarted` | `run_id`, `agent_type`, `route` | Execução do agente iniciada |
+| `AgentToolInvocationRequested` | `run_id`, `tool_name`, `args_keys` | Tool chamada |
+| `AgentToolInvocationCompleted` | `run_id`, `tool_name`, `success`, `latency_ms` | Tool retornou |
+| `AgentRunCompleted` | `run_id`, `output_length`, `total_tool_calls`, `total_steps` | Agente finalizou |
+| `AgentRunAborted` | `run_id`, `reason`, `step_count` | Agente abortado (loop/erro) |
+| `PiTagQueried` | `tag`, `web_id`, `point_type`, `eng_unit` | Tag consultada |
+| `PiHistoricalSeriesRetrieved` | `tag`, `method`, `points_count` | Série temporal recuperada |
+| `StatisticsComputed` | `tag`, `operation`, `result_value` | Estatísticas calculadas |
+| `CalculusComputed` | `tag`, `operation`, `time_unit`, `result_value` | Calculus calculado |
+| `PimsStatusChecked` | `total_logs`, `errors_count`, `warnings_count` | Status PIMS verificado |
+| `OutboundReplyGenerated` | `message_id`, `output_length`, `route` | Resposta gerada |
+| `ConversationMemorySaved` | `user_turn_saved`, `assistant_turn_saved`, `total_turns` | Memória salva |
+| `GoogleChatEventReceived` | `external_event_id`, `space`, `has_attachments` | Evento Google Chat recebido |
+| `GoogleChatDedupeStarted` | `external_event_id`, `ttl_seconds` | Dedupe iniciado |
+| `GoogleChatReplySent` | `external_event_id`, `space`, `latency_ms` | Resposta Google Chat enviada |
+| `GoogleChatDedupeCompleted` | `external_event_id`, `duration_ms` | Dedupe finalizado |
+| `MessageProcessingFailed` | `message_id`, `error_class`, `error_message`, `stage` | Erro no processamento |
+| `GoogleChatAttachmentDownloaded` | `external_event_id`, `attachment_name`, `mime_type` | Anexo baixado |
+
+### Projections (`app/domain/projections.py`)
+
+`ConversationMemoryProjection` reconstrói a lista de `ConversationTurn` a partir do EventStore. Cada turn é um dataclass `frozen` com `role`, `content`, `created_at`, `metadata`.
+
+### domain/ Compartilhado
+
+O pacote `domain/` na raiz do repo é compartilhado entre `app/` e `mcp_server/` via Poetry path dependency:
+
+```
+domain/
+├── core/           config.py (Settings centralizado)
+├── pims/           clients/, services/, utils/ (PI Web API)
+├── analytics/      clients/, services/, utils/ (Math Tool)
+├── pims_ops/       clients/, services/ (Grafana/Loki)
+├── conversation/   clients/ (Redis)
+└── shared/         schemas/ (math_tool.py)
+```
+
+---
+
+## 27. Application Layer Detalhado
+
+### Commands (`app/application/commands/`)
+
+| Command | Handler | Input | Output | Side Effects |
+|---|---|---|---|---|
+| `ExtractOcr` | `ExtractOcrHandler` | `images`, `user_id` | `ocr_text`, `tags` | LitLLM call |
+| `RouteMessage` | `RouteMessageHandler` | `message`, `memory` | `route` (str) | LiteLLM call |
+| `RunAgentForMessage` | `RunAgentForMessageHandler` | `route`, `context`, `rag` | `agent_output`, `tool_name` | ADK Runner |
+| `RetrieveKnowledgeContext` | `RetrieveKnowledgeContextHandler` | `query`, `top_k` | `knowledge_context` | Qdrant search |
+| `SaveConversationTurn` | `SaveConversationTurnHandler` | `user_msg`, `assistant_msg` | `None` | Redis RPUSH |
+| `InvokeMcpTool` | `InvokeMcpToolHandler` | `tool_name`, `args` | `result` | HTTP POST MCP |
+
+### Queries (`app/application/queries/`)
+
+| Query | Handler | Output |
+|---|---|---|
+| `GetConversationMemory` | `GetConversationMemoryHandler` | `list[ConversationTurn]` |
+| `GetKnowledgeContext` | `GetKnowledgeContextHandler` | `str` (contexto RAG) |
+| `GetPiTagCurrentValue` | `GetPiTagCurrentValueHandler` | `dict` (valor + metadados) |
+| `GetPiHistoricalSeries` | `GetPiHistoricalSeriesHandler` | `dict` (série temporal) |
+| `GetPimsStatus` | `GetPimsStatusHandler` | `dict` (resumo status) |
+
+### EventPublisher (`app/application/sagas/event_publisher.py`)
+
+`InMemoryEventPublisher` armazena eventos em lista. Substituído por `RedisStreamsEventPublisher` em produção.
+
+---
+
+## 28. Infrastructure Layer Detalhado
+
+### EventStore (`app/infrastructure/event_store/`)
+
+| Implementação | Armazenamento | Uso |
+|---|---|---|
+| `InMemoryEventStore` | `dict[str, list[DomainEvent]]` | Testes unitários |
+| `RedisStreamsEventStore` | Redis Streams (`XADD`/`XRANGE`) | Produção |
+
+**Protocol**: `append(stream_id, event)`, `replay(stream_id)`, `replay_all()`.
+
+### DistributedLock (`app/infrastructure/locking/`)
+
+| Implementação | Mecanismo | Uso |
+|---|---|---|
+| `RedisDistributedLock` | `SET NX EX` + Lua script (release atômico) | Produção |
+| `InMemoryDistributedLock` | `threading.Lock` | Testes |
+
+**Protocol**: `acquire(name, ttl) -> bool`, `release(name)`.
+
+### RedisConversationMemory v2 (`app/infrastructure/conversation/`)
+
+Usa Event Sourcing: cada turn é um evento (`UserMessageRecorded`, `AssistantMessageRecorded`) appended ao Redis Stream. A projeção (`ConversationMemoryProjection`) reconstrói os turns.
+
+**Chave Redis**: `pi_chat:memory:{conversation_id}:turns`
+**TTL**: `CHAT_MEMORY_TTL_SECONDS` (default 7 dias)
+**Max turns**: `CHAT_MEMORY_MAX_TURNS` (default 8)
+
+---
+
+## 29. ConversationSaga — Fluxo Detalhado
+
+### Diagrama
+
+```
+POST /chat
+    │
+    ▼
+┌─ ConversationContext (frozen) ─────────────────────────────┐
+│                                                            │
+│  Step 1: load_memory                                       │
+│    ├─ Redis: lrange pi_chat:memory:{user_id}:turns         │
+│    ├─ Event: ConversationMemoryLoaded                      │
+│    └─ ctx.memory_turns, ctx.memory_context                 │
+│                                                            │
+│  Step 2: extract_ocr (se há images)                        │
+│    ├─ LiteLLM: acompletion() multimodal (1 por imagem)     │
+│    ├─ Event: OcrExtractionCompleted                        │
+│    └─ ctx.ocr_text, ctx.ocr_extractions, ctx.tags          │
+│                                                            │
+│  Step 3: route                                             │
+│    ├─ LiteLLM: acompletion(format=json, num_predict=128)   │
+│    ├─ Event: AgentRouteSelected                            │
+│    └─ ctx.agent_route ("pims" | "conversa_comum")          │
+│                                                            │
+│  Step 4: retrieve_rag (se route=pims)                      │
+│    ├─ Qdrant: top-3 chunks + CHUNK 01 fixo                 │
+│    ├─ Event: RagContextRetrieved                            │
+│    └─ ctx.knowledge_context                                │
+│                                                            │
+│  Step 5: run_agent                                         │
+│    ├─ route=pims → run_pi_agent() (ADK + McpToolset)       │
+│    ├─ route=conversa_comum → run_general_agent() (LiteLLM) │
+│    ├─ Event: AgentRunStarted → AgentToolInvocation* →       │
+│    │          AgentRunCompleted                             │
+│    └─ ctx.agent_output, ctx.tool_name                      │
+│                                                            │
+│  Step 6: save_memory (SEMPRE, mesmo em erro)               │
+│    ├─ Redis: rpush + ltrim + expire                        │
+│    ├─ Event: ConversationMemorySaved                       │
+│    └─ ctx.user_turn_saved, ctx.assistant_turn_saved        │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+    │
+    ▼
+ChatResponse
+```
+
+### ConversationContext (30+ campos)
+
+```python
+@dataclass(frozen=True)
+class ConversationContext:
+    # Identifiers
+    user_id: str | None
+    conversation_id: str | None
+    # Input
+    message_original: str
+    images: list
+    # OCR
+    ocr_text: str | None
+    ocr_extractions: list
+    tags_encontradas: list[str]
+    skip_ocr: bool
+    # Memory
+    memory_turns: list
+    memory_context: str | None
+    # Routing
+    agent_route: str | None
+    # RAG
+    knowledge_context: str
+    # Agent
+    agent_output: str | None
+    agent_error: str | None
+    agent_messages: list[dict]
+    tool_name: str | None
+    # Error state
+    error: str | None
+```
+
+### Backward Compatibility
+
+O `orchestrator.py` mantém stubs deprecated que usam `state: dict` para compatibilidade com testes de caracterização (Etapa 0). O fluxo real usa a Saga.
+
+---
+
+## 30. Ambientes (Local / QA / PRD)
+
+### Tabela Comparativa
+
+| Aspecto | Local (dev) | QA (Poetry) | PRD (Docker) |
+|---|---|---|---|
+| **app** | `uvicorn app.main:app --port 8012` | `uvicorn app.main:app --port 8002` | Container `agent_bot` (8002) |
+| **mcp_server** | `python mcp_server/server.py` (8015) | `python mcp_server/server.py` (8015) | Container `mcp_server` (8005) |
+| **math_tool** | `cd calc && uvicorn app.main:app --port 8001` | `cd calc && uvicorn app.main:app --port 8001` | Container `math_tool` (8001) |
+| **MCP_SERVER_URL** | `http://localhost:8015/mcp` | `http://localhost:8015/mcp` | `http://mcp_server:8005/mcp` |
+| **MATH_TOOL_BASE_URL** | `http://10.247.179.197:8001` (via .env) | `http://10.247.179.197:8001` (via .env) | `http://math_tool:8001` (docker-compose) |
+| **OLLAMA_BASE_URL** | `http://10.247.179.197:11434` | `http://10.247.179.197:11434` | `http://10.247.179.197:11434` |
+| **PI_WEB_API_BASE_URL** | `http://10.247.224.39/piwebapi` | `http://10.247.224.39/piwebapi` | `http://10.247.224.39/piwebapi` |
+| **REDIS_URL** | `redis://10.247.179.197:6379/2` | `redis://10.247.179.197:6379/2` | `redis://10.247.197:6379/2` |
+| **QDRANT_URL** | `http://10.247.179.197:6333` | `http://10.247.179.197:6333` | `http://10.247.179.197:6333` |
+| **PHOENIX** | `http://10.247.179.197:6006` | `http://10.247.179.197:6006` | `http://10.247.179.197:6006` |
+
+### Como Rodar Cada Ambiente
+
+```bash
+# === LOCAL (desenvolvimento) ===
+# Terminal 1: Math Tool
+cd calc && poetry run uvicorn app.main:app --reload --port 8001
+
+# Terminal 2: MCP Server
+cd mcp_server && poetry run python server.py  # porta 8015
+
+# Terminal 3: App principal
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8012
+
+# === QA (validação) ===
+# O mesmo que Local, mas usando porta 8002 para o app
+
+# === PRD (produção) ===
+docker-compose up -d
+# Serviços: math_tool (8001), mcp_server (8005), agent_bot (8002), agent_bot_chat_bridge
+```
+
+### Configuração por Ambiente
+
+- **Local/QA**: `mcp_server/.env` define `MATH_TOOL_BASE_URL=http://10.247.179.197:8001`
+- **PRD**: `docker-compose.yaml` sobrescreve com `MATH_TOOL_BASE_URL=http://math_tool:8001`
+- **domain/core/config.py**: carrega `mcp_server/.env` via `env_file` (funciona em Local/QA; em PRD, env vars do docker-compose sobrescrevem)
+
+### Startup Check do MCP Server
+
+Ao iniciar, o `mcp_server` faz um probe HTTP não-bloqueante ao Math Tool:
+```
+2026-06-23 [INFO] mcp_server: Starting MCP Server on 0.0.0.0:8015 (Math Tool: http://10.247.179.197:8001)
+2026-06-23 [INFO] core.startup_checks: Math Tool health check OK — http://10.247.179.197:8001 responded with HTTP 404
+```
+
+---
+
+## 31. Regras de Negócio Detalhadas
+
+### Regex de Tags
+
+```python
+TAG_REGEX = r"(UTI|ACI|RED|LFS|LFI|CPD|LTQ)(?:_[A-Z0-9_]+)|(SIN|CDT)[A-Z0-9_]+"
+```
+
+**Exemplos positivos**: `LFI_RB3_VAZ_GN_TOTAL`, `ACI_001_TEMP`, `SIN12345`, `CDT_ABC`
+
+**Exemplos negativos**: `MINHA_TAG` (prefixo inválido), `Lfi_rb3` (case-insensitive aceita), `_LFI_` (precisa de pelo menos 1 char após underscore)
+
+### Consumo de Vazão em Nm3
+
+Para calcular consumo de vazão (Nm3):
+
+1. Usar `data_method='summary'`
+2. Usar `summary_type='Average'`
+3. Usar `summary_duration='1h'`
+4. Usar `calculation_basis='TimeWeighted'`
+5. Usar `operation='sum'` para totalizar
+6. Cada hora em Nm3/h = 1 Nm3 (média horária × 1h)
+
+**Exemplo**: tag `LFI_RB3_VAZ_GN_TOTAL` com unit `Nm3/h`, período 1 mês:
+```
+consumo_total = sum(médias_horárias) × 1h = X Nm3
+```
+
+### Digital States
+
+Fluxo completo:
+1. Buscar PI Point → ler `PointType` e `DigitalSetName`
+2. Se `PointType == "Digital"` e `DigitalSet` válido:
+   a. Listar Data Servers → encontrar WebId do PIMS (cacheado)
+   b. Listar Enumeration Sets → encontrar o set com mesmo nome
+   c. Consultar Enumeration Values → retorna `{Value, Name, Description}`
+3. Estados retornados: `{indice, nome, descricao}`
+
+**`INVALID_DIGITAL_SETS`**: `n/a`, `não cadastrado`, `não se aplica`, `null`, `undefined`, vazio
+
+### Detecção de Loops
+
+O `_detect_repeated_tool_calls()` verifica se a mesma tool (mesma combinação `name + args`) é chamada 3+ vezes. Se detectado, aborta com mensagem de erro.
+
+**`MAX_AGENT_STEPS = 8`**: limite máximo de iterações do ADK Runner.
+
+### Tratamento de Erros do PI Agent
+
+| Erro | Mensagem |
+|---|---|
+| `RecursionError` / `recursion_limit` | "excedeu o número máximo de etapas" |
+| `RateLimitError` / `429` | "Serviço temporariamente sobrecarregado" |
+| `AuthenticationError` / `401` | "Chave de API inválida ou expirada" |
+| `ClosedResourceError` / `Mcp*` | "Conexão com o servidor MCP foi fechada" |
+
+### Conversão de Unidades
+
+- **`detectar_time_unit()`**: detecta unidade temporal a partir do texto do usuário
+- **`inferir_time_unit_por_unidade()`**: infere time_unit pela unidade de engenharia da tag (Nm3/h → hour, kg/s → second)
+
+### Formato Google Chat
+
+`app/utils/google_chat_format.py` normaliza markdown para o formato Google Chat:
+- Remove `***triple asterisks***`
+- Converte listas markdown para bullets
+- Limita tamanho de mensagens (4096 chars)

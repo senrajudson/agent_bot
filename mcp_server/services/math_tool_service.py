@@ -1,20 +1,20 @@
 import json
 from typing import Any
 
-from clients.math_tool_client import (
+from domain.analytics.clients.math_tool_client import (
     call_calculate,
     call_calculus,
     call_stats,
 )
-from utils.math_expression import limpar_expressao_basica
-from utils.math_pi_series import (
+from domain.analytics.utils.math_expression import limpar_expressao_basica
+from domain.analytics.utils.math_pi_series import (
     buscar_serie_pi,
     extrair_point_metadata,
     extrair_points,
     extrair_values,
 )
-from utils.math_time_unit import detectar_time_unit
-from utils.math_units import inferir_time_unit_por_unidade
+from domain.analytics.utils.math_time_unit import detectar_time_unit
+from domain.analytics.utils.math_units import inferir_time_unit_por_unidade
 
 
 DATA_METHODS_VALIDOS = {"recorded", "interpolated", "summary"}

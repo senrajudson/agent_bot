@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import settings
 from app.prompts.router_prompt import ROUTER_PROMPT
 from app.schemas.llm import LLMParams
+from app.agent.shared import build_completion_kwargs
 
 
 RouteName = Literal[
@@ -52,43 +53,6 @@ ROUTER_LLM_PARAMS = LLMParams(
 
 def _fallback_route() -> RouterOutput:
     return RouterOutput(rota="conversa_comum")
-
-
-def _build_completion_kwargs() -> dict:
-    provider = settings.LLM_PROVIDER.lower().strip()
-    kwargs: dict = {
-        "temperature": ROUTER_LLM_PARAMS.temperature,
-    }
-
-    if ROUTER_LLM_PARAMS.num_predict is not None:
-        kwargs["max_tokens"] = ROUTER_LLM_PARAMS.num_predict
-
-    if ROUTER_LLM_PARAMS.top_p is not None:
-        kwargs["top_p"] = ROUTER_LLM_PARAMS.top_p
-
-    if provider == "gemini":
-        kwargs["model"] = f"gemini/{settings.GEMINI_MODEL}"
-        kwargs["api_key"] = settings.GEMINI_API_KEY
-    elif provider == "groq":
-        kwargs["model"] = f"groq/{settings.GROQ_MODEL}"
-        kwargs["api_key"] = settings.GROQ_API_KEY
-    elif provider == "ollama":
-        kwargs["model"] = f"ollama_chat/{settings.OLLAMA_MODEL}"
-        kwargs["api_base"] = settings.OLLAMA_BASE_URL
-        if ROUTER_LLM_PARAMS.format is not None:
-            kwargs["format"] = ROUTER_LLM_PARAMS.format
-        if ROUTER_LLM_PARAMS.think is not None:
-            kwargs["think"] = ROUTER_LLM_PARAMS.think
-        if ROUTER_LLM_PARAMS.num_ctx is not None:
-            kwargs["num_ctx"] = ROUTER_LLM_PARAMS.num_ctx
-    elif provider in {"openai_compatible", "openai-compatible", "openai"}:
-        kwargs["model"] = f"openai/{settings.OPENAI_COMPATIBLE_MODEL}"
-        kwargs["api_key"] = settings.OPENAI_COMPATIBLE_API_KEY
-        kwargs["api_base"] = settings.OPENAI_COMPATIBLE_BASE_URL
-    else:
-        raise ValueError(f"LLM_PROVIDER inválido: {settings.LLM_PROVIDER}")
-
-    return kwargs
 
 
 def _parse_route_from_text(text: str) -> RouterOutput:
@@ -132,7 +96,7 @@ async def route_message(user_message: str) -> RouterOutput:
         return _fallback_route()
 
     try:
-        kwargs = _build_completion_kwargs()
+        kwargs = build_completion_kwargs(ROUTER_LLM_PARAMS)
 
         messages = [
             {

@@ -2,7 +2,7 @@
 CHUNK-based ingestion script for PI_WEB_API_AGENT_GUIDE.md into Qdrant.
 
 Splits the document by CHUNK headers (# CHUNK 01, # CHUNK 02, etc.).
-Chunk 20 is excluded (it's a fixed context chunk always injected at runtime).
+CHUNK 01 is excluded (it's a fixed context chunk always injected at runtime).
 Uses Ollama nomic-embed-text-v2-moe for embeddings.
 """
 
@@ -27,7 +27,7 @@ COLLECTION = settings.QDRANT_COLLECTION
 MARKDOWN_PATH = Path(__file__).parent.parent / "PI_WEB_API_AGENT_GUIDE.md"
 
 VECTOR_SIZE = 768  # nomic-embed-text-v2-moe produces 768-dim vectors
-SKIP_CHUNK = 20  # Chunk 20 is always injected at runtime, not stored in Qdrant
+SKIP_CHUNK = 1  # CHUNK 01 is the fixed runtime context, not stored in Qdrant
 
 # Pattern: # CHUNK 01 - Title, # CHUNK 02 - Title, etc.
 CHUNK_HEADER_RE = re.compile(r"^#\s+CHUNK\s+(\d+)\s*-\s*(.+)$", re.MULTILINE)
@@ -173,16 +173,18 @@ def main():
     all_chunks = parse_chunks(text)
     print(f"  Found {len(all_chunks)} chunks (including intro):")
 
-    # Filter out the chunk to skip
+    # Filter out the chunk to skip (CHUNK 01 fixed) and intro (chunk 0)
     chunks_to_ingest = []
     for c in all_chunks:
         chunk_num = c["chunk_number"]
-        marker = " [SKIP]" if chunk_num == SKIP_CHUNK else ""
-        print(f"    [{chunk_num:2d}] {c['title'][:60]:<60} ({len(c['content'])} chars){marker}")
-        if chunk_num != SKIP_CHUNK:
+        if chunk_num in (0, SKIP_CHUNK):
+            marker = " [SKIP]"
+            print(f"    [{chunk_num:2d}] {c['title'][:60]:<60} ({len(c['content'])} chars){marker}")
+        else:
             chunks_to_ingest.append(c)
+            print(f"    [{chunk_num:2d}] {c['title'][:60]:<60} ({len(c['content'])} chars)")
 
-    print(f"\n  Ingesting {len(chunks_to_ingest)} chunks (skipping CHUNK {SKIP_CHUNK:02d})")
+    print(f"\n  Ingesting {len(chunks_to_ingest)} chunks (skipping CHUNK {SKIP_CHUNK:02d} + intro)")
 
     # 3. Embed
     print(f"\n[3/3] Embedding with {EMBEDDING_MODEL} ...")

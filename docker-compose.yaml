@@ -8,11 +8,13 @@ services:
     restart: always
     ports:
       - "8001:8001"
+    environment:
+      - PYTHONUNBUFFERED=1
 
   mcp_server:
     build:
-      context: ./mcp_server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: mcp_server/Dockerfile
     image: pi_mcp_server:0.1.0
     container_name: mcp_server
     restart: always
@@ -21,7 +23,9 @@ services:
     env_file:
       - ./mcp_server/.env
     environment:
+      - PYTHONUNBUFFERED=1
       - MCP_PORT=8005
+      - MATH_TOOL_BASE_URL=http://math_tool:8001
 
   agent_bot:
     build:
@@ -35,6 +39,7 @@ services:
     env_file:
       - ./app/.env
     environment:
+      - PYTHONUNBUFFERED=1
       - LLM_PROVIDER=ollama
       - OLLAMA_API_BASE=http://10.247.179.197:11434
       - MCP_SERVER_URL=http://mcp_server:8005/mcp

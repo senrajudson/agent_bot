@@ -1,6 +1,6 @@
 from typing import Any
 
-from clients.pi_web_api_client import buscar_dados_temporais_tag
+from domain.pims.clients.pi_web_api_client import buscar_dados_temporais_tag
 
 
 def normalizar_numero(valor: Any) -> float | None:

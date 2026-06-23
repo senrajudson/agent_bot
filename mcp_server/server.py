@@ -5,10 +5,20 @@ FastMCP server providing tools for querying PI System tags,
 historical statistics, temporal calculus, and PIMS operational status.
 """
 
+import asyncio
+import logging
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+_HERE = Path(__file__).parent
+sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_HERE.parent))
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("mcp_server")
 
 from fastmcp import FastMCP
 
@@ -52,7 +62,7 @@ async def consultar_tag(
         tags: Lista de nomes de tags do PI System (preservar nomes exatos)
         pergunta_usuario: Pergunta original do usuário (para contexto)
     """
-    from services.consultar_tag_service import consultar_tags_pi
+    from domain.pims.services.consultar_tag_service import consultar_tags_pi
 
     result = await consultar_tags_pi(
         tags=tags,
@@ -102,7 +112,7 @@ async def tag_statistics(
         context_text: Texto original da pergunta do usuário
         max_count: Máximo de valores (somente para 'recorded')
     """
-    from services.math_tool_service import executar_estatistica_tags_service
+    from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
 
     if data_method == "summary":
         summary_type = summary_type or "Average"
@@ -162,7 +172,7 @@ async def tag_calculus(
         context_text: Texto original da pergunta do usuário
         max_count: Máximo de valores (somente para 'recorded')
     """
-    from services.math_tool_service import executar_calculo_historico_service
+    from domain.analytics.services.math_tool_service import executar_calculo_historico_service
 
     result = await executar_calculo_historico_service(
         tags=tags,
@@ -201,7 +211,7 @@ async def status_pims(
         pergunta_usuario: Texto original da pergunta do usuário
         lookback_minutes: Minutos para consultar nos logs (60=status atual, 120=2h, 1440=hoje, null=sem período claro)
     """
-    from services.status_pims_service import consultar_status_pims_service
+    from domain.pims_ops.services.status_pims_service import consultar_status_pims_service
 
     result = await consultar_status_pims_service(
         user_message=pergunta_usuario or "",
@@ -215,4 +225,15 @@ async def status_pims(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    from core.startup_checks import check_math_tool
+
+    logger.info(
+        "Starting MCP Server on %s:%s (Math Tool: %s)",
+        settings.MCP_HOST,
+        settings.MCP_PORT,
+        settings.MATH_TOOL_BASE_URL,
+    )
+
+    asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))
+
     mcp.run(transport="http", host=settings.MCP_HOST, port=settings.MCP_PORT)

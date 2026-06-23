@@ -7,11 +7,11 @@ from typing import Any
 
 import litellm
 
-from app.core.config import settings
 from app.prompts.ocr_query_prompt import SYSTEM_PROMPT, USER_PROMPT
 from app.schemas.chat import ChatImage, OcrResult
 from app.schemas.llm import LLMParams
 from app.utils.ocr_treatment import tratar_saida_ocr
+from app.agent.shared import build_completion_kwargs
 
 
 OCR_LLM_PARAMS = LLMParams(
@@ -20,41 +20,6 @@ OCR_LLM_PARAMS = LLMParams(
     num_predict=512,
     top_p=0.1,
 )
-
-
-def _build_completion_kwargs() -> dict[str, Any]:
-    provider = settings.LLM_PROVIDER.lower().strip()
-    kwargs: dict[str, Any] = {
-        "temperature": OCR_LLM_PARAMS.temperature,
-    }
-
-    if OCR_LLM_PARAMS.num_predict is not None:
-        kwargs["max_tokens"] = OCR_LLM_PARAMS.num_predict
-
-    if OCR_LLM_PARAMS.top_p is not None:
-        kwargs["top_p"] = OCR_LLM_PARAMS.top_p
-
-    if provider == "gemini":
-        kwargs["model"] = f"gemini/{settings.GEMINI_MODEL}"
-        kwargs["api_key"] = settings.GEMINI_API_KEY
-    elif provider == "groq":
-        kwargs["model"] = f"groq/{settings.GROQ_MODEL}"
-        kwargs["api_key"] = settings.GROQ_API_KEY
-    elif provider == "ollama":
-        kwargs["model"] = f"ollama_chat/{settings.OLLAMA_MODEL}"
-        kwargs["api_base"] = settings.OLLAMA_BASE_URL
-        if OCR_LLM_PARAMS.keep_alive is not None:
-            kwargs["keep_alive"] = str(OCR_LLM_PARAMS.keep_alive)
-        if OCR_LLM_PARAMS.num_ctx is not None:
-            kwargs["num_ctx"] = OCR_LLM_PARAMS.num_ctx
-    elif provider in {"openai_compatible", "openai-compatible", "openai"}:
-        kwargs["model"] = f"openai/{settings.OPENAI_COMPATIBLE_MODEL}"
-        kwargs["api_key"] = settings.OPENAI_COMPATIBLE_API_KEY
-        kwargs["api_base"] = settings.OPENAI_COMPATIBLE_BASE_URL
-    else:
-        raise ValueError(f"LLM_PROVIDER inválido: {settings.LLM_PROVIDER}")
-
-    return kwargs
 
 
 def _build_user_content(image: ChatImage) -> list[dict[str, Any]]:
@@ -74,7 +39,7 @@ async def run_ocr_for_image(
     image: ChatImage,
     fallback_index: int = 0,
 ) -> OcrResult:
-    kwargs = _build_completion_kwargs()
+    kwargs = build_completion_kwargs(OCR_LLM_PARAMS)
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

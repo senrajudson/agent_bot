@@ -1,36 +1,77 @@
-# PI Web API - Guia Operacional para Agente RAG
+# CHUNK 01 - Chunk fixo: seleção de tool e resumo operacional
 
-Documento para orientar agentes de IA que consultam tags no PI System via PI Web API.
+## Intenção
 
-Foco: valor atual, histórico, metadados, unidades, descriptor, tipo da tag, atributos do PI Point, digital set, digital states, agregações e cálculos temporais.
+Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
-Base da API:
+## Mapa de tools
+
+| Intenção                                                          | Interpretação              | Tool sugerida         |
+| ----------------------------------------------------------------- | -------------------------- | --------------------- |
+| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `consultar_tag_tool`  |
+| Média, máximo, mínimo, soma, consumo, total por período           | Agregação histórica        | `tag_statistics_tool` |
+| Integral, derivada, taxa de variação, área sob curva              | Cálculo temporal explícito | `tag_calculus_tool`   |
+| Status do PIMS, servidores, logs                                  | Consulta operacional       | `status_pims_tool`    |
+
+## Consumo de vazão
+
+Para consumo, interprete o resultado como volume acumulado. Uma tag em `Nm3/h` mede vazão; o consumo calculado no período é apresentado em unidade de volume, como `Nm3`.
+Você precisa compreender a diferença entre unidade de engunit (unidade de engenharia) e unidade final do cálculo, não são a mesma coisa.
 
 ```text
-http://10.247.224.39/piwebapi
+tag_statistics_tool:
+  data_method = "summary"
+  summary_type = "Average"
+  summary_duration = "1h"
+  calculation_basis = "TimeWeighted"
+  operation = "sum"
 ```
 
-Servidor padrão:
+## Estatística simples
 
 ```text
-PIMS
+tag_statistics_tool:
+  data_method = "summary"
+  summary_type = Average, Maximum, Minimum, Total, Count, Range ou StdDev
+  summary_duration = usado quando o cálculo for por blocos
+  calculation_basis = TimeWeighted para variáveis contínuas
 ```
 
-Path padrão de uma tag:
+## Cálculo temporal
 
 ```text
-\\PIMS\NOME_DA_TAG
+tag_calculus_tool:
+  data_method = "interpolated"
+  interval = "1m" ou outra frequência
+  operation = "integral" ou "derivative"
+  time_unit = "hour", "minute", "second" ou "none"
 ```
 
-Exemplo:
+## Períodos fechados
+
+Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Antes da execução, converta expressões como `mês passado`, `ontem`, `dia anterior`, `mês atual` e `ano passado` para `start_time` e `end_time` em ISO 8601 explícito com offset local.
+
+Não chame `tag_statistics_tool` com períodos relativos como `*`, `*-1M`, `*-30d` ou `*-1d` quando a intenção for período fechado.
+
+Exemplo de maio de 2026:
 
 ```text
-GET /points?path=\\PIMS\LFI_RB3_VAZ_GN_TOTAL
+start_time = 2026-05-01T00:00:00-03:00
+end_time   = 2026-06-01T00:00:00-03:00
+```
+
+Formato esperado na chamada da tool:
+
+```json
+{
+  "start_time": "2026-05-01T00:00:00-03:00",
+  "end_time": "2026-06-01T00:00:00-03:00"
+}
 ```
 
 ---
 
-# CHUNK 01 - Fluxo base: tag para WebId
+# CHUNK 02 - Fluxo base: tag para WebId
 
 ## Intenção
 
@@ -71,7 +112,7 @@ Quando `Links` estiver disponível, ele pode ser usado para navegar para `Value`
 
 ---
 
-# CHUNK 02 - Valor atual de uma tag
+# CHUNK 03 - Valor atual de uma tag
 
 ## Intenção
 
@@ -92,7 +133,7 @@ Use quando o usuário pedir valor atual, último valor, snapshot, status atual o
 GET http://10.247.224.39/piwebapi/streams/{webId}/value
 ```
 
-## Campos da resposta
+## Campos retornados pela API
 
 ```text
 Timestamp          Data/hora do valor
@@ -103,18 +144,9 @@ Questionable       Valor suspeito quando true
 Substituted        Valor substituído quando true
 ```
 
-## Resposta sugerida
-
-```text
-Tag: LFI_RB3_VAZ_GN_TOTAL
-Valor: 4382,45 Nm3/h
-Timestamp: 15/06/2026 10:10:00
-Qualidade: boa
-```
-
 ---
 
-# CHUNK 03 - Metadados da tag
+# CHUNK 04 - Metadados da tag
 
 ## Intenção
 
@@ -155,7 +187,7 @@ DisplayDigits     Dígitos de exibição
 }
 ```
 
-## Otimização de resposta
+## Otimização de payload
 
 Use `selectedFields` para reduzir payload quando bastarem campos específicos:
 
@@ -165,7 +197,7 @@ GET /points?path=\\PIMS\TAG&selectedFields=WebId;Name;Descriptor;PointType;Digit
 
 ---
 
-# CHUNK 04 - Atributos do PI Point
+# CHUNK 05 - Atributos do PI Point
 
 ## Intenção
 
@@ -188,7 +220,7 @@ GET /points/{webId}/attributes?name=instrumenttag
 GET /points/{webId}/attributes?name=location1
 ```
 
-## Resposta típica
+## Exemplo de payload da API
 
 ```json
 {
@@ -202,7 +234,7 @@ Quando o atributo vier vazio ou não existir, informe ausência de valor em vez 
 
 ---
 
-# CHUNK 05 - DigitalSetName e Digital States
+# CHUNK 06 - DigitalSetName e Digital States
 
 ## Intenção
 
@@ -253,21 +285,9 @@ ou:
 { "Value": { "Name": "Ligado", "Value": 1 }, "Good": true }
 ```
 
-## Resposta sugerida
-
-```text
-Tag: CPD_LP_SECADOR_STATUS
-DigitalSetName: SECADOR_STATUS
-
-Estados:
-0 - Desligado
-1 - Ligado
-2 - Manutenção
-```
-
 ---
 
-# CHUNK 06 - Histórico bruto: recorded
+# CHUNK 07 - Histórico bruto: recorded
 
 ## Intenção
 
@@ -295,7 +315,7 @@ retrievalMode  Auto, Before, After, Exact, AtOrBefore, AtOrAfter
 
 ---
 
-# CHUNK 07 - Valores interpolados
+# CHUNK 08 - Valores interpolados
 
 ## Intenção
 
@@ -322,7 +342,7 @@ Interpolado é adequado para amostragem regular. Para eventos exatamente gravado
 
 ---
 
-# CHUNK 08 - Summary: média, mínimo, máximo e total
+# CHUNK 09 - Summary: média, mínimo, máximo e total
 
 ## Intenção
 
@@ -364,7 +384,7 @@ summaryDuration divide o período em blocos, como 1h ou 1d.
 
 ---
 
-# CHUNK 09 - Consumo de vazão usando médias horárias
+# CHUNK 10 - Consumo de vazão usando médias horárias
 
 ## Intenção
 
@@ -372,7 +392,7 @@ Use para consumo de gás, consumo total, total de vazão, consumo mensal, consum
 
 ## Conceito
 
-Consumo é uma grandeza acumulada. Quando a tag mede vazão, por exemplo `Nm3/h`, a resposta de consumo representa volume no período.
+Consumo é uma grandeza acumulada. Quando a tag mede vazão, por exemplo `Nm3/h`, o resultado do cálculo de consumo representa volume no período.
 
 ```text
 média horária em Nm3/h × 1h = volume em Nm3 no bloco
@@ -419,17 +439,9 @@ Formato esperado na chamada da tool:
 }
 ```
 
-## Resposta sugerida
-
-```text
-Consumo estimado: 350 Nm3
-Critério: soma das médias horárias TimeWeighted da tag de vazão.
-Período: 01/05/2026 00:00 até 01/06/2026 00:00
-```
-
 ---
 
-# CHUNK 10 - Múltiplas tags: streamsets e batch
+# CHUNK 11 - Múltiplas tags: streamsets e batch
 
 ## Intenção
 
@@ -476,7 +488,7 @@ Trate o status de cada item do batch individualmente.
 
 ---
 
-# CHUNK 11 - Buscar tag quando o nome não é exato
+# CHUNK 12 - Buscar tag quando o nome não é exato
 
 ## Intenção
 
@@ -503,7 +515,7 @@ Quando houver várias tags parecidas, apresente uma lista curta e peça desambig
 
 ---
 
-# CHUNK 12 - Tratamento de erros e qualidade
+# CHUNK 13 - Tratamento de erros e qualidade
 
 ## Intenção
 
@@ -536,7 +548,7 @@ Value=null      Ausência de valor útil.
 
 ---
 
-# CHUNK 13 - Strings de tempo e timezone
+# CHUNK 14 - Strings de tempo e timezone
 
 ## Intenção
 
@@ -591,7 +603,7 @@ Formato esperado na chamada da tool:
 
 ---
 
-# CHUNK 14 - Codificação de URL
+# CHUNK 15 - Codificação de URL
 
 ## Intenção
 
@@ -618,48 +630,6 @@ requests.get(
     timeout=30,
 )
 ```
-
----
-
-# CHUNK 15 - Respostas finais do agente
-
-## Intenção
-
-Use para padronizar respostas ao usuário.
-
-## Valor atual
-
-```text
-Tag: NOME_DA_TAG
-Valor: VALOR UNIDADE
-Timestamp: DATA/HORA
-Qualidade: boa/questionável/ruim
-```
-
-## Metadados
-
-```text
-Tag: NOME_DA_TAG
-Descrição: DESCRIPTOR
-Tipo: POINTTYPE
-Unidade: ENGINEERINGUNITS
-DigitalSetName: DIGITALSETNAME
-```
-
-## Digital states
-
-```text
-Tag: NOME_DA_TAG
-DigitalSetName: NOME_DO_SET
-
-Estados:
-0 - Desligado
-1 - Ligado
-```
-
-## Cálculos
-
-Inclua valor calculado, unidade inferida, período, critério usado e observação de qualidade quando aplicável.
 
 ---
 
@@ -787,83 +757,7 @@ Use para evitar interpretações frágeis em consulta e cálculo.
 
 ---
 
-# CHUNK 20 - Seleção de tool e resumo operacional
-
-## Intenção
-
-Use como contexto base para orientar seleção de ferramenta e parâmetros.
-
-## Mapa de tools
-
-| Intenção                                                          | Interpretação              | Tool sugerida         |
-| ----------------------------------------------------------------- | -------------------------- | --------------------- |
-| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `consultar_tag_tool`  |
-| Média, máximo, mínimo, soma, consumo, total por período           | Agregação histórica        | `tag_statistics_tool` |
-| Integral, derivada, taxa de variação, área sob curva              | Cálculo temporal explícito | `tag_calculus_tool`   |
-| Status do PIMS, servidores, logs                                  | Consulta operacional       | `status_pims_tool`    |
-
-## Consumo de vazão
-
-Para consumo, interprete o resultado como volume acumulado. Uma tag em `Nm3/h` mede vazão; o consumo calculado no período é apresentado em unidade de volume, como `Nm3`.
-
-```text
-tag_statistics_tool:
-  data_method = "summary"
-  summary_type = "Average"
-  summary_duration = "1h"
-  calculation_basis = "TimeWeighted"
-  operation = "sum"
-```
-
-## Estatística simples
-
-```text
-tag_statistics_tool:
-  data_method = "summary"
-  summary_type = Average, Maximum, Minimum, Total, Count, Range ou StdDev
-  summary_duration = usado quando o cálculo for por blocos
-  calculation_basis = TimeWeighted para variáveis contínuas
-```
-
-## Cálculo temporal
-
-```text
-tag_calculus_tool:
-  data_method = "interpolated"
-  interval = "1m" ou outra frequência
-  operation = "integral" ou "derivative"
-  time_unit = "hour", "minute", "second" ou "none"
-```
-
-## Períodos fechados
-
-Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Antes da execução, converta expressões como `mês passado`, `ontem`, `dia anterior`, `mês atual` e `ano passado` para `start_time` e `end_time` em ISO 8601 explícito com offset local.
-
-Não chame `tag_statistics_tool` com períodos relativos como `*`, `*-1M`, `*-30d` ou `*-1d` quando a intenção for período fechado.
-
-Exemplo de maio de 2026:
-
-```text
-start_time = 2026-05-01T00:00:00-03:00
-end_time   = 2026-06-01T00:00:00-03:00
-```
-
-Formato esperado na chamada da tool:
-
-```json
-{
-  "start_time": "2026-05-01T00:00:00-03:00",
-  "end_time": "2026-06-01T00:00:00-03:00"
-}
-```
-
-## Resposta
-
-Inclua valor, unidade retornada ou inferida, período/timestamp, qualidade e descriptor quando disponível.
-
----
-
-# CHUNK 21 - Cálculos temporais: integral e derivada
+# CHUNK 20 - Cálculos temporais: integral e derivada
 
 ## Intenção
 
@@ -910,11 +804,11 @@ tag_calculus_tool:
 
 ## Unidade
 
-`time_unit` descreve unidade temporal do cálculo, não a unidade de engenharia da tag. A unidade final da resposta é inferida combinando unidade da tag, operação e unidade temporal.
+`time_unit` descreve unidade temporal do cálculo, não a unidade de engenharia da tag. A unidade final do cálculo é inferida combinando unidade da tag, operação e unidade temporal.
 
 ---
 
-# CHUNK 22 - RAG e recuperação recomendada
+# CHUNK 21 - RAG e recuperação recomendada
 
 ## Intenção
 
@@ -924,12 +818,12 @@ Use para orientar montagem de contexto em um RAG com top-k baixo.
 
 Mantenha um chunk base com o fluxo `tag -> WebId -> endpoint` e recupere chunks específicos pela intenção atual.
 
-## Sugestão de contexto final
+## Composição de contexto final
 
 ```text
 1. Chunk base de fluxo PI Web API.
 2. Chunk específico da intenção: valor atual, summary, digital states, consumo, erro etc.
-3. Chunk de qualidade/resposta ou seleção de tool, quando útil.
+3. Chunk de qualidade ou seleção de tool, quando útil.
 ```
 
 ## Query de recuperação

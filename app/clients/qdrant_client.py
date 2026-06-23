@@ -53,31 +53,32 @@ def _embed_query(text: str) -> list[float]:
 
 
 # ---------------------------------------------------------------------------
-# Chunk 20 — fixed context (always injected)
+# Fixed context chunk (always injected, not stored in Qdrant)
 # ---------------------------------------------------------------------------
-_CHUNK_20_CACHE: str | None = None
+FIXED_CHUNK_NUMBER = 1  # CHUNK 01 is the fixed runtime context
+_FIXED_CHUNK_CACHE: str | None = None
 
-_CHUNK_20_RE = re.compile(
-    r"# CHUNK 20 - .+?\n(.*?)(?=\n# |\Z)", re.DOTALL
+_FIXED_CHUNK_RE = re.compile(
+    rf"# CHUNK {FIXED_CHUNK_NUMBER:02d} - .+?\n(.*?)(?=\n# |\Z)", re.DOTALL
 )
 
 
-def _load_chunk_20() -> str:
-    """Load Chunk 20 from the markdown document (cached)."""
-    global _CHUNK_20_CACHE
+def _load_fixed_chunk() -> str:
+    """Load the fixed context chunk (CHUNK 01) from the markdown (cached)."""
+    global _FIXED_CHUNK_CACHE
 
-    if _CHUNK_20_CACHE is not None:
-        return _CHUNK_20_CACHE
+    if _FIXED_CHUNK_CACHE is not None:
+        return _FIXED_CHUNK_CACHE
 
     text = DOCUMENT_PATH.read_text(encoding="utf-8")
-    match = _CHUNK_20_RE.search(text)
+    match = _FIXED_CHUNK_RE.search(text)
 
     if not match:
-        _CHUNK_20_CACHE = ""
-        return _CHUNK_20_CACHE
+        _FIXED_CHUNK_CACHE = ""
+        return _FIXED_CHUNK_CACHE
 
-    _CHUNK_20_CACHE = match.group(0).strip()
-    return _CHUNK_20_CACHE
+    _FIXED_CHUNK_CACHE = match.group(0).strip()
+    return _FIXED_CHUNK_CACHE
 
 
 # ---------------------------------------------------------------------------
@@ -118,20 +119,20 @@ def retrieve_relevant_chunks(
 def build_rag_context(
     query: str,
     top_k: int = 3,
-    include_chunk_20: bool = True,
+    include_fixed_chunk: bool = True,
 ) -> str:
     """
-    Build a RAG context string from retrieved chunks + Chunk 20.
+    Build a RAG context string from retrieved chunks + fixed context chunk (CHUNK 01).
 
     The result is a single string to prepend to the user message.
     """
     parts = []
 
-    # Chunk 20 — fixed context
-    if include_chunk_20:
-        chunk_20 = _load_chunk_20()
-        if chunk_20:
-            parts.append(chunk_20)
+    # Fixed context chunk (CHUNK 01)
+    if include_fixed_chunk:
+        fixed_chunk = _load_fixed_chunk()
+        if fixed_chunk:
+            parts.append(fixed_chunk)
 
     # Retrieved chunks
     retrieved = retrieve_relevant_chunks(query, top_k=top_k)

@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from core.config import settings
+from domain.core.config import settings
 
 
 async def _post_math_tool(path: str, payload: dict[str, Any]) -> dict[str, Any]:

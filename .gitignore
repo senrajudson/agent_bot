@@ -14,6 +14,9 @@ docker.env
 app/.env
 app/.env.*
 !app/.env.example
+mcp_server/.env
+mcp_server/.env.*
+!mcp_server/.env.example
 debug_responses/
 *.log
 
