@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import threading
@@ -8,6 +9,7 @@ from typing import Any
 
 from google.cloud import pubsub_v1
 from google.oauth2 import service_account
+from redis.asyncio import Redis as AsyncRedis
 
 from app.bridge.google_chat.agent_adapter import AgentAdapter
 from app.bridge.google_chat.chat_client import GoogleChatClient
@@ -53,15 +55,43 @@ class GoogleChatBridgeWorker:
         self.agent_adapter = AgentAdapter(settings=self.settings)
         self.chat_client = GoogleChatClient(settings=self.settings)
 
-        # Create Redis lock for deduplication
-        import redis as sync_redis
-        redis_client = sync_redis.Redis.from_url(
+        # Create async Redis client for deduplication lock
+        redis_client = AsyncRedis.from_url(
             self.settings.redis_url, decode_responses=True
         )
         lock = RedisDistributedLock(redis_client, prefix="google_chat:dedupe_lock")
         self.dedupe_store = DedupeStore(settings=self.settings, lock=lock)
 
         self.media_downloader = GoogleChatMediaDownloader(settings=self.settings)
+
+        # Background event loop for running async code from sync Pub/Sub callbacks
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread: threading.Thread | None = None
+        self._start_background_loop()
+
+    def _start_background_loop(self) -> None:
+        """Start a dedicated asyncio event loop in a background thread."""
+        self._loop = asyncio.new_event_loop()
+
+        def _run_loop() -> None:
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_forever()
+
+        self._loop_thread = threading.Thread(target=_run_loop, daemon=True)
+        self._loop_thread.start()
+
+    def _stop_background_loop(self) -> None:
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop_thread is not None:
+            self._loop_thread.join(timeout=5)
+        if self._loop is not None:
+            self._loop.close()
+
+    def _submit_async(self, coro) -> Any:
+        """Submit a coroutine to the background loop and wait for result."""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
 
     def run_once(self, timeout_seconds: int = 120) -> None:
         finished = threading.Event()
@@ -124,6 +154,13 @@ class GoogleChatBridgeWorker:
         self,
         message: pubsub_v1.subscriber.message.Message,
     ) -> None:
+        """Called by Pub/Sub in a background thread. Dispatches to async."""
+        self._submit_async(self._process_pubsub_message_async(message))
+
+    async def _process_pubsub_message_async(
+        self,
+        message: pubsub_v1.subscriber.message.Message,
+    ) -> None:
         payload: dict[str, Any] | None = None
         event = None
         dedupe_started = False
@@ -150,7 +187,7 @@ class GoogleChatBridgeWorker:
 
                 return
 
-            dedupe_status = self.dedupe_store.try_start(event)
+            dedupe_status = await self.dedupe_store.try_start(event)
 
             if dedupe_status != "started":
                 logger.info(
@@ -221,12 +258,12 @@ class GoogleChatBridgeWorker:
 
                     logger.info("Resposta enviada como nova mensagem.")
 
-                self.dedupe_store.mark_done(event)
+                await self.dedupe_store.mark_done(event)
 
                 message.ack()
                 logger.info("Dedupe marcado. ACK enviado.")
             else:
-                self.dedupe_store.release_processing(event)
+                await self.dedupe_store.release_processing(event)
 
                 message.nack()
                 logger.info("Modo teste: resposta não enviada. NACK enviado.")
@@ -237,14 +274,14 @@ class GoogleChatBridgeWorker:
                 json.dumps(payload, ensure_ascii=False) if payload else None,
             )
 
-            self._finish_after_error(
+            await self._finish_after_error_async(
                 pubsub_message=message,
                 event=event,
                 dedupe_started=dedupe_started,
                 thinking_message_name=thinking_message_name,
             )
 
-    def _finish_after_error(
+    async def _finish_after_error_async(
         self,
         pubsub_message: pubsub_v1.subscriber.message.Message,
         event,
@@ -253,7 +290,7 @@ class GoogleChatBridgeWorker:
     ) -> None:
         if event is not None and dedupe_started:
             try:
-                self.dedupe_store.mark_done(event)
+                await self.dedupe_store.mark_done(event)
                 logger.info(
                     "Erro marcado como finalizado no dedupe. message_name=%s",
                     event.message_name,
@@ -284,7 +321,7 @@ class GoogleChatBridgeWorker:
 
         if event is not None and dedupe_started:
             try:
-                self.dedupe_store.release_processing(event)
+                await self.dedupe_store.release_processing(event)
             except Exception:
                 logger.exception("Falha ao liberar processing no dedupe.")
 

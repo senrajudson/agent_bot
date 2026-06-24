@@ -26,6 +26,7 @@ class RedisDistributedLock:
     def __init__(self, redis: Redis, prefix: str = "lock") -> None:
         self._redis = redis
         self._prefix = prefix
+        self._tokens: dict[str, str] = {}
 
     def _key(self, name: str) -> str:
         return f"{self._prefix}:{name}"
@@ -37,13 +38,17 @@ class RedisDistributedLock:
             name=full_key, value=token, ex=ttl_seconds, nx=True
         )
         if result:
+            self._tokens[full_key] = token
             return LockStatus.ACQUIRED
         return LockStatus.ALREADY_HELD
 
     async def release(self, key: str) -> bool:
         full_key = self._key(key)
+        token = self._tokens.pop(full_key, None)
+        if token is None:
+            return False
         result = await self._redis.eval(
-            self.RELEASE_SCRIPT, 1, full_key, "dummy"
+            self.RELEASE_SCRIPT, 1, full_key, token
         )
         return result > 0
 
