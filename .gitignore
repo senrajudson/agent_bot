@@ -26,3 +26,5 @@ phoenix_data/
 *secret*
 
 scrap/*
+
+.opencode/*
