@@ -13,6 +13,18 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 from google.genai import types as genai_types
+from litellm.exceptions import (
+    APIConnectionError,
+    RateLimitError,
+    ServiceUnavailableError,
+    Timeout,
+)
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.clients.provider_client import get_llm
 from app.core.config import settings
@@ -23,6 +35,13 @@ from app.schemas.llm import LLMParams
 APP_NAME = "agent_bot_pi"
 PI_AGENT_NAME = "pi_agent"
 MAX_AGENT_STEPS = 8
+
+_RETRYABLE_ERRORS = (
+    ServiceUnavailableError,
+    RateLimitError,
+    APIConnectionError,
+    Timeout,
+)
 
 
 def _mcp_toolset() -> McpToolset:
@@ -151,6 +170,17 @@ def _classify_error(error: Exception) -> str:
     if "ClosedResourceError" in error_type or "Mcp" in error_type:
         return "Conexão com o servidor de ferramentas (MCP) foi fechada. Tente novamente."
 
+    if (
+        "ServiceUnavailableError" in error_type
+        or "APIConnectionError" in error_type
+        or "Timeout" in error_type
+        or "503" in error_msg
+    ):
+        return (
+            "O serviço de IA está temporariamente indisponível. "
+            "Tente novamente em instantes."
+        )
+
     return f"Não consegui executar a consulta. Erro ({error_type}): {error_msg}"
 
 
@@ -167,6 +197,76 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+async def _run_pi_agent_core(
+    user_message: str,
+    user_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Core pi_agent logic — decorated with tenacity at the caller."""
+    session_service = InMemorySessionService()
+    runner = Runner(
+        agent=_build_pi_agent(),
+        app_name=APP_NAME,
+        session_service=session_service,
+    )
+
+    await session_service.create_session(
+        app_name=APP_NAME,
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+    content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=user_message)],
+    )
+
+    messages: list[dict[str, Any]] = []
+    final_output: str | None = None
+
+    async for event in runner.run_async(
+        user_id=user_id,
+        session_id=session_id,
+        new_message=content,
+    ):
+        if getattr(event, "error_message", None):
+            return {
+                "messages": messages,
+                "output": _classify_error(Exception(event.error_message)),
+                "error": event.error_message,
+            }
+
+        msg = _event_to_message(event)
+        if msg:
+            messages.append(msg)
+
+        if getattr(event, "is_final_response", lambda: False)():
+            if msg and msg.get("content"):
+                final_output = msg["content"]
+            elif getattr(event, "actions", None):
+                final_output = final_output or ""
+
+    if _detect_repeated_tool_calls(messages):
+        return {
+            "messages": messages,
+            "output": (
+                "Não consegui concluir a consulta porque o agente "
+                "tentou repetir a mesma chamada de ferramenta múltiplas vezes. "
+                "A execução foi encerrada para evitar repetição."
+            ),
+            "error": "tool_call_repeated",
+        }
+
+    if not final_output:
+        final_output = "Não consegui gerar uma resposta final."
+
+    return {
+        "messages": messages,
+        "output": final_output,
+        "error": None,
+    }
+
+
 async def run_pi_agent(
     user_message: str,
     user_id: str = "default_user",
@@ -175,68 +275,14 @@ async def run_pi_agent(
     session_id = session_id or f"pi-{user_id}"
 
     try:
-        session_service = InMemorySessionService()
-        runner = Runner(
-            agent=_build_pi_agent(),
-            app_name=APP_NAME,
-            session_service=session_service,
-        )
-
-        await session_service.create_session(
-            app_name=APP_NAME,
-            user_id=user_id,
-            session_id=session_id,
-        )
-
-        content = genai_types.Content(
-            role="user",
-            parts=[genai_types.Part(text=user_message)],
-        )
-
-        messages: list[dict[str, Any]] = []
-        final_output: str | None = None
-
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=content,
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=1, max=10),
+            retry=retry_if_exception_type(_RETRYABLE_ERRORS),
+            reraise=True,
         ):
-            if getattr(event, "error_message", None):
-                return {
-                    "messages": messages,
-                    "output": _classify_error(Exception(event.error_message)),
-                    "error": event.error_message,
-                }
-
-            msg = _event_to_message(event)
-            if msg:
-                messages.append(msg)
-
-            if getattr(event, "is_final_response", lambda: False)():
-                if msg and msg.get("content"):
-                    final_output = msg["content"]
-                elif getattr(event, "actions", None):
-                    final_output = final_output or ""
-
-        if _detect_repeated_tool_calls(messages):
-            return {
-                "messages": messages,
-                "output": (
-                    "Não consegui concluir a consulta porque o agente "
-                    "tentou repetir a mesma chamada de ferramenta múltiplas vezes. "
-                    "A execução foi encerrada para evitar repetição."
-                ),
-                "error": "tool_call_repeated",
-            }
-
-        if not final_output:
-            final_output = "Não consegui gerar uma resposta final."
-
-        return {
-            "messages": messages,
-            "output": final_output,
-            "error": None,
-        }
+            with attempt:
+                return await _run_pi_agent_core(user_message, user_id, session_id)
 
     except Exception as e:
         return {
