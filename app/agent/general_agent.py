@@ -22,9 +22,14 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.core.config import settings
 from app.prompts.general_agent_prompt import GENERAL_AGENT_PROMPT
 from app.schemas.llm import LLMParams
-from app.agent.shared import build_completion_kwargs
+from app.agent.shared import (
+    build_completion_kwargs,
+    call_with_model_fallback,
+    RETRYABLE_ERRORS,
+)
 
 
 GENERAL_LLM_PARAMS = LLMParams(
@@ -34,24 +39,26 @@ GENERAL_LLM_PARAMS = LLMParams(
     top_p=0.1,
 )
 
-_RETRYABLE_ERRORS = (
-    ServiceUnavailableError,
-    RateLimitError,
-    APIConnectionError,
-    Timeout,
-)
-
 
 async def _call_litellm(kwargs: dict[str, Any], messages: list[dict[str, str]]):
     """Call litellm.acompletion with retry on transient errors."""
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(_RETRYABLE_ERRORS),
+        retry=retry_if_exception_type(RETRYABLE_ERRORS),
         reraise=True,
     ):
         with attempt:
             return await litellm.acompletion(**kwargs, messages=messages)
+
+
+async def _call_llm(messages: list[dict[str, str]]) -> Any:
+    """Route to model-fallback helper for Gemini, or standard retry for others."""
+    provider = settings.LLM_PROVIDER.lower().strip()
+    if provider == "gemini":
+        return await call_with_model_fallback(GENERAL_LLM_PARAMS, messages)
+    kwargs = build_completion_kwargs(GENERAL_LLM_PARAMS)
+    return await _call_litellm(kwargs, messages)
 
 
 async def run_general_agent(
@@ -66,13 +73,12 @@ async def run_general_agent(
     final_user_message = "\n\n".join(p for p in parts if p)
 
     try:
-        kwargs = build_completion_kwargs(GENERAL_LLM_PARAMS)
         messages = [
             {"role": "system", "content": GENERAL_AGENT_PROMPT},
             {"role": "user", "content": final_user_message},
         ]
 
-        response = await _call_litellm(kwargs, messages)
+        response = await _call_llm(messages)
         content = (response.choices[0].message.content or "").strip()
 
         if not content:

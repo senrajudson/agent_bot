@@ -145,3 +145,19 @@ def get_llm(params: LLMParams | None = None) -> BaseLlm:
         f"LLM_PROVIDER inválido: {settings.LLM_PROVIDER}. "
         "Use ollama, groq, openai_compatible ou gemini."
     )
+
+
+def get_llm_for_model(params: LLMParams, model_name: str) -> BaseLlm:
+    """Build ADK Gemini LLM for a specific model (used by pi_agent fallback)."""
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY não configurada no .env.")
+
+    generation_config = genai_types.GenerateContentConfig(
+        **_common_generation_config(params),
+    )
+
+    return Gemini(
+        model=model_name,
+        api_key=settings.GEMINI_API_KEY,
+        generation_config=generation_config,
+    )

@@ -40,7 +40,9 @@ services:
       - ./app/.env
     environment:
       - PYTHONUNBUFFERED=1
-      - LLM_PROVIDER=ollama
+      - LLM_PROVIDER=gemini
+      - GEMINI_MODEL=gemini-3.1-flash-lite-preview
+      - GEMINI_FALLBACK_MODEL=gemini-2.5-flash
       - OLLAMA_API_BASE=http://10.247.179.197:11434
       - MCP_SERVER_URL=http://mcp_server:8005/mcp
       - MATH_TOOL_BASE_URL=http://math_tool:8001
@@ -66,3 +68,21 @@ services:
       - ./secrets:/app/secrets:ro
     depends_on:
       - agent_bot
+
+  # Optional: PostgreSQL Event Store (activate with --profile events)
+  event_store_postgres:
+    image: postgres:16-alpine
+    container_name: event_store_postgres
+    restart: unless-stopped
+    profiles:
+      - events
+    environment:
+      POSTGRES_DB: agent_bot_events
+      POSTGRES_USER: agent_bot
+      POSTGRES_PASSWORD: agent_bot
+    volumes:
+      - event_store_pgdata:/var/lib/postgresql/data
+    # Expose internally only — no host port mapping
+
+volumes:
+  event_store_pgdata:

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_FALLBACK_MODEL: str | None = None
 
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
@@ -57,6 +58,10 @@ class Settings(BaseSettings):
     CHAT_MEMORY_MAX_TURNS: int = 8
 
     MCP_SERVER_URL: str = "http://localhost:8005/mcp"
+
+    # Event Store backend: "memory" (default), "redis_streams", or "postgres"
+    EVENT_STORE_BACKEND: str = "memory"
+    EVENT_STORE_POSTGRES_DSN: str | None = None
 
 
 settings = Settings()

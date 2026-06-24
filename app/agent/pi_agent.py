@@ -6,6 +6,7 @@ standalone MCP server (mcp_server/) and execute tag queries,
 historical statistics, calculus and status checks.
 """
 
+import logging
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -26,21 +27,23 @@ from tenacity import (
     wait_exponential,
 )
 
-from app.clients.provider_client import get_llm
+from app.clients.provider_client import get_llm, get_llm_for_model
 from app.core.config import settings
 from app.prompts.pi_agent_prompt import AGENT_SYSTEM_PROMPT
 from app.schemas.llm import LLMParams
+from app.agent.shared import RETRYABLE_ERRORS
 
+logger = logging.getLogger(__name__)
 
 APP_NAME = "agent_bot_pi"
 PI_AGENT_NAME = "pi_agent"
 MAX_AGENT_STEPS = 8
 
-_RETRYABLE_ERRORS = (
-    ServiceUnavailableError,
-    RateLimitError,
-    APIConnectionError,
-    Timeout,
+_PI_AGENT_PARAMS = LLMParams(
+    temperature=0,
+    num_ctx=8192,
+    num_predict=1024,
+    top_p=0.1,
 )
 
 
@@ -52,15 +55,13 @@ def _mcp_toolset() -> McpToolset:
     )
 
 
-def _build_pi_agent() -> LlmAgent:
-    model = get_llm(
-        LLMParams(
-            temperature=0,
-            num_ctx=8192,
-            num_predict=1024,
-            top_p=0.1,
-        )
-    )
+def _build_pi_agent(model_name: str | None = None) -> LlmAgent:
+    """Build pi_agent with a specific Gemini model (or default if None)."""
+    if model_name:
+        model = get_llm_for_model(_PI_AGENT_PARAMS, model_name)
+    else:
+        model = get_llm(_PI_AGENT_PARAMS)
+
     return LlmAgent(
         name=PI_AGENT_NAME,
         model=model,
@@ -201,11 +202,13 @@ async def _run_pi_agent_core(
     user_message: str,
     user_id: str,
     session_id: str,
+    model_name: str | None = None,
 ) -> dict[str, Any]:
-    """Core pi_agent logic — decorated with tenacity at the caller."""
+    """Core pi_agent logic with a specific model."""
+    agent = _build_pi_agent(model_name=model_name)
     session_service = InMemorySessionService()
     runner = Runner(
-        agent=_build_pi_agent(),
+        agent=agent,
         app_name=APP_NAME,
         session_service=session_service,
     )
@@ -274,19 +277,48 @@ async def run_pi_agent(
 ) -> dict[str, Any]:
     session_id = session_id or f"pi-{user_id}"
 
-    try:
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=1, max=10),
-            retry=retry_if_exception_type(_RETRYABLE_ERRORS),
-            reraise=True,
-        ):
-            with attempt:
-                return await _run_pi_agent_core(user_message, user_id, session_id)
+    provider = settings.LLM_PROVIDER.lower().strip()
+    models: list[str | None] = [None]  # None = use default get_llm
 
-    except Exception as e:
+    if provider == "gemini":
+        models = [settings.GEMINI_MODEL]
+        if settings.GEMINI_FALLBACK_MODEL:
+            models.append(settings.GEMINI_FALLBACK_MODEL)
+
+    last_exc: Exception | None = None
+    for model_name in models:
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception_type(RETRYABLE_ERRORS),
+                reraise=True,
+            ):
+                with attempt:
+                    return await _run_pi_agent_core(
+                        user_message, user_id, session_id, model_name=model_name
+                    )
+        except RETRYABLE_ERRORS as e:
+            logger.warning(
+                "pi_agent model %s failed after retries: %s. Trying next model.",
+                model_name,
+                e,
+            )
+            last_exc = e
+            continue
+        except Exception:
+            raise
+
+    # All models exhausted
+    if last_exc:
         return {
             "messages": [],
-            "output": _classify_error(e),
-            "error": str(e),
+            "output": _classify_error(last_exc),
+            "error": str(last_exc),
         }
+    # Should not reach here, but just in case
+    return {
+        "messages": [],
+        "output": "Erro desconhecido no pi_agent.",
+        "error": "unknown",
+    }
