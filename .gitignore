@@ -24,3 +24,5 @@ auth*
 phoenix_data/
 
 *secret*
+
+scrap/*

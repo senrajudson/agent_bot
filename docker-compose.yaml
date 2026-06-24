@@ -15,7 +15,7 @@ services:
     build:
       context: .
       dockerfile: mcp_server/Dockerfile
-    image: pi_mcp_server:0.1.0
+    image: pi_mcp_server:0.1.1
     container_name: mcp_server
     restart: always
     ports:
