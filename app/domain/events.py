@@ -22,30 +22,82 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Public aliases (used by tests and external code)
+new_event_id = _new_id
+now_utc = _now
+
+
+def event_type_from_class(cls: type) -> str:
+    """Return the stable event_type name for a class."""
+    return cls.__name__
+
+
 # ---------------------------------------------------------------------------
 # Base Event
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class DomainEvent:
-    """Base class for all domain events."""
+    """Base class for all domain events — 11-field envelope."""
 
     event_id: str = field(default_factory=_new_id)
+    event_type: str = ""
+    event_version: int = 1
     occurred_at: datetime = field(default_factory=_now)
-    conversation_id: str | None = None
+    aggregate_id: str | None = None
+    aggregate_type: str | None = None
     correlation_id: str | None = None
+    causation_id: str | None = None
+    conversation_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def __post_init__(self) -> None:
+        if not self.event_type:
+            object.__setattr__(self, "event_type", event_type_from_class(type(self)))
+
+    # -- Compatibility properties ---------------------------------------------
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """Specific event payload (excludes envelope fields)."""
+        envelope_fields = {
+            "event_id", "event_type", "event_version", "occurred_at",
+            "aggregate_id", "aggregate_type", "correlation_id",
+            "causation_id", "conversation_id", "metadata",
+        }
+        return {k: v for k, v in self.__dict__.items() if k not in envelope_fields}
+
+    # -- Serialization --------------------------------------------------------
+
+    def to_event_record(self) -> dict[str, Any]:
+        """Full envelope record (Prompt 1.6)."""
         return {
             "event_id": self.event_id,
+            "event_type": self.event_type,
+            "event_version": self.event_version,
             "occurred_at": self.occurred_at.isoformat(),
-            "event_type": type(self).__name__,
+            "aggregate_id": self.aggregate_id,
+            "aggregate_type": self.aggregate_type,
+            "correlation_id": self.correlation_id,
+            "causation_id": self.causation_id,
+            "conversation_id": self.conversation_id,
+            "payload": self.payload,
+            "metadata": self.metadata,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        """Legacy flat format used by RedisStreamsEventStore and existing tests."""
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "occurred_at": self.occurred_at.isoformat(),
             "conversation_id": self.conversation_id,
             "correlation_id": self.correlation_id,
             **self._payload(),
         }
 
     def _payload(self) -> dict[str, Any]:
+        """Legacy: override in subclasses to add specific fields."""
         return {}
 
 

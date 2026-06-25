@@ -49,3 +49,12 @@ class AgentRoute(str, Enum):
     GENERAL_CHAT = "conversa_comum"
     CALCULATOR = "calculadora"
     PIMS = "pims"
+
+
+class AggregateType(str, Enum):
+    """Logical aggregate type for domain events."""
+
+    CONVERSATION = "Conversation"
+    AGENT_RUN = "AgentRun"
+    GOOGLE_CHAT_MESSAGE = "GoogleChatMessage"
+    PI_TAG_QUERY = "PiTagQuery"
