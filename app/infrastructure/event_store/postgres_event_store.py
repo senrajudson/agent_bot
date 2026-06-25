@@ -1,6 +1,12 @@
 """PostgreSQL Event Store — append-only, optimistic concurrency per stream.
 
 Requires asyncpg. Only instantiated when EVENT_STORE_BACKEND=postgres.
+
+Note: PostgreSQL Event Store is an OPTIONAL backend in this phase.
+The default backend is "memory" (InMemoryEventStore). The /chat endpoint
+does not consume this store directly — it instantiates InMemoryEventStore
+inline. Connection/pool creation is lazy: the asyncpg pool is created
+only on the first real operation (append/read/load_stream).
 """
 from __future__ import annotations
 
