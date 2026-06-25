@@ -17,49 +17,261 @@ from typing import Any, Awaitable, Callable
 
 
 # ---------------------------------------------------------------------------
-# Context
+# Context — subcontexts (small, focused frozen dataclasses)
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ConversationContext:
-    """Typed per-request state, replacing state: dict[str, Any].
+@dataclass(frozen=True, kw_only=True)
+class ConversationInputContext:
+    """Identifiers and raw input for a single /chat request."""
 
-    Immutable: use ``replace(ctx, field=new_value)`` to create a new Context.
-    """
-
-    # Identifiers
     user_id: str | None = None
     conversation_id: str | None = None
-
-    # Input
     message_original: str = ""
     images: list = field(default_factory=list)
 
-    # OCR
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationOcrContext:
+    """OCR extraction results for attached images."""
+
     ocr_text: str | None = None
     ocr_extractions: list = field(default_factory=list)
     tags_encontradas: list[str] = field(default_factory=list)
     skip_ocr: bool = True
 
-    # Memory
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationMemoryContext:
+    """Conversation memory (previous turns)."""
+
     memory_turns: list = field(default_factory=list)
     memory_context: str | None = None
 
-    # Routing
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationRoutingContext:
+    """Agent route decision."""
+
     agent_route: str | None = None
 
-    # RAG
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationKnowledgeContext:
+    """RAG knowledge context."""
+
     knowledge_context: str = ""
 
-    # Agent
+
+@dataclass(frozen=True, kw_only=True)
+class AgentExecutionContext:
+    """Agent execution output and metadata."""
+
     agent_output: str | None = None
     agent_error: str | None = None
     agent_messages: list[dict[str, Any]] = field(default_factory=list)
     tool_name: str | None = None
 
-    # Error state
+
+@dataclass(frozen=True, kw_only=True)
+class ConversationResponseContext:
+    """Response-level state (error propagation)."""
+
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Context (facade)
+# ---------------------------------------------------------------------------
+
+# Routing table: flat field name -> subcontext attribute name
+_FLAT_TO_SUBCONTEXT: dict[str, str] = {
+    "user_id": "input",
+    "conversation_id": "input",
+    "message_original": "input",
+    "images": "input",
+    "ocr_text": "ocr",
+    "ocr_extractions": "ocr",
+    "tags_encontradas": "ocr",
+    "skip_ocr": "ocr",
+    "memory_turns": "memory",
+    "memory_context": "memory",
+    "agent_route": "routing",
+    "knowledge_context": "knowledge",
+    "agent_output": "agent",
+    "agent_error": "agent",
+    "agent_messages": "agent",
+    "tool_name": "agent",
+    "error": "response",
+}
+
+# Reverse map: subcontext attr name -> default factory class
+_SUBCONTEXT_CLASSES: dict[str, type] = {
+    "input": ConversationInputContext,
+    "ocr": ConversationOcrContext,
+    "memory": ConversationMemoryContext,
+    "routing": ConversationRoutingContext,
+    "knowledge": ConversationKnowledgeContext,
+    "agent": AgentExecutionContext,
+    "response": ConversationResponseContext,
+}
+
+_SUBCONTEXT_ATTRS = tuple(_SUBCONTEXT_CLASSES.keys())
+
+
+@dataclass(frozen=True, kw_only=True, init=False)
+class ConversationContext:
+    """Per-request state facade over 7 typed subcontexts.
+
+    Immutable: use ``replace(ctx, field=new_value)`` or ``update(ctx, ...)``.
+
+    Accepts both forms:
+      - New:  ``ConversationContext(input=ConversationInputContext(user_id="u1"))``
+      - Flat: ``ConversationContext(user_id="u1", message_original="hi")``
+    """
+
+    input: ConversationInputContext
+    ocr: ConversationOcrContext
+    memory: ConversationMemoryContext
+    routing: ConversationRoutingContext
+    knowledge: ConversationKnowledgeContext
+    agent: AgentExecutionContext
+    response: ConversationResponseContext
+
+    def __init__(self, **kwargs: Any) -> None:
+        grouped: dict[str, dict[str, Any]] = {}
+        direct: dict[str, Any] = {}
+        for key, value in kwargs.items():
+            if key in _SUBCONTEXT_ATTRS:
+                direct[key] = value
+            elif key in _FLAT_TO_SUBCONTEXT:
+                grouped.setdefault(_FLAT_TO_SUBCONTEXT[key], {})[key] = value
+            else:
+                raise TypeError(
+                    f"ConversationContext() got unexpected field: {key!r}"
+                )
+        for sub_attr, fields in grouped.items():
+            current = direct.get(sub_attr, _SUBCONTEXT_CLASSES[sub_attr]())
+            direct[sub_attr] = replace(current, **fields)
+        for sub_attr in _SUBCONTEXT_ATTRS:
+            direct.setdefault(sub_attr, _SUBCONTEXT_CLASSES[sub_attr]())
+        # Assign to frozen dataclass slots
+        for sub_attr in _SUBCONTEXT_ATTRS:
+            object.__setattr__(self, sub_attr, direct[sub_attr])
+
+    # -- Compatibility properties (read-only) --------------------------------
+
+    @property
+    def user_id(self) -> str | None:
+        """Compat: ``ctx.user_id`` -> ``ctx.input.user_id``."""
+        return self.input.user_id
+
+    @property
+    def conversation_id(self) -> str | None:
+        """Compat: ``ctx.conversation_id`` -> ``ctx.input.conversation_id``."""
+        return self.input.conversation_id
+
+    @property
+    def message_original(self) -> str:
+        """Compat: ``ctx.message_original`` -> ``ctx.input.message_original``."""
+        return self.input.message_original
+
+    @property
+    def images(self) -> list:
+        """Compat: ``ctx.images`` -> ``ctx.input.images``."""
+        return self.input.images
+
+    @property
+    def ocr_text(self) -> str | None:
+        """Compat: ``ctx.ocr_text`` -> ``ctx.ocr.ocr_text``."""
+        return self.ocr.ocr_text
+
+    @property
+    def ocr_extractions(self) -> list:
+        """Compat: ``ctx.ocr_extractions`` -> ``ctx.ocr.ocr_extractions``."""
+        return self.ocr.ocr_extractions
+
+    @property
+    def tags_encontradas(self) -> list[str]:
+        """Compat: ``ctx.tags_encontradas`` -> ``ctx.ocr.tags_encontradas``."""
+        return self.ocr.tags_encontradas
+
+    @property
+    def skip_ocr(self) -> bool:
+        """Compat: ``ctx.skip_ocr`` -> ``ctx.ocr.skip_ocr``."""
+        return self.ocr.skip_ocr
+
+    @property
+    def memory_turns(self) -> list:
+        """Compat: ``ctx.memory_turns`` -> ``ctx.memory.memory_turns``."""
+        return self.memory.memory_turns
+
+    @property
+    def memory_context(self) -> str | None:
+        """Compat: ``ctx.memory_context`` -> ``ctx.memory.memory_context``."""
+        return self.memory.memory_context
+
+    @property
+    def agent_route(self) -> str | None:
+        """Compat: ``ctx.agent_route`` -> ``ctx.routing.agent_route``."""
+        return self.routing.agent_route
+
+    @property
+    def knowledge_context(self) -> str:
+        """Compat: ``ctx.knowledge_context`` -> ``ctx.knowledge.knowledge_context``."""
+        return self.knowledge.knowledge_context
+
+    @property
+    def agent_output(self) -> str | None:
+        """Compat: ``ctx.agent_output`` -> ``ctx.agent.agent_output``."""
+        return self.agent.agent_output
+
+    @property
+    def agent_error(self) -> str | None:
+        """Compat: ``ctx.agent_error`` -> ``ctx.agent.agent_error``."""
+        return self.agent.agent_error
+
+    @property
+    def agent_messages(self) -> list[dict[str, Any]]:
+        """Compat: ``ctx.agent_messages`` -> ``ctx.agent.agent_messages``."""
+        return self.agent.agent_messages
+
+    @property
+    def tool_name(self) -> str | None:
+        """Compat: ``ctx.tool_name`` -> ``ctx.agent.tool_name``."""
+        return self.agent.tool_name
+
+    @property
+    def error(self) -> str | None:
+        """Compat: ``ctx.error`` -> ``ctx.response.error``."""
+        return self.response.error
+
+
+# ---------------------------------------------------------------------------
+# update() helper
+# ---------------------------------------------------------------------------
+
+
+def update(ctx: ConversationContext, **kwargs: Any) -> ConversationContext:
+    """Update ConversationContext immutably, routing kwargs to subcontexts.
+
+    Accepts both:
+      - ``update(ctx, input=ConversationInputContext(user_id="u2"))``
+      - ``update(ctx, user_id="u2", message_original="x")``
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    direct: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if key in _SUBCONTEXT_ATTRS:
+            direct[key] = value
+        elif key in _FLAT_TO_SUBCONTEXT:
+            grouped.setdefault(_FLAT_TO_SUBCONTEXT[key], {})[key] = value
+        else:
+            raise TypeError(f"update() got unexpected field: {key!r}")
+    for sub_attr, fields in grouped.items():
+        current = direct.get(sub_attr, getattr(ctx, sub_attr))
+        direct[sub_attr] = replace(current, **fields)
+    return replace(ctx, **direct) if direct else ctx
 
 
 # ---------------------------------------------------------------------------
