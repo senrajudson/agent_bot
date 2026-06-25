@@ -40,6 +40,7 @@
 | 29 | [ConversationSaga — Fluxo Detalhado](#29-conversationsaga--fluxo-detalhado) |
 | 30 | [Ambientes (Local / QA / PRD)](#30-ambientes-local--qa--prd) |
 | 31 | [Regras de Negócio Detalhadas](#31-regras-de-negócio-detalhadas) |
+| 33 | [PostgreSQL Event Store opcional](#33-postgresql-event-store-opcional) |
 
 ---
 
@@ -81,7 +82,7 @@ O projeto é organizado como um **monorepo** contendo 4 componentes que rodam co
 | Vector Store | Qdrant (`pi_web_api_guide` collection, 768-dim, cosine) |
 | Embeddings | Ollama `nomic-embed-text-v2-moe` |
 | Memória de Conversa | Redis |
-| Observabilidade | Phoenix (Arize) via OpenTelemetry + SpanProcessor customizado |
+| Observabilidade | Phoenix (Arize) via OpenTelemetry + SpanExporter customizado |
 | Bridge | Google Cloud Pub/Sub → Google Chat API |
 | Containerização | Docker Compose |
 
@@ -146,7 +147,7 @@ agent_bot/                              # monorepo
 │   │       ├── config.py               # Configuração específica da bridge
 │   │       └── models.py               # Modelos da bridge
 │   └── observability/
-│       └── phoenix.py                  # Setup Phoenix + _TokenDedupSpanProcessor
+│       └── phoenix.py                  # Setup Phoenix + _TokenDedupSpanExporter
 │
 ├── mcp_server/                         # Subsistema MCP (porta 8003 local / 8005 Docker)
 │   ├── server.py                       # FastMCP server: 4 tools
@@ -184,14 +185,17 @@ agent_bot/                              # monorepo
 ├── docs/
 │   └── BRIDGE_GOOGLE_CHAT.md           # Doc completa da bridge (912 linhas)
 │
-├── PI_WEB_API_AGENT_GUIDE.md           # Fonte RAG (22 CHUNKs)
+├── PI_WEB_API_AGENT_GUIDE.md           # Fonte RAG (21 CHUNKs)
 ├── pyproject.toml
-├── docker-compose.yaml                 # 4 serviços
+├── docker-compose.yaml                 # 4 serviços principais + 1 opcional (profile events)
 ├── Dockerfile                          # Build do app principal
 └── secrets/                            # Credenciais GCP (não versionadas)
 ```
 
 ---
+
+> **Nota arquitetural — pacote `domain/`**:
+> O pacote `domain/` raiz funciona hoje como pacote técnico compartilhado, com características de shared kernel, mas ainda contém dívida arquitetural e não deve ser descrito como domínio puro. Veja também a seção 24 e a seção 33.
 
 ## 4. Fluxo Principal (Request Lifecycle)
 
@@ -507,15 +511,15 @@ python -m app.bridge.google_chat.worker --send
 2. **LiteLLM** (`LiteLLMInstrumentor.instrument`) — spans de chamadas LLM
 3. **Google ADK** (nativo) — spans de agente, tools e inferência
 
-### _TokenDedupSpanProcessor
+### _TokenDedupSpanExporter
 
-**SpanProcessor customizado** que resolve a duplicação de tokens no Phoenix:
+**SpanExporter customizado** que resolve a duplicação de tokens no Phoenix:
 
 - O Google ADK grava `gen_ai.usage.input_tokens` e `gen_ai.usage.output_tokens` nos spans `call_llm` e `generate_content`
 - O openinference-instrumentation-litellm grava `llm.token_count.*` no span `acompletion` (mais profundo)
 - O Phoenix UI soma todos os descendentes, inflando o total (3x)
 
-**Solução**: `_TokenDedupSpanProcessor` (em `phoenix.py`) remove os atributos de token dos spans ADK (identificados por `gcp.vertex.agent.invocation_id`), preservando-os apenas no `acompletion`.
+**Solução**: `_TokenDedupSpanExporter` (em `phoenix.py`) remove os atributos de token dos spans ADK (identificados por `gcp.vertex.agent.invocation_id`), preservando-os apenas no `acompletion`.
 
 **Detalhe crítico**: o processor é registrado com `add_span_processor(..., replace_default_processor=False)` para preservar o `SimpleSpanProcessor` padrão do Phoenix (que é o exportador real). Sem `replace_default_processor=False`, o exportador é removido e nenhum trace chega ao Phoenix.
 
@@ -1117,7 +1121,7 @@ O projeto possui **317 testes** distribuídos em 7 suites.
 | Suite | Arquivo | Testes | O que valida |
 |---|---|---|---|
 | `tests/unit/` | `test_domain.py` | VOs, Enums, Protocols, Errors | Contratos do domain layer |
-| `tests/unit/` | `test_events.py` | 25 Domain Events | Imutabilidade, serialização, payload |
+| `tests/unit/` | `test_events.py` | 23 Domain Events | Imutabilidade, serialização, payload |
 | `tests/unit/` | `test_event_store.py` | EventStore InMemory + Redis | Append, replay, stream partitioning |
 | `tests/unit/` | `test_projection.py` | ConversationMemoryProjection | Reconstrução de turns a partir de eventos |
 | `tests/unit/` | `test_conversation_memory_v2.py` | RedisConversationMemory | Append, replay, max_turns, metadata |
@@ -1164,10 +1168,10 @@ pytest -m integration                                 # Integração (requer Doc
 | RAG sem contexto | Verificar Qdrant acessível em `QDRANT_URL`, `QDRANT_COLLECTION=pi_web_api_guide`, reingerir com `scripts/ingest_pi_guide.py` |
 | Memória não persiste | Verificar `REDIS_URL`, `CHAT_MEMORY_MAX_TURNS`, e que `conversation_id` = `user_id` |
 | OCR falhando | Validar `image_base64` não-vazio e `mime_type` suportado (png/jpeg/webp) |
-| Phoenix não aparece | `PHOENIX_ENABLED=true` + endpoint acessível; **atenção**: o SpanProcessor custom DEVE usar `replace_default_processor=False` |
+| Phoenix não aparece | `PHOENIX_ENABLED=true` + endpoint acessível; **atenção**: o SpanExporter custom DEVE usar `replace_default_processor=False` |
 | Math Tool timeout | Verificar `MATH_TOOL_BASE_URL` e `MATH_TOOL_TIMEOUT_SECONDS` (default 120s) |
 | MCP server inacessível | Verificar `MCP_SERVER_URL` (porta 8005 Docker / 8015 local default) e se `mcp_server` está rodando |
-| Tokens inflados no Phoenix | Confirmar que `phoenix.py` tem `_TokenDedupSpanProcessor` + `replace_default_processor=False` |
+| Tokens inflados no Phoenix | Confirmar que `phoenix.py` tem `_TokenDedupSpanExporter` + `replace_default_processor=False` |
 | Bridge não recebe mensagens | Verificar credenciais GCP, `GOOGLE_CHAT_SUBSCRIPTION`, `secrets/chat_secret.json` |
 | `MAX_AGENT_STEPS=8` atingido | Reformular pergunta; pode indicar prompt vago ou tool com erro |
 | Loop de tool calls | Sistema aborta após 3 repetições da mesma chamada (`_detect_repeated_tool_calls`) |
@@ -1205,13 +1209,14 @@ O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém 
 | 19 | Diretrizes de qualidade e anti-padrões |
 | 20 | Cálculos temporais: integral e derivada |
 | 21 | RAG e recuperação recomendada |
-| 22 | RAG e recuperação recomendada |
 
 ---
 
 ## 24. Refatoração Arquitetural (Etapas 0-8)
 
-O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Sourcing**, implementada em 8 etapas incrementais. Cada etapa foi precedida de testes de caracterização e validada com suite completa.
+O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Publishing** (com Event Log / Event Store preparation em andamento), implementada em 8 etapas incrementais. Cada etapa foi precedida de testes de caracterização e validada com suite completa.
+
+> **Nota arquitetural**: o estado atual do projeto **não é Event Sourcing completo** — o Event Store não é fonte da verdade do estado. O `process_message` ainda instancia `InMemoryEventStore()` literal, sem consumir o factory. Veja a seção 33 para detalhes sobre o Event Store PostgreSQL opcional.
 
 ### Etapas executadas
 
@@ -1232,7 +1237,7 @@ O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Sourcin
 - **273+ testes** passando
 - **0 duplicações** entre `app/` e `mcp_server/`
 - **`domain/`** é pacote compartilhado via Poetry path dependency
-- **25 Domain Events** (imutáveis, serializáveis)
+- **23 Domain Events** (imutáveis, serializáveis)
 - **ConversationSaga** orquestra 6 steps com event publishing
 - **DistributedLock** substitui fallback in-memory no DedupeStore
 - **10 Bounded Contexts** mapeados (Conversation, PIMS, Analytics, OCR, RAG, PIMS Ops, LLM Provider, MCP Gateway, Google Chat, Observability)
@@ -1241,10 +1246,10 @@ O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Sourcin
 
 ```
 app/
-├── domain/                          # Camada de domínio (abstrações puras)
+├── domain/                          # Pacote técnico compartilhado (shared kernel / dívida arquitetural — ver seção 3)
 │   ├── enums.py                     # 5 enums de domínio
 │   ├── errors.py                    # 3 exceptions de domínio
-│   ├── events.py                    # 25 Domain Events (frozen)
+│   ├── events.py                    # 23 Domain Events (frozen)
 │   ├── projections.py               # ConversationMemoryProjection
 │   └── value_objects.py             # 6 VOs imutáveis
 ├── application/                     # Camada de aplicação (orqueta)
@@ -1297,7 +1302,7 @@ app/
 | **OutboundReply** | Resposta gerada pelo agente |
 | **MessageDedupeEntry** | Estado de deduplicação de mensagem Google Chat |
 
-### Domain Events (25)
+### Domain Events (23)
 
 | Evento | Quando é publicado |
 |---|---|
@@ -1415,7 +1420,8 @@ O projeto segue **Domain-Driven Design** com **CQRS** (Command Query Responsibil
 │                INFRASTRUCTURE LAYER (adaptadores)            │
 │  event_store/ · locking/ · conversation/ · clients/          │
 ├─────────────────────────────────────────────────────────────┤
-│                  DOMAIN LAYER (puro)                         │
+│                  DOMAIN LAYER (parcialmente puro)            │
+│                  Ver nota arquitetural na seção 3            │
 │  enums.py · value_objects.py · errors.py · events.py         │
 │  domain/{pims,analytics,pims_ops,conversation,shared}/       │
 └─────────────────────────────────────────────────────────────┘
@@ -1541,7 +1547,7 @@ domain/
 | `RouteMessage` | `RouteMessageHandler` | `message`, `memory` | `route` (str) | LiteLLM call |
 | `RunAgentForMessage` | `RunAgentForMessageHandler` | `route`, `context`, `rag` | `agent_output`, `tool_name` | ADK Runner |
 | `RetrieveKnowledgeContext` | `RetrieveKnowledgeContextHandler` | `query`, `top_k` | `knowledge_context` | Qdrant search |
-| `SaveConversationTurn` | `SaveConversationTurnHandler` | `user_msg`, `assistant_msg` | `None` | Redis RPUSH |
+| `SaveConversationTurn` | `SaveConversationTurnHandler` | `user_msg`, `assistant_msg` | `None` | append em `ConversationMemory` (abstrai backend de memória) |
 | `InvokeMcpTool` | `InvokeMcpToolHandler` | `tool_name`, `args` | `result` | HTTP POST MCP |
 
 ### Queries (`app/application/queries/`)
@@ -1556,7 +1562,10 @@ domain/
 
 ### EventPublisher (`app/application/sagas/event_publisher.py`)
 
-`InMemoryEventPublisher` armazena eventos em lista. Substituído por `RedisStreamsEventPublisher` em produção.
+- `EventPublisherImpl`: delega para o `EventStore` configurado (chama `append` no stream).
+- `NullEventPublisher`: implementação no-op, usada quando a publicação de eventos está desabilitada.
+
+> **Nota**: o estado real **não** inclui `InMemoryEventPublisher` nem `RedisStreamsEventPublisher`. A publicação é feita via `EventPublisherImpl` sobre qualquer `EventStore` (memory, redis_streams, ou postgres).
 
 ---
 
@@ -1569,7 +1578,7 @@ domain/
 | `InMemoryEventStore` | `dict[str, list[DomainEvent]]` | Testes unitários |
 | `RedisStreamsEventStore` | Redis Streams (`XADD`/`XRANGE`) | Produção |
 
-**Protocol**: `append(stream_id, event)`, `replay(stream_id)`, `replay_all()`.
+**Protocol**: `append(stream, event)`, `read(stream, from_id)`, `append_batch(stream, events)`. Não há `replay`/`replay_all` na interface atual.
 
 ### DistributedLock (`app/infrastructure/locking/`)
 
@@ -1638,7 +1647,7 @@ POST /chat
 ChatResponse
 ```
 
-### ConversationContext (30+ campos)
+### ConversationContext (7 subcontexts, ~18 campos totais)
 
 ```python
 @dataclass(frozen=True)
@@ -1682,7 +1691,7 @@ O `orchestrator.py` mantém stubs deprecated que usam `state: dict` para compati
 
 | Aspecto | Local (dev) | QA (Poetry) | PRD (Docker) |
 |---|---|---|---|
-| **app** | `uvicorn app.main:app --port 8012` | `uvicorn app.main:app --port 8002` | Container `agent_bot` (8002) |
+| **app** | `uvicorn app.main:app --port 8002` (default `Settings.API_PORT`) | `uvicorn app.main:app --port 8002` | Container `agent_bot` (8002) |
 | **mcp_server** | `python mcp_server/server.py` (8015) | `python mcp_server/server.py` (8015) | Container `mcp_server` (8005) |
 | **math_tool** | `cd calc && uvicorn app.main:app --port 8001` | `cd calc && uvicorn app.main:app --port 8001` | Container `math_tool` (8001) |
 | **MCP_SERVER_URL** | `http://localhost:8015/mcp` | `http://localhost:8015/mcp` | `http://mcp_server:8005/mcp` |
@@ -1704,7 +1713,7 @@ cd calc && poetry run uvicorn app.main:app --reload --port 8001
 cd mcp_server && poetry run python server.py  # porta 8015
 
 # Terminal 3: App principal
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8012
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8002
 
 # === QA (validação) ===
 # O mesmo que Local, mas usando porta 8002 para o app
@@ -1713,6 +1722,12 @@ poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8012
 docker-compose up -d
 # Serviços: math_tool (8001), mcp_server (8005), agent_bot (8002), agent_bot_chat_bridge
 ```
+
+### Notas sobre portas MCP
+
+- Em ambiente **Local QA**: `MCP_SERVER_URL=http://localhost:8015/mcp` (definido em `app/.env:62`); `MCP_PORT=8015` (definido em `mcp_server/.env:37`).
+- Em ambiente **PRD/Docker**: `MCP_PORT=8005` e `MCP_SERVER_URL=http://mcp_server:8005/mcp` (definidos em `docker-compose.yaml:27,47`).
+- Referências a `MCP_PORT=8003` em `mcp_server/.env.local.example:8` são **template legado** e devem ser tratadas como dívida de configuração, não como recomendação ativa.
 
 ### Configuração por Ambiente
 
@@ -1796,3 +1811,25 @@ O `_detect_repeated_tool_calls()` verifica se a mesma tool (mesma combinação `
 - Remove `***triple asterisks***`
 - Converte listas markdown para bullets
 - Limita tamanho de mensagens (4096 chars)
+
+---
+
+## 33. PostgreSQL Event Store opcional
+
+Esta seção documenta o estado real do **PostgresEventStore** como backend opcional nesta fase. Não é backend padrão, e o fluxo principal atual **não** o consome.
+
+- `PostgresEventStore` existe em `app/infrastructure/event_store/postgres_event_store.py` e é instanciável sem abrir conexão (pool asyncpg é lazy).
+- É **backend opcional** — não é backend padrão obrigatório. O backend padrão é `InMemoryEventStore` (em memória).
+- `factory.get_event_store()` pode selecionar `postgres` via env var `EVENT_STORE_BACKEND=postgres` + `EVENT_STORE_POSTGRES_DSN`. Sem o DSN, levanta `ValueError`.
+- `process_message` (`app/agent/orchestrator.py:209`) instancia `InMemoryEventStore()` **diretamente**, sem consumir o factory. A env var `EVENT_STORE_BACKEND` não tem efeito no `/chat` hoje.
+- Não há teste contra Postgres real nesta fase. O arquivo `tests/unit/test_postgres_event_store.py` é 100% unitário (sem rede, sem Docker, sem testcontainers).
+- O DDL append-only está em `app/infrastructure/event_store/sql/001_create_event_store_events.sql`. Aplicação do schema é externa ao código.
+- O serviço `event_store_postgres` no `docker-compose.yaml` está sob `profiles: [events]` e não sobe por padrão.
+
+### Dívidas de configuração relacionadas
+
+- **4 Settings coexistentes** em módulos diferentes: `app/core/config.py`, `mcp_server/core/config.py`, `app/bridge/google_chat/config.py`, `domain/core/config.py`. Dívida de configuração/boundary a ser consolidada futuramente.
+- `mcp_server/.env.local.example:8` (`MCP_PORT=8003`) é template obsoleto; o `.env` real usa `8015`.
+- Testes pré-existentes em `tests/unit/test_event_store_in_memory_v2.py` falham por usarem interface v2 (`append_to_stream`/`load_stream`/`load_by_*`) que não existe no `InMemoryEventStore` atual. Pré-existente, fora do escopo desta task.
+
+> **Não é Event Sourcing completo**: o Event Store ainda não é fonte da verdade do estado. Veja seção 24.
