@@ -1405,7 +1405,7 @@ poetry run pytest tests/ -v
 
 ## 25. Arquitetura em Camadas (DDD/CQRS/ES)
 
-O projeto segue **Domain-Driven Design** com **CQRS** (Command Query Responsibility Segregation) e **Event Sourcing** para o ciclo de vida da conversa.
+O projeto segue **Domain-Driven Design** com **CQRS** (Command Query Responsibility Segregation) e **Event Publishing e Event Log / Event Store preparation** para observabilidade e rastreabilidade do ciclo de vida da conversa.
 
 ### Diagrama de Camadas
 
@@ -1591,7 +1591,7 @@ domain/
 
 ### RedisConversationMemory v2 (`app/infrastructure/conversation/`)
 
-Usa Event Sourcing: cada turn é um evento (`UserMessageRecorded`, `AssistantMessageRecorded`) appended ao Redis Stream. A projeção (`ConversationMemoryProjection`) reconstrói os turns.
+Usa Event Log / memória baseada em eventos: cada turn é registrado como evento de memória (`UserMessageRecorded`, `AssistantMessageRecorded`), mas isso ainda não caracteriza Event Sourcing completo do sistema. A projeção (`ConversationMemoryProjection`) pode reconstruir os turns quando ativada.
 
 **Chave Redis**: `pi_chat:memory:{conversation_id}:turns`
 **TTL**: `CHAT_MEMORY_TTL_SECONDS` (default 7 dias)
