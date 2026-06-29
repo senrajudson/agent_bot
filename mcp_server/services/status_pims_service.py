@@ -115,7 +115,7 @@ async def consultar_status_pims_service(
     except Exception as error:
         return {
             "ok": False,
-            "tool_name": "status_pims",
+            "tool_name": "status_pims_tool",
             "tool_result": {
                 "query": query_final,
                 "lookback_minutes": lookback_final,
@@ -141,7 +141,7 @@ async def consultar_status_pims_service(
 
     return {
         "ok": True,
-        "tool_name": "status_pims",
+        "tool_name": "status_pims_tool",
         "tool_result": tool_result,
         "output": output,
         "answer_generation_error": None,

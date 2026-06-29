@@ -34,7 +34,7 @@ mcp = FastMCP(
         "Use consultar_tag for current values and metadata. "
         "Use tag_statistics for historical aggregations (mean, max, min, sum, consumption). "
         "Use tag_calculus for temporal math (integral, derivative). "
-        "Use status_pims for PIMS operational status via Grafana/Loki logs."
+        "Use status_pims_tool for PIMS operational status via Grafana/Loki logs."
     ),
 )
 
@@ -192,10 +192,10 @@ async def tag_calculus(
 
 
 # ---------------------------------------------------------------------------
-# Tool: status_pims
+# Tool: status_pims_tool
 # ---------------------------------------------------------------------------
 @mcp.tool
-async def status_pims(
+async def status_pims_tool(
     pergunta_usuario: str | None = None,
     lookback_minutes: int | None = None,
 ) -> str:

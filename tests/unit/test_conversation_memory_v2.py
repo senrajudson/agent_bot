@@ -61,10 +61,10 @@ class TestRedisConversationMemory:
 
     @pytest.mark.asyncio
     async def test_metadata_preserved(self, memory: RedisConversationMemory) -> None:
-        await memory.append_turns("c1", "hi", "hello", metadata={"tool": "pi_agent"})
+        await memory.append_turns("c1", "hi", "hello", metadata={"tool": "agent"})
         turns = await memory.load_turns("c1")
-        assert turns[0].metadata == {"tool": "pi_agent"}
-        assert turns[1].metadata == {"tool": "pi_agent"}
+        assert turns[0].metadata == {"tool": "agent"}
+        assert turns[1].metadata == {"tool": "agent"}
 
     def test_format_for_prompt(self, memory: RedisConversationMemory) -> None:
         turns = [

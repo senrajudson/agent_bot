@@ -45,7 +45,7 @@ class _FakeAgentResult:
     output: str = "Resposta"
     error: str | None = None
     messages: list = None
-    tool_name: str = "pi_agent"
+    tool_name: str = "agent"
     def __post_init__(self):
         if self.messages is None:
             self.messages = []
@@ -102,7 +102,7 @@ class TestSagaMemoryEvents:
             message_original="hi",
             agent_output="hello there",
             agent_route="pims",
-            tool_name="pi_agent",
+            tool_name="agent",
             user_id="u1",
         )
         await saga._step_save_memory(ctx)
@@ -127,7 +127,7 @@ class TestSagaMemoryEvents:
             message_original="question",
             agent_output="answer",
             agent_route="pims",
-            tool_name="pi_agent",
+            tool_name="agent",
             user_id="u1",
         )
         await saga._step_save_memory(ctx_save)
@@ -160,7 +160,7 @@ class TestSagaMemoryEvents:
             message_original="hello",
             agent_output="hi there",
             agent_route="pims",
-            tool_name="pi_agent",
+            tool_name="agent",
             user_id="u1",
         )
         await saga._step_save_memory(ctx_save)

@@ -12,7 +12,7 @@ class InvokeMcpTool(Command):
 
     NOTE: This is a PLACEHOLDER for Etapa 5 (Event Store).
     The actual MCP invocation happens inside ADK's McpToolset
-    (via app/agent/pi_agent.py). In Etapa 5, this will be replaced
+    (via app/agent/agent.py). In Etapa 5, this will be replaced
     by a proper Command bus.
     """
 
@@ -39,6 +39,6 @@ class InvokeMcpToolHandler:
     async def handle(self, command: InvokeMcpTool) -> InvokeMcpToolResult:
         raise NotImplementedError(
             "InvokeMcpToolHandler is a placeholder. "
-            "MCP invocation is delegated to ADK (app/agent/pi_agent.py). "
+            "MCP invocation is delegated to ADK (app/agent/agent.py). "
             "Etapa 5 will implement this via Event Store."
         )

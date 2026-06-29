@@ -102,17 +102,17 @@ def mock_route_error(monkeypatch):
 
 
 @pytest.fixture
-def mock_pi_agent(monkeypatch):
-    """PI agent returns a fixed result."""
-    async def _run_pi_agent(**kwargs):
+def mock_agent(monkeypatch):
+    """Agent returns a fixed result."""
+    async def _run_agent(**kwargs):
         return {
             "output": "O valor atual de LFI_RB3_VAZ_GN_TOTAL é 1523.4 Nm3/h",
             "error": None,
             "messages": [],
         }
 
-    monkeypatch.setattr("app.agent.orchestrator.run_pi_agent", _run_pi_agent)
-    return _run_pi_agent
+    monkeypatch.setattr("app.agent.orchestrator.run_agent", _run_agent)
+    return _run_agent
 
 
 @pytest.fixture

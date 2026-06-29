@@ -1,4 +1,4 @@
-"""Tests for pi_agent retry logic and _classify_error."""
+"""Tests for agent retry logic and _classify_error."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -12,7 +12,7 @@ from litellm.exceptions import (
     Timeout,
 )
 
-from app.agent.pi_agent import _classify_error
+from app.agent.agent import _classify_error
 
 
 class TestClassifyError:

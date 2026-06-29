@@ -112,7 +112,7 @@ class TestChatRoutePims:
         app_client,
         chat_payload_text,
         mock_route_pims,
-        mock_pi_agent,
+        mock_agent,
         mock_ocr_no_images,
         mock_redis,
     ):
@@ -123,7 +123,7 @@ class TestChatRoutePims:
 
         assert data["ok"] is True
         assert data["categoria"] == "pims"
-        assert data["next_action"] == "pi_agent"
+        assert data["next_action"] == "agent"
         assert "LFI_RB3_VAZ_GN_TOTAL" in (data["output"] or "")
 
 

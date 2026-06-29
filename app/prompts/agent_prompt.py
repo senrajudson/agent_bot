@@ -41,7 +41,7 @@ tag_calculus
 Use para: cálculos matemáticos temporais explicitamente solicitados,
 como integral, derivada, taxa de variação, área sob a curva.
 
-status_pims
+status_pims_tool
 Use para: status do PIMS, saúde do ambiente, lentidão, indisponibilidade,
 erro na PI Web API, logs do Grafana/Loki, monitoramento operacional.
 
@@ -57,7 +57,7 @@ Critério de escolha:
 - Valor atual ou metadados de tag: consultar_tag.
 - Agregação histórica, consumo, soma, estatística: tag_statistics.
 - Integral, derivada ou taxa de variação explicitamente solicitada: tag_calculus.
-- Status do PIMS, servidores, PI Web API ou logs: status_pims.
+- Status do PIMS, servidores, PI Web API ou logs: status_pims_tool.
 
 Resposta final:
 - Seja direto e conciso. Responda o que foi perguntado, sem explicar o método ou raciocínio.

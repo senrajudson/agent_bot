@@ -100,7 +100,7 @@ agent_bot/                              # monorepo
 │   │   ├── orchestrator.py             # Orquestrador: roteamento → RAG → agente → memória
 │   │   ├── router.py                   # Classificador de intenção via LiteLLM
 │   │   ├── general_agent.py            # Agente de conversa geral via LiteLLM
-│   │   └── pi_agent.py                 # Agente PI System via Google ADK + McpToolset
+│   │   └── agent.py                    # Agente LLM via Google ADK + McpToolset
 │   ├── clients/
 │   │   ├── provider_client.py          # Factory de ADK BaseLlm (Groq, Ollama, Gemini, OpenAI)
 │   │   ├── qdrant_client.py            # RAG: busca semântica + Chunk 20 fixo
@@ -113,7 +113,7 @@ agent_bot/                              # monorepo
 │   │   ├── llm.py                      # LLMParams + AGENT_DEFAULT
 │   │   └── math_tool.py                # Enums: StatsOperation, CalculusOperation, etc.
 │   ├── prompts/
-│   │   ├── pi_agent_prompt.py          # System prompt do agente PI (com timestamp dinâmico)
+│   │   ├── agent_prompt.py             # System prompt do agente (com timestamp dinâmico)
 │   │   ├── router_prompt.py            # Prompt de classificação de rota
 │   │   ├── general_agent_prompt.py     # Prompt do agente de conversa geral
 │   │   └── ocr_query_prompt.py         # Prompt de OCR de imagens
@@ -227,7 +227,7 @@ process_message(ChatRequest)
   │     │     └─→ litellm.acompletion(general_agent_prompt, num_predict=1024)
   │     │         → resposta direta, sem tools
   │     │
-  │     └─→ "pims" → run_pi_agent()
+  │     └─→ "pims" → run_agent()
   │           ├─→ build_rag_context()
   │           │     ├─→ CHUNK 01 (fixo, sempre injetado)
   │           │     └─→ top-3 chunks do Qdrant (Ollama embeddings)
@@ -285,7 +285,7 @@ Isso significa que o **openinference-instrumentation-litellm** instrumenta todas
 |-----|---------|------|---------|-------------|-------|--------|
 | **Router** | `router.py` | 0 | 8192 | 128 | 0.1 | format=json, think=False |
 | **General Agent** | `general_agent.py` | 0 | 8192 | 1024 | 0.1 | — |
-| **PI Agent** | `pi_agent.py` | 0 | 8192 | 1024 | 0.1 | — |
+| **PI Agent** | `agent.py` | 0 | 8192 | 1024 | 0.1 | — |
 | **OCR** | `ocr_query.py` | 0 | 8192 | 512 | 0.1 | — |
 
 ### AGENT_DEFAULT (Ollama)
@@ -364,13 +364,13 @@ O Google ADK consome tools via `McpToolset`, que se conecta a um servidor MCP re
 ### Arquitetura
 
 ```
-PI Agent (app/agent/pi_agent.py)
+Agent (app/agent/agent.py)
   └─→ McpToolset(url=MCP_SERVER_URL)
         └─→ MCP Server (mcp_server/server.py, porta 8005)
               ├─→ consultar_tag()      → services/consultar_tag_service.py
               ├─→ tag_statistics()     → services/math_tool_service.py
               ├─→ tag_calculus()       → services/math_tool_service.py
-              └─→ status_pims()       → services/status_pims_service.py
+              └─→ status_pims_tool()  → services/status_pims_service.py
 ```
 
 ### Tools Expostas
@@ -380,7 +380,7 @@ PI Agent (app/agent/pi_agent.py)
 | `consultar_tag` | `tags: list[str]`, `pergunta_usuario: str \| None` | Valor atual e metadados de tags |
 | `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count` | Estatísticas históricas |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
-| `status_pims` | `pergunta_usuario: str \| None`, `lookback_minutes: int \| None` | Status via Grafana/Loki |
+| `status_pims_tool` | `pergunta_usuario: str \| None`, `lookback_minutes: int \| None` | Status via Grafana/Loki |
 
 ### Configuração
 
@@ -593,7 +593,7 @@ As 4 tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O a
 3. Envia dados para Math Tool Service (`/calculus`)
 4. Retorna resultado formatado
 
-### 11.4 status_pims
+### 11.4 status_pims_tool
 
 **Propósito**: Status operacional do PIMS via logs Grafana/Loki.
 
@@ -763,7 +763,7 @@ class ChatResponse(BaseModel):
     message_original: str
     processed_message: str | None = None
     categoria: str | None = None          # "conversa_comum" | "pims"
-    next_action: str | None = None        # "general_agent" | "pi_agent" | "orchestrator"
+    next_action: str | None = None        # "general_agent" | "agent" | "orchestrator"
     has_image: bool
     skip_ocr: bool
     ocr_text: str | None = None
@@ -1016,7 +1016,7 @@ curl http://localhost:8002/health
 
 | Protocolo | Path | Descrição |
 |-----------|------|-----------|
-| Streamable HTTP | `POST /mcp` | Executa tools MCP (consultar_tag, tag_statistics, tag_calculus, status_pims) |
+| Streamable HTTP | `POST /mcp` | Executa tools MCP (consultar_tag, tag_statistics, tag_calculus, status_pims_tool) |
 
 ### Math Tool Endpoints (porta 8001)
 
@@ -1265,7 +1265,7 @@ app/
 │   ├── shared.py                    # build_completion_kwargs (único)
 │   ├── router.py                    # Classificador de intenção
 │   ├── general_agent.py             # Agente geral
-│   └── pi_agent.py                  # Agente PI (ADK + MCP)
+│   └── agent.py                   # Agente (ADK + MCP)
 └── bridge/google_chat/              # Bridge (DistributedLock)
 ```
 
@@ -1412,7 +1412,7 @@ O projeto segue **Domain-Driven Design** com **CQRS** (Command Query Responsibil
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    AGENT LAYER (entrypoints)                 │
-│  orchestrator.py · router.py · general_agent.py · pi_agent.py│
+│  orchestrator.py · router.py · general_agent.py · agent.py      │
 ├─────────────────────────────────────────────────────────────┤
 │                 APPLICATION LAYER (orquestra)                │
 │  commands/ · queries/ · sagas/ · events.py · projections.py │
@@ -1630,7 +1630,7 @@ POST /chat
 │    └─ ctx.knowledge_context                                │
 │                                                            │
 │  Step 5: run_agent                                         │
-│    ├─ route=pims → run_pi_agent() (ADK + McpToolset)       │
+│    ├─ route=pims → run_agent() (ADK + McpToolset)            │
 │    ├─ route=conversa_comum → run_general_agent() (LiteLLM) │
 │    ├─ Event: AgentRunStarted → AgentToolInvocation* →       │
 │    │          AgentRunCompleted                             │

@@ -137,8 +137,8 @@ def mock_general_agent_error(monkeypatch):
 
 
 @pytest.fixture()
-def mock_pi_agent(monkeypatch):
-    """PI agent returns fixed output."""
+def mock_agent(monkeypatch):
+    """Agent returns fixed output."""
     async def _agent(**kwargs):
         return {
             "output": "O valor atual de LFI_RB3_VAZ_GN_TOTAL é 1523.4 Nm3/h",
@@ -146,7 +146,7 @@ def mock_pi_agent(monkeypatch):
             "messages": [],
         }
 
-    monkeypatch.setattr("app.agent.orchestrator.run_pi_agent", _agent)
+    monkeypatch.setattr("app.agent.orchestrator.run_agent", _agent)
     return _agent
 
 

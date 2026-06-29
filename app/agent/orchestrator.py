@@ -22,7 +22,7 @@ from typing import Any
 
 from app.agent.router import route_message
 from app.agent.general_agent import run_general_agent
-from app.agent.pi_agent import run_pi_agent
+from app.agent.agent import run_agent
 from app.application.sagas.conversation_saga import (
     ConversationContext,
     ConversationSaga,
@@ -182,7 +182,7 @@ def _build_saga(event_publisher=None, event_store=None) -> ConversationSaga:
         route_fn=RouteMessageHandler(route_fn=route_message).handle,
         rag_fn=RetrieveKnowledgeContextHandler(knowledge_repo=rag_adapter).handle,
         run_agent_fn=RunAgentForMessageHandler(
-            pi_agent_fn=run_pi_agent,
+            agent_fn=run_agent,
             general_agent_fn=run_general_agent,
         ).handle,
         save_memory_fn=SaveConversationTurnHandler(memory=memory_adapter).handle,

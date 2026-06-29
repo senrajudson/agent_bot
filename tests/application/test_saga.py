@@ -59,7 +59,7 @@ class _FakeAgentResult:
     output: str = "Resposta do agente"
     error: str | None = None
     messages: list = field(default_factory=list)
-    tool_name: str = "pi_agent"
+    tool_name: str = "agent"
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ def mock_run_agent():
         return_value=_FakeAgentResult(
             output="O valor e 1523.4 Nm3/h",
             messages=[],
-            tool_name="pi_agent",
+            tool_name="agent",
         )
     )
 
@@ -264,7 +264,7 @@ class TestSagaSteps:
         )
         ctx = await saga._step_run_agent(ctx)
         assert ctx.agent_output == "O valor e 1523.4 Nm3/h"
-        assert ctx.tool_name == "pi_agent"
+        assert ctx.tool_name == "agent"
 
     @pytest.mark.asyncio
     async def test_run_agent_step_general(self, mock_run_agent_general) -> None:
@@ -283,7 +283,7 @@ class TestSagaSteps:
         ctx = ConversationContext(
             conversation_id="c1", message_original="hi",
             agent_output="bye", agent_route="pims",
-            user_id="u1", tool_name="pi_agent",
+            user_id="u1", tool_name="agent",
         )
         ctx = await saga._step_save_memory(ctx)
         mock_save_memory.assert_awaited_once()

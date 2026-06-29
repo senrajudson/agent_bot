@@ -1,5 +1,5 @@
 """
-PI System agent — Google ADK based.
+Generic LLM agent — Google ADK based.
 
 Uses ADK's LlmAgent + McpToolset (Streamable HTTP) to talk to the
 standalone MCP server (mcp_server/) and execute tag queries,
@@ -29,17 +29,17 @@ from tenacity import (
 
 from app.clients.provider_client import get_llm, get_llm_for_model
 from app.core.config import settings
-from app.prompts.pi_agent_prompt import AGENT_SYSTEM_PROMPT
+from app.prompts.agent_prompt import AGENT_SYSTEM_PROMPT
 from app.schemas.llm import LLMParams
 from app.agent.shared import RETRYABLE_ERRORS
 
 logger = logging.getLogger(__name__)
 
-APP_NAME = "agent_bot_pi"
-PI_AGENT_NAME = "pi_agent"
+APP_NAME = "agent_bot"
+AGENT_NAME = "agent"
 MAX_AGENT_STEPS = 8
 
-_PI_AGENT_PARAMS = LLMParams(
+_AGENT_PARAMS = LLMParams(
     temperature=0,
     num_ctx=8192,
     num_predict=1024,
@@ -55,15 +55,15 @@ def _mcp_toolset() -> McpToolset:
     )
 
 
-def _build_pi_agent(model_name: str | None = None) -> LlmAgent:
-    """Build pi_agent with a specific Gemini model (or default if None)."""
+def _build_agent(model_name: str | None = None) -> LlmAgent:
+    """Build agent with a specific Gemini model (or default if None)."""
     if model_name:
-        model = get_llm_for_model(_PI_AGENT_PARAMS, model_name)
+        model = get_llm_for_model(_AGENT_PARAMS, model_name)
     else:
-        model = get_llm(_PI_AGENT_PARAMS)
+        model = get_llm(_AGENT_PARAMS)
 
     return LlmAgent(
-        name=PI_AGENT_NAME,
+        name=AGENT_NAME,
         model=model,
         instruction=AGENT_SYSTEM_PROMPT,
         tools=[_mcp_toolset()],
@@ -111,7 +111,7 @@ def _event_to_message(event: Any) -> dict[str, Any] | None:
     if content is None:
         return None
 
-    author = getattr(event, "author", None) or "pi_agent"
+    author = getattr(event, "author", None) or "agent"
     text = _safe_text(content)
 
     function_calls: list[dict[str, Any]] = []
@@ -198,14 +198,14 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
-async def _run_pi_agent_core(
+async def _run_agent_core(
     user_message: str,
     user_id: str,
     session_id: str,
     model_name: str | None = None,
 ) -> dict[str, Any]:
-    """Core pi_agent logic with a specific model."""
-    agent = _build_pi_agent(model_name=model_name)
+    """Core agent logic with a specific model."""
+    agent = _build_agent(model_name=model_name)
     session_service = InMemorySessionService()
     runner = Runner(
         agent=agent,
@@ -270,12 +270,12 @@ async def _run_pi_agent_core(
     }
 
 
-async def run_pi_agent(
+async def run_agent(
     user_message: str,
     user_id: str = "default_user",
     session_id: str | None = None,
 ) -> dict[str, Any]:
-    session_id = session_id or f"pi-{user_id}"
+    session_id = session_id or f"agent-{user_id}"
 
     provider = settings.LLM_PROVIDER.lower().strip()
     models: list[str | None] = [None]  # None = use default get_llm
@@ -295,12 +295,12 @@ async def run_pi_agent(
                 reraise=True,
             ):
                 with attempt:
-                    return await _run_pi_agent_core(
+                    return await _run_agent_core(
                         user_message, user_id, session_id, model_name=model_name
                     )
         except RETRYABLE_ERRORS as e:
             logger.warning(
-                "pi_agent model %s failed after retries: %s. Trying next model.",
+                "agent model %s failed after retries: %s. Trying next model.",
                 model_name,
                 e,
             )
@@ -319,6 +319,6 @@ async def run_pi_agent(
     # Should not reach here, but just in case
     return {
         "messages": [],
-        "output": "Erro desconhecido no pi_agent.",
+        "output": "Erro desconhecido no agent.",
         "error": "unknown",
     }

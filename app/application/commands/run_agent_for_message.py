@@ -1,4 +1,4 @@
-"""Command: Run the PI agent or general agent for a user message."""
+"""Command: Run the agent or general agent for a user message."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,7 +32,7 @@ class RunAgentForMessageResult:
 class RunAgentForMessageHandler:
     """Runs the appropriate agent (PI or General) for a user message.
 
-    Delegates to agent_fn (injected callable) that wraps pi_agent or general_agent.
+    Delegates to agent_fn (injected callable) that wraps agent or general_agent.
     No direct dependency on litellm, httpx, google.adk, or any infrastructure.
 
     The agent_fn must have the signature:
@@ -41,22 +41,22 @@ class RunAgentForMessageHandler:
 
     def __init__(
         self,
-        pi_agent_fn: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
+        agent_fn: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
         general_agent_fn: Callable[..., Coroutine[Any, Any, dict[str, Any]]],
     ) -> None:
-        self._pi_agent_fn = pi_agent_fn
+        self._agent_fn = agent_fn
         self._general_agent_fn = general_agent_fn
 
     async def handle(
         self, command: RunAgentForMessage
     ) -> RunAgentForMessageResult:
         if command.route == AgentRoute.PIMS:
-            result = await self._pi_agent_fn(
+            result = await self._agent_fn(
                 user_message=command.user_message,
                 user_id=command.user_id,
                 session_id=command.session_id,
             )
-            tool_name = "pi_agent"
+            tool_name = "agent"
         else:
             result = await self._general_agent_fn(
                 user_message=command.user_message,

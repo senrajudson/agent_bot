@@ -157,7 +157,7 @@ def mock_pims_ops_repo() -> MagicMock:
 
 
 @pytest.fixture
-def mock_pi_agent_fn() -> MagicMock:
+def mock_agent_fn() -> MagicMock:
     return AsyncMock(
         return_value={
             "output": "O valor e 1523.4 Nm3/h",

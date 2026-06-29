@@ -128,31 +128,31 @@ class TestGeneralRoute:
 
 
 # ===========================================================================
-# 3. PIMS route — pi_agent with RAG
+# 3. PIMS route — agent with RAG
 # ===========================================================================
 
 
 class TestPimsRoute:
-    """process_message routes to pi_agent when router returns 'pims'."""
+    """process_message routes to agent when router returns 'pims'."""
 
     @pytest.mark.asyncio
-    async def test_process_message_pims_route_calls_pi_agent(
+    async def test_process_message_pims_route_calls_agent(
         self,
         simple_text_request,
         mock_redis,
         mock_route_pims,
-        mock_pi_agent,
+        mock_agent,
         mock_rag_empty,
         mock_ocr_no_images,
     ):
-        """When the router classifies as 'pims', run_pi_agent is called."""
+        """When the router classifies as 'pims', run_agent is called."""
         from app.agent.orchestrator import process_message
 
         response = await process_message(simple_text_request)
 
         assert response.ok is True
         assert response.categoria == "pims"
-        assert response.next_action == "pi_agent"
+        assert response.next_action == "agent"
         assert response.output == "O valor atual de LFI_RB3_VAZ_GN_TOTAL é 1523.4 Nm3/h"
 
     @pytest.mark.asyncio
@@ -161,7 +161,7 @@ class TestPimsRoute:
         simple_text_request,
         mock_redis,
         mock_route_pims,
-        mock_pi_agent,
+        mock_agent,
         mock_ocr_no_images,
     ):
         """PIMS route calls build_rag_context with the user message."""
@@ -188,7 +188,7 @@ class TestPimsRoute:
         simple_text_request,
         mock_redis,
         mock_route_pims,
-        mock_pi_agent,
+        mock_agent,
         mock_ocr_no_images,
     ):
         """PIMS route prepends RAG context to the user message."""
@@ -196,19 +196,19 @@ class TestPimsRoute:
 
         captured_args = {}
 
-        async def _tracking_pi_agent(**kwargs):
+        async def _tracking_agent(**kwargs):
             captured_args.update(kwargs)
             return {"output": "ok", "error": None, "messages": []}
 
         import app.agent.orchestrator as orch
-        original_pi = orch.run_pi_agent
-        orch.run_pi_agent = _tracking_pi_agent
+        original_pi = orch.run_agent
+        orch.run_agent = _tracking_agent
         try:
             await process_message(simple_text_request)
             user_msg = captured_args.get("user_message", "")
             assert "qual o valor da LFI_RB3_VAZ_GN_TOTAL" in user_msg
         finally:
-            orch.run_pi_agent = original_pi
+            orch.run_agent = original_pi
 
 
 # ===========================================================================

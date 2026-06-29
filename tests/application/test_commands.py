@@ -102,11 +102,11 @@ class TestRouteMessage:
 # =========================================================================
 class TestRunAgentForMessage:
     @pytest.mark.asyncio
-    async def test_pims_route_calls_pi_agent(
-        self, mock_pi_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
+    async def test_pims_route_calls_agent(
+        self, mock_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
     ) -> None:
         handler = RunAgentForMessageHandler(
-            pi_agent_fn=mock_pi_agent_fn,
+            agent_fn=mock_agent_fn,
             general_agent_fn=mock_general_agent_fn,
         )
         cmd = RunAgentForMessage(
@@ -116,17 +116,17 @@ class TestRunAgentForMessage:
             route=AgentRoute.PIMS,
         )
         result = await handler.handle(cmd)
-        mock_pi_agent_fn.assert_awaited_once()
+        mock_agent_fn.assert_awaited_once()
         mock_general_agent_fn.assert_not_awaited()
-        assert result.tool_name == "pi_agent"
+        assert result.tool_name == "agent"
         assert result.output == "O valor e 1523.4 Nm3/h"
 
     @pytest.mark.asyncio
     async def test_general_route_calls_general_agent(
-        self, mock_pi_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
+        self, mock_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
     ) -> None:
         handler = RunAgentForMessageHandler(
-            pi_agent_fn=mock_pi_agent_fn,
+            agent_fn=mock_agent_fn,
             general_agent_fn=mock_general_agent_fn,
         )
         cmd = RunAgentForMessage(
@@ -137,16 +137,16 @@ class TestRunAgentForMessage:
         )
         result = await handler.handle(cmd)
         mock_general_agent_fn.assert_awaited_once()
-        mock_pi_agent_fn.assert_not_awaited()
+        mock_agent_fn.assert_not_awaited()
         assert result.tool_name == "general_agent"
         assert result.output == "Ola! Como posso ajudar?"
 
     @pytest.mark.asyncio
     async def test_result_fields(
-        self, mock_pi_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
+        self, mock_agent_fn: AsyncMock, mock_general_agent_fn: AsyncMock
     ) -> None:
         handler = RunAgentForMessageHandler(
-            pi_agent_fn=mock_pi_agent_fn,
+            agent_fn=mock_agent_fn,
             general_agent_fn=mock_general_agent_fn,
         )
         result = await handler.handle(

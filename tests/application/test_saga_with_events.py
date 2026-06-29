@@ -58,7 +58,7 @@ class _FakeAgentResult:
     output: str = "Resposta"
     error: str | None = None
     messages: list = None
-    tool_name: str = "pi_agent"
+    tool_name: str = "agent"
     def __post_init__(self):
         if self.messages is None:
             self.messages = []
@@ -136,7 +136,7 @@ class TestSagaEvents:
         ctx = ConversationContext(
             conversation_id="c1", message_original="hi",
             agent_output="bye", agent_route="pims",
-            user_id="u1", tool_name="pi_agent",
+            user_id="u1", tool_name="agent",
         )
         await saga._step_save_memory(ctx)
         events = await store.read("conversation:c1")
