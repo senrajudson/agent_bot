@@ -28,6 +28,7 @@ from app.domain.protocols import (
 from app.domain.value_objects import (
     CalculationBasis,
     CalculationBasisValue,
+    ConversationId,
     EngineeringUnit,
     PiWebId,
     SummaryType,
@@ -66,4 +67,5 @@ __all__ = [
     "SummaryTypeValue",
     "CalculationBasis",
     "CalculationBasisValue",
+    "ConversationId",
 ]

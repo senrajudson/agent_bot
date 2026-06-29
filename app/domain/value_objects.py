@@ -143,3 +143,44 @@ class CalculationBasis:
 
     def __str__(self) -> str:
         return self.value.value
+
+
+# ---------------------------------------------------------------------------
+# Identity Value Object: ConversationId
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConversationId:
+    """Immutable identifier of a conversation.
+
+    Derived from user_id (Prompt 3 Ciclo 1). Preserves current behavior:
+    conversation_id = user_id, with "anonymous" as fallback when user_id is
+    None or empty. Validates non-empty/non-None at construction time.
+    """
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str):
+            raise TypeError("ConversationId value must be a str")
+        if not self.value:
+            raise ValueError("ConversationId must be a non-empty string")
+
+    @classmethod
+    def from_user_id(cls, user_id: str | None) -> "ConversationId":
+        """Derive ConversationId from user_id (or None).
+
+        Preserves current production behavior: if user_id is None or empty,
+        returns ConversationId("anonymous"). Otherwise returns
+        ConversationId(user_id).
+
+        NOTE: whitespace-only user_id is currently accepted (debt — should
+        be rejected in future).
+        """
+        if not user_id:
+            return cls("anonymous")
+        return cls(user_id)
+
+    def __str__(self) -> str:
+        return self.value

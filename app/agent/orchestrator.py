@@ -36,6 +36,7 @@ from app.services.chat_memory_service import (
     format_memory_for_prompt,
     load_memory_turns,
 )
+from app.domain.value_objects import ConversationId
 from app.tasks.ocr_query import run_ocr_for_images
 
 
@@ -81,9 +82,13 @@ class _MemoryAdapter:
     """Adapter: chat_memory_service -> ConversationMemory Protocol (v1 legacy)."""
 
     async def load_turns(self, conversation_id, max_turns=None):
+        if isinstance(conversation_id, ConversationId):
+            conversation_id = str(conversation_id)
         return await load_memory_turns(conversation_id, max_turns)
 
     async def append_turns(self, conversation_id, user_message, assistant_message, metadata=None):
+        if isinstance(conversation_id, ConversationId):
+            conversation_id = str(conversation_id)
         await append_memory_turns(conversation_id, user_message, assistant_message, metadata)
 
     def format_for_prompt(self, turns):

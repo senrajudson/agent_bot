@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.clients.redis_client import get_redis_client
 from app.core.config import settings
+from app.domain.value_objects import ConversationId
 
 
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
@@ -20,7 +21,7 @@ class ChatMemoryTurn(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-def _memory_key(conversation_id: str) -> str:
+def _memory_key(conversation_id: ConversationId) -> str:
     return f"{MEMORY_KEY_PREFIX}:{conversation_id}:turns"
 
 
@@ -36,7 +37,8 @@ async def load_memory_turns(
         return []
 
     redis = get_redis_client()
-    key = _memory_key(conversation_id)
+    cid = ConversationId.from_user_id(conversation_id)
+    key = _memory_key(cid)
     limit = max_turns or settings.CHAT_MEMORY_MAX_TURNS
 
     raw_items = await redis.lrange(key, -limit, -1)
@@ -62,7 +64,8 @@ async def append_memory_turns(
         return
 
     redis = get_redis_client()
-    key = _memory_key(conversation_id)
+    cid = ConversationId.from_user_id(conversation_id)
+    key = _memory_key(cid)
 
     metadata = metadata or {}
 
