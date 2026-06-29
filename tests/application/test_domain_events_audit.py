@@ -253,9 +253,34 @@ class TestDuplicateMemoryPublicationLatent:
         assert len(assistant_events) == 1
 
     def test_adapter_v2_not_instantiated_by_process_message(self) -> None:
-        """process_message não instancia RedisConversationMemory."""
-        src = inspect.getsource(app.agent.orchestrator)  # noqa: F821 — import below
-        assert "RedisConversationMemory" not in src or "import" in src
+        """Versão Ciclo 2: substitui assert tautológico do Ciclo 1 (RR1).
+
+        process_message deve estar limpa dos tokens que indicariam ativação
+        do path v2 (memory EventStore-backed). O kwarg event_store= também
+        não pode aparecer — sua presença significaria que _build_saga foi
+        chamado com EventStore injetado.
+        """
+        src = inspect.getsource(app.agent.orchestrator.process_message)  # noqa: F821
+        assert "RedisConversationMemory" not in src
+        assert "redis_memory_v2" not in src
+        assert "event_store=" not in src
+
+    def test_build_saga_has_conditional_v2_path(self) -> None:
+        """_build_saga contém o path v2 latente, guardado por condicional.
+
+        v2 existe em _build_saga (linha 168-171 do orchestrator) e é
+        instanciado apenas se event_store is not None. process_message
+        chama _build_saga SEM event_store= (test acima), então o ramo
+        v2 nunca é executado no fluxo /chat atual.
+
+        Este teste documenta a LATÊNCIA do path v2: ele existe, mas
+        está guardado por condicional.
+        """
+        src = inspect.getsource(app.agent.orchestrator._build_saga)  # noqa: F821
+        assert src, "inspect.getsource(_build_saga) returned empty string"
+        assert "RedisConversationMemory" in src
+        assert "_MemoryAdapterV2" in src
+        assert "if event_store is not None" in src
 
     def test_adapter_v2_source_would_publish_events(self) -> None:
         """Se v2 fosse injetado, append_turns publicaria os mesmos eventos."""
