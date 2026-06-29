@@ -30,6 +30,7 @@ from app.application.sagas.conversation_saga import (
     build_agent_user_message as _saga_build_agent_user_message,
 )
 from app.clients.qdrant_client import build_rag_context
+from app.application.use_cases.build_chat_response import build_chat_response
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.chat_memory_service import (
     append_memory_turns,
@@ -227,42 +228,7 @@ async def process_message(payload: ChatRequest) -> ChatResponse:
     saga = _build_saga(event_publisher=event_publisher)
     ctx = await saga.execute(ctx)
 
-    # Build response from Context
-    if ctx.error:
-        categoria = "erro_no_orchestrator"
-        next_action = "orchestrator"
-        tool_result = {"error": ctx.error}
-        agent_trace: list[dict[str, Any]] = []
-    elif ctx.agent_route:
-        categoria = ctx.agent_route
-        next_action = ctx.tool_name or "orchestrator"
-        agent_trace = _build_trace(ctx.agent_messages)
-        tool_result = {"agent_used": True, "agent_trace": agent_trace} if ctx.tool_name else None
-    else:
-        categoria = "conversa_comum"
-        next_action = "general_agent"
-        agent_trace = _build_trace(ctx.agent_messages)
-        tool_result = {"agent_used": True, "agent_trace": agent_trace} if ctx.tool_name else None
-
-    return ChatResponse(
-        ok=ctx.error is None,
-        user_id=ctx.user_id,
-        message_original=message_original,
-        processed_message=message_original,
-        categoria=categoria,
-        next_action=next_action,
-        has_image=bool(images),
-        skip_ocr=ctx.skip_ocr,
-        ocr_text=ctx.ocr_text,
-        tags_encontradas=ctx.tags_encontradas,
-        tags_consultadas=[],
-        ocr_results=ctx.ocr_extractions,
-        tool_name=ctx.tool_name,
-        tool_result=tool_result,
-        agent_trace=agent_trace,
-        output=ctx.agent_output,
-        answer_generation_error=ctx.error,
-    )
+    return build_chat_response(ctx)
 
 
 # ---------------------------------------------------------------------------
