@@ -97,6 +97,40 @@ class TestProjection:
         proj.apply(DomainEvent())  # should not crash
         assert proj.project() == []
 
+    def test_duplicate_user_messages_overwrite_pending_user_without_turn(self) -> None:
+        """Caracterização do estado atual: UserMessageRecorded duplicado sobrescreve
+        o pending user sem gerar turn.
+
+        Não é necessariamente comportamento ideal — congelado para detectar mudanças.
+        """
+        proj = ConversationMemoryProjection(conversation_id="c1")
+        proj.apply(UserMessageRecorded(content="user1", created_at="t1"))
+        proj.apply(UserMessageRecorded(content="user2", created_at="t2"))
+        turns = proj.project()
+        assert turns == []
+        assert len(turns) == 0
+
+    def test_duplicate_assistant_messages_create_empty_user_turns(self) -> None:
+        """Caracterização do estado atual: AssistantMessageRecorded sem
+        UserMessageRecorded prévio gera user turn vazio.
+
+        Duplicar AssistantMessageRecorded gera 4 turns (2 user vazios + 2 assistant).
+        Comportamento não-intuitivo congelado, não corrigido.
+        """
+        proj = ConversationMemoryProjection(conversation_id="c1")
+        proj.apply(AssistantMessageRecorded(content="asst1", created_at="t1"))
+        proj.apply(AssistantMessageRecorded(content="asst2", created_at="t2"))
+        turns = proj.project()
+        assert len(turns) == 4
+        assert turns[0].role == "user"
+        assert turns[0].content == ""
+        assert turns[1].role == "assistant"
+        assert turns[1].content == "asst1"
+        assert turns[2].role == "user"
+        assert turns[2].content == ""
+        assert turns[3].role == "assistant"
+        assert turns[3].content == "asst2"
+
 
 # =========================================================================
 # format_turns_for_prompt

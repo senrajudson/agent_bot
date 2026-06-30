@@ -178,6 +178,19 @@ class TestProjectionEventsShape:
     def test_assistant_message_recorded_not_in_registry(self) -> None:
         assert "AssistantMessageRecorded" not in DOMAIN_EVENTS_REGISTRY
 
+    def test_projection_events_remain_in_projections_module_outside_domain_registry(self) -> None:
+        """Snapshot do estado atual: projection events vivem em app.domain.projections,
+        fora do DOMAIN_EVENTS_REGISTRY, e não herdam de DomainEvent.
+
+        Não é exigência arquitetural ideal — é congelamento do estado.
+        """
+        assert UserMessageRecorded.__module__ == "app.domain.projections"
+        assert AssistantMessageRecorded.__module__ == "app.domain.projections"
+        assert "UserMessageRecorded" not in DOMAIN_EVENTS_REGISTRY
+        assert "AssistantMessageRecorded" not in DOMAIN_EVENTS_REGISTRY
+        assert issubclass(UserMessageRecorded, DomainEvent) is False
+        assert issubclass(AssistantMessageRecorded, DomainEvent) is False
+
 
 # ---------------------------------------------------------------------------
 # R3 — Eventos publicados pela Saga (whitelist)
