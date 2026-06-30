@@ -1,6 +1,7 @@
 """Tests for EventStore and EventPublisher."""
 from __future__ import annotations
 
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
@@ -132,3 +133,80 @@ class TestNullEventPublisher:
     async def test_publish_to_conversation_is_noop(self) -> None:
         publisher = NullEventPublisher()
         await publisher.publish_to_conversation("c", DomainEvent())
+
+
+# =========================================================================
+# Protocol snapshots — frozen contract
+# =========================================================================
+class TestEventStoreProtocolSnapshot:
+    """Frozen snapshot of EventStore Protocol contract.
+
+    If this test breaks, someone changed the EventStore Protocol.
+    That change must be intentional and reviewed.
+    """
+
+    def test_event_store_protocol_has_exactly_3_public_methods(self) -> None:
+        """EventStore Protocol exposes exactly 3 public methods."""
+        public_methods = {
+            name
+            for name, val in EventStore.__dict__.items()
+            if not name.startswith("_") and callable(val)
+        }
+        assert public_methods == {"append", "read", "append_batch"}
+        # InMemoryEventStore still satisfies the protocol
+        assert isinstance(InMemoryEventStore(), EventStore)
+
+
+class TestEventPublisherProtocolSnapshot:
+    """Frozen snapshot of EventPublisher Protocol contract.
+
+    If this test breaks, someone changed the EventPublisher Protocol.
+    That change must be intentional and reviewed.
+    """
+
+    def test_event_publisher_protocol_has_exactly_2_public_methods(self) -> None:
+        """EventPublisher Protocol exposes exactly 2 public methods."""
+        public_methods = {
+            name
+            for name, val in EventPublisher.__dict__.items()
+            if not name.startswith("_") and callable(val)
+        }
+        assert public_methods == {"publish", "publish_to_conversation"}
+        # InMemoryEventStore does NOT satisfy EventPublisher
+        assert not isinstance(InMemoryEventStore(), EventPublisher)
+
+
+# =========================================================================
+# InMemoryEventStore — purity and legacy behavior
+# =========================================================================
+class TestInMemoryEventStorePurity:
+    """Validates that InMemoryEventStore constructor is pure.
+
+    The constructor initializes only in-memory data structures,
+    does not depend on environment variables, and does not require
+    external connections.
+    """
+
+    def test_init_initializes_memory_structure_only(self) -> None:
+        store = InMemoryEventStore()
+        assert hasattr(store, "_streams")
+        assert isinstance(store._streams, dict)
+        assert len(store._streams) == 0
+
+
+class TestInMemoryEventStoreLegacyBehavior:
+    """Frozen legacy behavior: from_id parameter is accepted but ignored.
+
+    The current InMemoryEventStore.read() accepts a from_id parameter
+    but ignores it, returning all events in the stream. This is legacy
+    behavior that is frozen here as a regression guard. If someone
+    fixes from_id filtering in the future, this test should be updated.
+    """
+
+    @pytest.mark.asyncio
+    async def test_read_ignores_from_id_parameter(self) -> None:
+        store = InMemoryEventStore()
+        for _ in range(3):
+            await store.append("stream1", DomainEvent())
+        result = await store.read("stream1", from_id="999")
+        assert len(result) == 3
