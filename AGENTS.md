@@ -1576,7 +1576,7 @@ domain/
 | Implementação | Armazenamento | Uso |
 |---|---|---|
 | `InMemoryEventStore` | `dict[str, list[DomainEvent]]` | Testes unitários |
-| `RedisStreamsEventStore` | Redis Streams (`XADD`/`XRANGE`) | Produção |
+| `RedisStreamsEventStore` | Redis Streams (`XADD`/`XRANGE`) | Opcional (não ativo no /chat) |
 
 **Protocol**: `append(stream, event)`, `read(stream, from_id)`, `append_batch(stream, events)`. Não há `replay`/`replay_all` na interface atual.
 
@@ -1825,6 +1825,17 @@ Esta seção documenta o estado real do **PostgresEventStore** como backend opci
 - Não há teste contra Postgres real nesta fase. O arquivo `tests/unit/test_postgres_event_store.py` é 100% unitário (sem rede, sem Docker, sem testcontainers).
 - O DDL append-only está em `app/infrastructure/event_store/sql/001_create_event_store_events.sql`. Aplicação do schema é externa ao código.
 - O serviço `event_store_postgres` no `docker-compose.yaml` está sob `profiles: [events]` e não sobe por padrão.
+
+### Pré-condições para reabrir Event Sourcing real
+
+Event Sourcing real não deve ser implementado sem pelo menos uma necessidade concreta de:
+
+- replay real de eventos;
+- read model histórico reconstruível;
+- validação de comandos contra estado histórico;
+- integração assíncrona exigindo Outbox/Inbox;
+- memória de conversa durável, não apenas curta/TTL;
+- múltiplos bounded contexts exigindo consistência eventual.
 
 ### Dívidas de configuração relacionadas
 

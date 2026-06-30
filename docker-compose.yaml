@@ -69,7 +69,6 @@ services:
     depends_on:
       - agent_bot
 
-  # Optional: PostgreSQL Event Store (activate with --profile events)
   event_store_postgres:
     image: postgres:16-alpine
     container_name: event_store_postgres
@@ -77,12 +76,17 @@ services:
     profiles:
       - events
     environment:
-      POSTGRES_DB: agent_bot_events
-      POSTGRES_USER: agent_bot
-      POSTGRES_PASSWORD: agent_bot
+      POSTGRES_DB: ${EVENT_STORE_POSTGRES_DB:-agent_bot_events}
+      POSTGRES_USER: ${EVENT_STORE_POSTGRES_USER:-agent_bot}
+      POSTGRES_PASSWORD: ${EVENT_STORE_POSTGRES_PASSWORD:-change_me_event_store}
     volumes:
       - event_store_pgdata:/var/lib/postgresql/data
-    # Expose internally only — no host port mapping
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Sem ports: fica acessível apenas dentro da rede Docker deste compose
 
 volumes:
   event_store_pgdata:
