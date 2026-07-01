@@ -263,3 +263,83 @@ class TestNonActivationCanaries:
                 if node.module:
                     names = [a.name for a in node.names]
                     assert "EventPublisherImpl" not in names, f"prohibited: EventPublisherImpl from {node.module}"
+
+
+# ---------------------------------------------------------------------------
+# T7 — /chat not-activation canaries (EDD Prompt 8)
+# ---------------------------------------------------------------------------
+
+
+class TestChatNotActivationCanaries:
+    """Canaries that ensure /chat and process_message remain untouched.
+
+    All checks are static-source-based: no import of app.main, no runtime,
+    no TestClient.  These canaries are part of T7 and run as part of the
+    unit suite, not in the integration suite.
+    """
+
+    @staticmethod
+    def _read(relpath: str) -> str:
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        return (repo_root / relpath).read_text(encoding="utf-8")
+
+    def test_orchestrator_still_uses_inmemory_event_store(self) -> None:
+        """K1: process_message continues to use InMemoryEventStore()."""
+        text = self._read("app/agent/orchestrator.py")
+        assert "InMemoryEventStore(" in text, (
+            "K1: app/agent/orchestrator.py must still instantiate InMemoryEventStore"
+        )
+
+    def test_orchestrator_does_not_use_get_event_store(self) -> None:
+        """K2: process_message must not call get_event_store."""
+        text = self._read("app/agent/orchestrator.py")
+        assert "get_event_store" not in text, (
+            "K2: app/agent/orchestrator.py must not use get_event_store"
+        )
+
+    def test_orchestrator_does_not_reference_app_state(self) -> None:
+        """K3: process_message must not read app.state."""
+        text = self._read("app/agent/orchestrator.py")
+        assert "app.state" not in text, (
+            "K3: app/agent/orchestrator.py must not reference app.state"
+        )
+
+    def test_orchestrator_does_not_reference_postgres_pool(self) -> None:
+        """K4: process_message must not reference postgres_pool."""
+        text = self._read("app/agent/orchestrator.py")
+        assert "postgres_pool" not in text, (
+            "K4: app/agent/orchestrator.py must not reference postgres_pool"
+        )
+
+    def test_main_does_not_pass_postgres_pool_to_request(self) -> None:
+        """K5: app/main.py must not access request.app.state.postgres_pool."""
+        text = self._read("app/main.py")
+        assert "request.app.state.postgres_pool" not in text, (
+            "K5: app/main.py must not access request.app.state.postgres_pool"
+        )
+
+    def test_main_does_not_import_asyncpg(self) -> None:
+        """K6: app/main.py must not import asyncpg."""
+        text = self._read("app/main.py")
+        assert "import asyncpg" not in text, (
+            "K6: app/main.py must not import asyncpg"
+        )
+
+    def test_main_registers_lifespan(self) -> None:
+        """K7: app/main.py must register lifespan=event_driven_lifespan."""
+        text = self._read("app/main.py")
+        assert "lifespan=" in text, (
+            "K7: app/main.py must register a lifespan"
+        )
+        assert "event_driven_lifespan" in text, (
+            "K7: app/main.py must reference event_driven_lifespan"
+        )
+
+    def test_main_chat_handler_still_calls_process_message(self) -> None:
+        """K8: /chat handler in app/main.py must still call process_message."""
+        text = self._read("app/main.py")
+        assert "process_message(payload)" in text, (
+            "K8: app/main.py /chat handler must call process_message(payload)"
+        )

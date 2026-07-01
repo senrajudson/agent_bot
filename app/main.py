@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.lifespan import event_driven_lifespan
 from app.observability.phoenix import (
     instrument_fastapi_app,
     setup_phoenix_tracing,
@@ -38,7 +39,7 @@ from app.agent.orchestrator import process_message
 from app.schemas.chat import ChatRequest, ChatResponse
 
 
-app = FastAPI(title=settings.API_NAME)
+app = FastAPI(title=settings.API_NAME, lifespan=event_driven_lifespan)
 
 instrument_fastapi_app(app)
 
