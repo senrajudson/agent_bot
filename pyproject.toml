@@ -38,6 +38,8 @@ dependencies = [
     "asyncpg (>=0.29.0,<1.0.0)",
 
     "tenacity (>=9.0.0,<10.0.0)",
+
+    "pytest-asyncio (>=0.23.0,<2.0.0)",
 ]
 
 [tool.poetry]
@@ -54,3 +56,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires real Postgres and EVENT_STORE_POSTGRES_DSN",
+]

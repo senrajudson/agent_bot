@@ -337,7 +337,17 @@ class PostgresOutboxStore:
                     worker_id,
                     float(lock_ttl_seconds),
                 )
-                return [_row_to_event(r) for r in rows]
+                # Re-fetch after UPDATE to return rows with populated
+                # status='locked', locked_by, locked_until, updated_at.
+                updated_rows = await conn.fetch(
+                    """
+                    SELECT * FROM outbox_events
+                    WHERE outbox_id = ANY($1::bigint[])
+                    ORDER BY available_at ASC, outbox_id ASC
+                    """,
+                    ids,
+                )
+                return [_row_to_event(r) for r in updated_rows]
 
     async def is_processed(
         self,

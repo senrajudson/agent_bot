@@ -86,7 +86,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # Sem ports: fica acessível apenas dentro da rede Docker deste compose
+    ports:
+      - "127.0.0.1:${EVENT_STORE_POSTGRES_HOST_PORT:-5433}:5432"
 
 volumes:
   event_store_pgdata:
