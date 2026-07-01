@@ -63,5 +63,9 @@ class Settings(BaseSettings):
     EVENT_STORE_BACKEND: str = "memory"
     EVENT_STORE_POSTGRES_DSN: str | None = None
 
+    # Feature flag: gate for EDD (Event Driven Design) Postgres integration.
+    # Default False preserves current runtime behavior (InMemoryEventStore).
+    EVENT_DRIVEN_ENABLED: bool = False
+
 
 settings = Settings()
