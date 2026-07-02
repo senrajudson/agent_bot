@@ -285,11 +285,15 @@ class TestChatNotActivationCanaries:
         repo_root = Path(__file__).resolve().parents[2]
         return (repo_root / relpath).read_text(encoding="utf-8")
 
-    def test_orchestrator_still_uses_inmemory_event_store(self) -> None:
-        """K1: process_message continues to use InMemoryEventStore()."""
+    def test_orchestrator_default_is_null_publisher(self) -> None:
+        """K1 (rewritten): process_message defaults to NullEventPublisher when
+        event_publisher is None (EDD Prompt 11)."""
         text = self._read("app/agent/orchestrator.py")
-        assert "InMemoryEventStore(" in text, (
-            "K1: app/agent/orchestrator.py must still instantiate InMemoryEventStore"
+        assert "NullEventPublisher(" in text, (
+            "K1: app/agent/orchestrator.py must default to NullEventPublisher"
+        )
+        assert "InMemoryEventStore(" not in text, (
+            "K1: app/agent/orchestrator.py must NOT instantiate InMemoryEventStore"
         )
 
     def test_orchestrator_does_not_use_get_event_store(self) -> None:
@@ -313,11 +317,15 @@ class TestChatNotActivationCanaries:
             "K4: app/agent/orchestrator.py must not reference postgres_pool"
         )
 
-    def test_main_does_not_pass_postgres_pool_to_request(self) -> None:
-        """K5: app/main.py must not access request.app.state.postgres_pool."""
+    def test_main_wires_runtime_event_publisher(self) -> None:
+        """K5 (rewritten): /chat handler uses build_runtime_event_publisher
+        and reads postgres_pool from app.state (EDD Prompt 11)."""
         text = self._read("app/main.py")
-        assert "request.app.state.postgres_pool" not in text, (
-            "K5: app/main.py must not access request.app.state.postgres_pool"
+        assert 'getattr(request.app.state, "postgres_pool"' in text, (
+            "K5: app/main.py must read postgres_pool via getattr"
+        )
+        assert "build_runtime_event_publisher" in text, (
+            "K5: app/main.py must call build_runtime_event_publisher"
         )
 
     def test_main_does_not_import_asyncpg(self) -> None:
@@ -337,9 +345,10 @@ class TestChatNotActivationCanaries:
             "K7: app/main.py must reference event_driven_lifespan"
         )
 
-    def test_main_chat_handler_still_calls_process_message(self) -> None:
-        """K8: /chat handler in app/main.py must still call process_message."""
+    def test_main_chat_handler_passes_event_publisher(self) -> None:
+        """K8 (rewritten): /chat handler must call
+        process_message(payload, event_publisher=...) (EDD Prompt 11)."""
         text = self._read("app/main.py")
-        assert "process_message(payload)" in text, (
-            "K8: app/main.py /chat handler must call process_message(payload)"
+        assert "process_message(payload, event_publisher=" in text, (
+            "K8: app/main.py /chat handler must pass event_publisher to process_message"
         )

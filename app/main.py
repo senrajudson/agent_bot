@@ -1,9 +1,10 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from app.core.config import settings
 from app.core.lifespan import event_driven_lifespan
+from app.core.runtime_publisher import build_runtime_event_publisher
 from app.observability.phoenix import (
     instrument_fastapi_app,
     setup_phoenix_tracing,
@@ -56,5 +57,7 @@ async def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest):
-    return await process_message(payload)
+async def chat(payload: ChatRequest, request: Request):
+    pool = getattr(request.app.state, "postgres_pool", None)
+    publisher = build_runtime_event_publisher(pool, settings)
+    return await process_message(payload, event_publisher=publisher)

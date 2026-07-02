@@ -20,6 +20,8 @@ backward compatibility with characterization tests (Etapa 0).
 
 from typing import Any
 
+from app.infrastructure.event_store import EventPublisher
+
 from app.agent.router import route_message
 from app.agent.general_agent import run_general_agent
 from app.agent.agent import run_agent
@@ -201,20 +203,21 @@ def _build_saga(event_publisher=None, event_store=None) -> ConversationSaga:
 # ---------------------------------------------------------------------------
 
 
-async def process_message(payload: ChatRequest) -> ChatResponse:
-    """Main entry point — same signature, now uses Context + Saga with events."""
+async def process_message(
+    payload: ChatRequest,
+    event_publisher: EventPublisher | None = None,
+) -> ChatResponse:
+    """Main entry point — receives optional event_publisher.
+
+    If ``event_publisher`` is None, a NullEventPublisher is used (no-op).
+    """
     message_original = _get_payload_message(payload)
     images = _get_payload_images(payload)
     user_id = _get_payload_user_id(payload)
     conversation_id = _get_payload_conversation_id(payload)
 
-    # Build event publisher (uses NullEventPublisher by default)
-    try:
-        from app.infrastructure.event_store.in_memory import InMemoryEventStore
-        from app.application.sagas.event_publisher import EventPublisherImpl
-        _event_store = InMemoryEventStore()
-        event_publisher = EventPublisherImpl(_event_store)
-    except Exception:
+    # Resolve event publisher (NullEventPublisher by default)
+    if event_publisher is None:
         from app.application.sagas.event_publisher import NullEventPublisher
         event_publisher = NullEventPublisher()
 

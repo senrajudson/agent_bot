@@ -709,6 +709,7 @@ class TestNonActivation:
         )
         assert not os.path.exists(os.path.join(outbox_dir, "__init__.py"))
 
-    def test_orchestrator_still_uses_in_memory(self) -> None:
+    def test_orchestrator_uses_null_publisher_default(self) -> None:
         source = open("app/agent/orchestrator.py").read()
-        assert "InMemoryEventStore()" in source
+        assert "NullEventPublisher()" in source
+        assert "InMemoryEventStore(" not in source
