@@ -15,6 +15,10 @@ from app.domain.events import (
     ConversationMemoryLoaded,
     MessageProcessingFailed,
 )
+from app.domain.projections import (
+    AssistantMessageRecorded,
+    UserMessageRecorded,
+)
 from app.infrastructure.event_store.base import EventStore, EventPublisher
 from app.infrastructure.event_store.transactional_postgres_event_store import (
     TransactionalPostgresEventStore,
@@ -873,3 +877,127 @@ class TestConstructor:
         pool = _FakePool()
         store = TransactionalPostgresEventStore(pool)
         assert store._pool is pool
+
+
+# =========================================================================
+# Grupo 6 — Projection events (UserMessageRecorded, AssistantMessageRecorded)
+# =========================================================================
+
+
+class TestProjectionEventMapping:
+    """Projection events are dataclasses in app.domain.projections, NOT DomainEvent.
+
+    They don't have aggregate_id, aggregate_type, event_type, event_version,
+    correlation_id, causation_id, or _payload(). The store must tolerate them
+    via defensive getattr in _to_event_store_record and _to_outbox_record.
+    """
+
+    def test_append_persists_user_message_recorded_to_both_tables(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = UserMessageRecorded(content="hi", created_at="t1")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        es_insert = None
+        ob_insert = None
+        for op, args in conn.calls:
+            if op == "execute" and "event_store_events" in args[0]:
+                es_insert = args
+            if op == "execute" and "outbox_events" in args[0]:
+                ob_insert = args
+
+        assert es_insert is not None
+        assert ob_insert is not None
+        assert es_insert[1] == ob_insert[1]  # same event_id ($1)
+
+    def test_append_persists_assistant_message_recorded_to_both_tables(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = AssistantMessageRecorded(content="hello", created_at="t2")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        es_insert = None
+        ob_insert = None
+        for op, args in conn.calls:
+            if op == "execute" and "event_store_events" in args[0]:
+                es_insert = args
+            if op == "execute" and "outbox_events" in args[0]:
+                ob_insert = args
+
+        assert es_insert is not None
+        assert ob_insert is not None
+        assert es_insert[1] == ob_insert[1]
+
+    def test_append_projection_event_aggregate_id_empty_in_event_store(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = UserMessageRecorded(content="hi", created_at="t1")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        for op, args in conn.calls:
+            if op == "execute" and "event_store_events" in args[0]:
+                # aggregate_id is $4 — must be "" for NOT NULL constraint
+                assert args[4] == ""
+
+    def test_append_projection_event_aggregate_id_null_in_outbox(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = AssistantMessageRecorded(content="hello", created_at="t2")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        for op, args in conn.calls:
+            if op == "execute" and "outbox_events" in args[0]:
+                # aggregate_id is $4 — must be None (NULLABLE column)
+                assert args[4] is None
+
+    def test_append_projection_event_event_type_uses_class_name(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = UserMessageRecorded(content="hi", created_at="t1")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        for op, args in conn.calls:
+            if op == "execute" and "event_store_events" in args[0]:
+                # event_type is $6 in event_store_events INSERT
+                assert args[6] == "UserMessageRecorded"
+            if op == "execute" and "outbox_events" in args[0]:
+                # event_type is $5 in outbox_events INSERT
+                assert args[5] == "UserMessageRecorded"
+
+    def test_append_projection_event_payload_contains_content_and_created_at(self) -> None:
+        conn = _FakeConnection()
+        pool = _FakePool(conn)
+        store = TransactionalPostgresEventStore(pool)
+        event = UserMessageRecorded(content="hi", created_at="t1")
+
+        import asyncio
+        asyncio.run(store.append("s", event))
+
+        for op, args in conn.calls:
+            if op == "execute" and "event_store_events" in args[0]:
+                payload = json.loads(args[12])  # $12 = payload
+                assert payload == {"content": "hi", "created_at": "t1"}
+                assert "event_id" not in payload
+                assert "aggregate_id" not in payload
+                assert "metadata" not in payload
+            if op == "execute" and "outbox_events" in args[0]:
+                payload = json.loads(args[6])  # $6 = event_payload
+                assert payload == {"content": "hi", "created_at": "t1"}
+                assert "event_id" not in payload
+                assert "aggregate_id" not in payload
+                assert "metadata" not in payload

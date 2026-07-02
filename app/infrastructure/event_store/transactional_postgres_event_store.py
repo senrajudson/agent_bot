@@ -6,6 +6,7 @@ Não faz fallback. Não engole exceções.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -59,11 +60,12 @@ class TransactionalPostgresEventStore:
     async def append(self, stream: str, event: DomainEvent) -> str:
         """Append a single event, writing to event_store_events + outbox_events atomically."""
         pool = self._pool
+        resolved_id = getattr(event, "event_id", "") or str(uuid.uuid4())
         async with pool.acquire() as conn:
             async with conn.transaction():
                 version = await self._next_stream_version(conn, stream)
 
-                record_es = self._to_event_store_record(event, stream, version)
+                record_es = self._to_event_store_record(event, stream, version, resolved_id)
                 await conn.execute(
                     self._SQL_INSERT_EVENT_STORE,
                     record_es["event_id"],
@@ -81,7 +83,7 @@ class TransactionalPostgresEventStore:
                     record_es["metadata"],
                 )
 
-                record_ob = self._to_outbox_record(event, stream, version, self._max_attempts)
+                record_ob = self._to_outbox_record(event, stream, version, self._max_attempts, resolved_id)
                 await conn.execute(
                     self._SQL_INSERT_OUTBOX,
                     record_ob["event_id"],
@@ -99,7 +101,7 @@ class TransactionalPostgresEventStore:
                     record_ob["metadata"],
                 )
 
-        return event.event_id
+        return resolved_id
 
     async def append_batch(self, stream: str, events: list[DomainEvent]) -> list[str]:
         """Append multiple events atomically, writing to both tables per event."""
@@ -110,7 +112,8 @@ class TransactionalPostgresEventStore:
 
                 ids: list[str] = []
                 for event in events:
-                    record_es = self._to_event_store_record(event, stream, version)
+                    resolved_id = getattr(event, "event_id", "") or str(uuid.uuid4())
+                    record_es = self._to_event_store_record(event, stream, version, resolved_id)
                     await conn.execute(
                         self._SQL_INSERT_EVENT_STORE,
                         record_es["event_id"],
@@ -128,7 +131,7 @@ class TransactionalPostgresEventStore:
                         record_es["metadata"],
                     )
 
-                    record_ob = self._to_outbox_record(event, stream, version, self._max_attempts)
+                    record_ob = self._to_outbox_record(event, stream, version, self._max_attempts, resolved_id)
                     await conn.execute(
                         self._SQL_INSERT_OUTBOX,
                         record_ob["event_id"],
@@ -146,7 +149,7 @@ class TransactionalPostgresEventStore:
                         record_ob["metadata"],
                     )
 
-                    ids.append(event.event_id)
+                    ids.append(resolved_id)
                     version += 1
 
         return ids
@@ -173,45 +176,68 @@ class TransactionalPostgresEventStore:
 
     @staticmethod
     def _to_event_store_record(
-        event: DomainEvent, stream: str, version: int
+        event: DomainEvent, stream: str, version: int, event_id: str
     ) -> dict[str, Any]:
-        """Map DomainEvent to a record for event_store_events."""
+        """Map DomainEvent to a record for event_store_events.
+
+        Uses getattr defensively to tolerate events that don't have the
+        full DomainEvent envelope (e.g. UserMessageRecorded).
+        """
         return {
-            "event_id": event.event_id,
+            "event_id": event_id,
             "stream_id": stream,
             "stream_version": version,
-            "aggregate_id": event.aggregate_id or "",
-            "aggregate_type": event.aggregate_type or "",
-            "event_type": event.event_type,
-            "event_version": event.event_version,
-            "occurred_at": event.occurred_at,
-            "correlation_id": event.correlation_id,
-            "causation_id": event.causation_id,
-            "conversation_id": event.conversation_id,
-            "payload": json.dumps(event._payload()),
-            "metadata": json.dumps(event.metadata or {}),
+            "aggregate_id": getattr(event, "aggregate_id", "") or "",
+            "aggregate_type": getattr(event, "aggregate_type", "") or "",
+            "event_type": getattr(event, "event_type", type(event).__name__),
+            "event_version": getattr(event, "event_version", 1),
+            "occurred_at": getattr(event, "occurred_at"),
+            "correlation_id": getattr(event, "correlation_id", None),
+            "causation_id": getattr(event, "causation_id", None),
+            "conversation_id": getattr(event, "conversation_id", None),
+            "payload": json.dumps(TransactionalPostgresEventStore._safe_payload(event)),
+            "metadata": json.dumps(getattr(event, "metadata", {}) or {}),
         }
 
     @staticmethod
     def _to_outbox_record(
-        event: DomainEvent, stream: str, version: int, max_attempts: int
+        event: DomainEvent, stream: str, version: int, max_attempts: int, event_id: str
     ) -> dict[str, Any]:
         """Map DomainEvent to a record for outbox_events."""
         return {
-            "event_id": event.event_id,
+            "event_id": event_id,
             "stream_id": stream,
             "stream_version": version,
-            "aggregate_id": event.aggregate_id,
-            "event_type": event.event_type,
-            "event_payload": json.dumps(event._payload()),
+            "aggregate_id": getattr(event, "aggregate_id", None),
+            "event_type": getattr(event, "event_type", type(event).__name__),
+            "event_payload": json.dumps(TransactionalPostgresEventStore._safe_payload(event)),
             "status": "pending",
             "attempts": 0,
             "max_attempts": max_attempts,
             "available_at": datetime.now(timezone.utc),
-            "correlation_id": event.correlation_id,
-            "causation_id": event.causation_id,
-            "metadata": json.dumps(event.metadata or {}),
+            "correlation_id": getattr(event, "correlation_id", None),
+            "causation_id": getattr(event, "causation_id", None),
+            "metadata": json.dumps(getattr(event, "metadata", {}) or {}),
         }
+
+    @staticmethod
+    def _safe_payload(event: Any) -> dict:
+        """Extract JSONB payload for event_store_events.payload and outbox_events.event_payload.
+
+        Strategy:
+          1. If event has _payload() method (DomainEvent subclasses), invoke it.
+          2. Otherwise, derive from vars(event) filtered by envelope fields.
+        """
+        if hasattr(event, "_payload") and callable(event._payload):
+            result = event._payload()
+            if isinstance(result, dict):
+                return result
+        envelope_fields = {
+            "event_id", "event_type", "event_version", "occurred_at",
+            "aggregate_id", "aggregate_type", "correlation_id",
+            "causation_id", "conversation_id", "metadata",
+        }
+        return {k: v for k, v in vars(event).items() if k not in envelope_fields}
 
     @staticmethod
     def _from_record(row: dict) -> DomainEvent:

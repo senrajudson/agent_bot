@@ -13,6 +13,10 @@ import asyncpg
 import pytest
 
 from app.domain.events import AgentRouteSelected
+from app.domain.projections import (
+    AssistantMessageRecorded,
+    UserMessageRecorded,
+)
 from app.infrastructure.event_store.transactional_postgres_event_store import (
     TransactionalPostgresEventStore,
 )
@@ -264,3 +268,91 @@ async def test_read_reconstructs_event_type_from_registry(
     assert events[0].route == "pims"
     assert events[0].message_id == "m-1"
     assert events[0].latency_ms == 10
+
+
+# ---------------------------------------------------------------------------
+# D17d — Projection events (UserMessageRecorded, AssistantMessageRecorded)
+# ---------------------------------------------------------------------------
+
+
+async def test_append_user_message_recorded_persists_in_event_store(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    store = TransactionalPostgresEventStore(pool=pg_pool)
+    event = UserMessageRecorded(content="hi", created_at="t1")
+    event_id = await store.append("edd-proj-stream", event)
+
+    row = await fetch_one(pg_pool, "event_store_events", event_id=event_id)
+    assert row is not None
+    assert row["aggregate_id"] == ""
+    assert row["aggregate_type"] == ""
+    assert row["event_type"] == "UserMessageRecorded"
+    assert row["event_version"] == 1
+
+
+async def test_append_user_message_recorded_persists_in_outbox(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    store = TransactionalPostgresEventStore(pool=pg_pool)
+    event = UserMessageRecorded(content="hi", created_at="t1")
+    event_id = await store.append("edd-proj-stream", event)
+
+    row = await fetch_one(pg_pool, "outbox_events", event_id=event_id)
+    assert row is not None
+    assert row["aggregate_id"] is None
+    assert row["event_type"] == "UserMessageRecorded"
+
+
+async def test_append_assistant_message_recorded_persists_in_event_store(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    store = TransactionalPostgresEventStore(pool=pg_pool)
+    event = AssistantMessageRecorded(
+        content="resp", created_at="t2", metadata={"tool_name": "x"},
+    )
+    event_id = await store.append("edd-proj-stream", event)
+
+    row = await fetch_one(pg_pool, "event_store_events", event_id=event_id)
+    assert row is not None
+    assert row["event_type"] == "AssistantMessageRecorded"
+    assert row["aggregate_id"] == ""
+    assert row["aggregate_type"] == ""
+
+    # Metadata column must contain the full metadata dict
+    meta = row["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    assert meta == {"tool_name": "x"}
+
+    # Payload column must NOT contain the metadata dict
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert payload == {"content": "resp", "created_at": "t2"}
+    assert "tool_name" not in payload
+
+
+async def test_append_assistant_message_recorded_persists_in_outbox(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    store = TransactionalPostgresEventStore(pool=pg_pool)
+    event = AssistantMessageRecorded(
+        content="resp", created_at="t2", metadata={"tool_name": "x"},
+    )
+    event_id = await store.append("edd-proj-stream", event)
+
+    row = await fetch_one(pg_pool, "outbox_events", event_id=event_id)
+    assert row is not None
+    assert row["event_type"] == "AssistantMessageRecorded"
+    assert row["aggregate_id"] is None
+
+    meta = row["metadata"]
+    if isinstance(meta, str):
+        meta = json.loads(meta)
+    assert meta == {"tool_name": "x"}
+
+    payload = row["event_payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    assert payload == {"content": "resp", "created_at": "t2"}
+    assert "tool_name" not in payload
