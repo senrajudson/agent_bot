@@ -15,6 +15,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+ERROR_MESSAGE_LIMIT: int = 200
+
+
+def _truncate_error_message(message: str, limit: int = ERROR_MESSAGE_LIMIT) -> str:
+    if len(message) <= limit:
+        return message
+    return message[:limit] + "..."
+
 
 # ---------------------------------------------------------------------------
 # Context — subcontexts (small, focused frozen dataclasses)
@@ -363,8 +375,17 @@ class ConversationSaga:
             event_with_conversation = type(event)(**fields, conversation_id=cid)
             try:
                 await self._events.publish_to_conversation(cid, event_with_conversation)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "event=event_publish_failed event_type=%s event_id=%s conversation_id=%s "
+                    "error_class=%s error_message_truncated=%s",
+                    type(event).__name__,
+                    getattr(event, "event_id", "unknown"),
+                    cid,
+                    type(exc).__name__,
+                    _truncate_error_message(str(exc)),
+                )
+                pass  # Fire-and-forget: publish failure in saga is non-critical
 
     # -----------------------------------------------------------------------
     # Steps
@@ -582,8 +603,17 @@ async def _publish_error(saga, ctx: ConversationContext, exc: Exception) -> None
         event_with_conversation = type(event)(**fields, conversation_id=cid)
         try:
             await saga._events.publish_to_conversation(cid, event_with_conversation)
-        except Exception:
-            pass
+        except Exception as publish_exc:
+            logger.warning(
+                "event=event_publish_failed event_type=%s event_id=%s conversation_id=%s "
+                "stage=publish_error_event error_class=%s error_message_truncated=%s",
+                type(event).__name__,
+                getattr(event, "event_id", "unknown"),
+                cid,
+                type(publish_exc).__name__,
+                _truncate_error_message(str(publish_exc)),
+            )
+            pass  # Fire-and-forget: error-event publish failure is non-critical
 
 
 # ---------------------------------------------------------------------------
