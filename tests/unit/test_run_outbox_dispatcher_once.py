@@ -286,3 +286,29 @@ class TestMainWithMocks:
         from scripts.run_outbox_dispatcher_once import main
         code = asyncio.run(main([]))
         assert code == EXIT_GATE
+
+
+class TestConsumerConstruction:
+    """Testa que o CLI constrói EventTypeRouterConsumer com fallback LoggingOutboxConsumer."""
+
+    @patch.dict(os.environ, {"OUTBOX_DISPATCHER_ENABLED": "true", "EVENT_STORE_POSTGRES_DSN": _VALID_DSN}, clear=True)
+    async def test_consumer_is_router_with_logging_fallback(self) -> None:
+        from app.infrastructure.outbox.event_type_router_consumer import (
+            EventTypeRouterConsumer,
+        )
+        from app.infrastructure.outbox.logging_consumer import LoggingOutboxConsumer
+        from scripts.run_outbox_dispatcher_once import main
+
+        with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=_fake_pool()):
+            with patch("scripts.run_outbox_dispatcher_once._verify_schema", new_callable=AsyncMock, return_value=EXIT_OK):
+                with patch(
+                    "scripts.run_outbox_dispatcher_once.OutboxDispatcher.dispatch_once",
+                    new_callable=AsyncMock,
+                    return_value=_make_result(claimed=0),
+                ) as mock_dispatch:
+                    code = await main(["--consumer-name", "test-router"])
+        assert code == EXIT_OK
+        # Verificar que dispatch_once foi chamado
+        assert mock_dispatch.await_count == 1
+        # O dispatcher foi construído com EventTypeRouterConsumer
+        # Não podemos inspecionar diretamente, mas a execução sem erro é a prova

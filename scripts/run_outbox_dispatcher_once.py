@@ -20,6 +20,9 @@ if _repo_root not in sys.path:
 
 import asyncpg
 
+from app.infrastructure.outbox.event_type_router_consumer import (
+    EventTypeRouterConsumer,
+)
 from app.infrastructure.outbox.logging_consumer import LoggingOutboxConsumer
 from app.infrastructure.outbox.outbox_dispatcher import (
     OutboxDispatcher,
@@ -162,7 +165,11 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
             return schema_code
 
         store = PostgresOutboxStore(pool=pool)
-        consumer = LoggingOutboxConsumer(args.consumer_name)
+        fallback = LoggingOutboxConsumer(args.consumer_name)
+        consumer = EventTypeRouterConsumer(
+            handlers={},
+            fallback=fallback,
+        )
 
         dispatcher_kwargs: dict = {}
         if args.worker_id is not None:
