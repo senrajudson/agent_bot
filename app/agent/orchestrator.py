@@ -183,6 +183,7 @@ def _build_saga(event_publisher=None, event_store=None) -> ConversationSaga:
     from app.application.commands.retrieve_knowledge_context import RetrieveKnowledgeContextHandler
     from app.application.commands.run_agent_for_message import RunAgentForMessageHandler
     from app.application.commands.save_conversation_turn import SaveConversationTurnHandler
+    from app.core.config import settings as app_settings
 
     return ConversationSaga(
         load_memory_fn=GetConversationMemoryHandler(memory=memory_adapter).handle,
@@ -195,6 +196,7 @@ def _build_saga(event_publisher=None, event_store=None) -> ConversationSaga:
         ).handle,
         save_memory_fn=SaveConversationTurnHandler(memory=memory_adapter).handle,
         event_publisher=event_publisher,
+        settings=app_settings,
     )
 
 

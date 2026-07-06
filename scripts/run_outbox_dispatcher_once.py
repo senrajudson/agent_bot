@@ -49,7 +49,7 @@ DSN_REGEX = re.compile(
     r"^postgresql://[^@]+@(127\.0\.0\.1|localhost):[0-9]+/[^?]+$"
 )
 BATCH_SIZE_DEFAULT = 10
-CONSUMER_NAME_DEFAULT = "outbox-logging-default"
+CONSUMER_NAME_DEFAULT = "outbox-conversation-memory-save-v1"
 COMMAND_TIMEOUT = 30
 POOL_MIN_SIZE = 1
 POOL_MAX_SIZE = 1
@@ -166,8 +166,49 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
 
         store = PostgresOutboxStore(pool=pool)
         fallback = LoggingOutboxConsumer(args.consumer_name)
+        handlers: dict[str, OutboxConsumer] = {}
+
+        edd_enabled = os.environ.get("EVENT_DRIVEN_ENABLED", "").lower() == "true"
+        if edd_enabled:
+            logger.info("EVENT_DRIVEN_ENABLED=true: registrando handler real")
+            try:
+                from app.infrastructure.outbox.handlers.conversation_memory_save_handler import (
+                    ConversationMemorySaveOutboxHandler,
+                    SaveConversationTurnMemorySaver,
+                )
+                from app.application.commands.save_conversation_turn import (
+                    SaveConversationTurnHandler,
+                )
+                from app.services.chat_memory_service import (
+                    append_memory_turns,
+                    load_memory_turns,
+                )
+                from app.domain.value_objects import ConversationId
+
+                class _CLIMemoryAdapter:
+                    async def append_turns(
+                        self, conversation_id, user_message, assistant_message, metadata=None
+                    ):
+                        cid = str(conversation_id) if isinstance(conversation_id, ConversationId) else conversation_id
+                        await append_memory_turns(cid, user_message, assistant_message, metadata)
+
+                    async def load_turns(self, conversation_id, max_turns=None):
+                        cid = str(conversation_id) if isinstance(conversation_id, ConversationId) else conversation_id
+                        return await load_memory_turns(cid, max_turns)
+
+                    def format_for_prompt(self, turns):
+                        from app.services.chat_memory_service import format_memory_for_prompt
+                        return format_memory_for_prompt(turns)
+
+                save_handler = SaveConversationTurnHandler(memory=_CLIMemoryAdapter())
+                saver = SaveConversationTurnMemorySaver(save_handler)
+                handlers["ConversationMemorySaveRequested"] = ConversationMemorySaveOutboxHandler(saver)
+            except Exception as exc:
+                logger.error("Falha ao registrar handler real: %s", exc)
+                return EXIT_CONFIG
+
         consumer = EventTypeRouterConsumer(
-            handlers={},
+            handlers=handlers,
             fallback=fallback,
         )
 

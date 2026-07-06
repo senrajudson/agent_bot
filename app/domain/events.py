@@ -4,7 +4,7 @@ Each event represents a fact about the system that already occurred.
 Events are frozen dataclasses with event_id (UUID), occurred_at (UTC),
 and conversation_id (for stream partitioning).
 
-23 events covering the full /chat lifecycle.
+24 events covering the full /chat lifecycle + EDD outbox.
 """
 from __future__ import annotations
 
@@ -350,6 +350,25 @@ class GoogleChatAttachmentDownloaded(DomainEvent):
         return {"external_event_id": self.external_event_id, "attachment_name": self.attachment_name, "mime_type": self.mime_type, "size_bytes": self.size_bytes}
 
 
+@dataclass(frozen=True)
+class ConversationMemorySaveRequested(DomainEvent):
+    """Event: a request to persist a conversation turn via the outbox.
+
+    'conversation_id' and 'metadata' are inherited from DomainEvent envelope.
+    """
+
+    user_id: str | None = None
+    user_message: str = ""
+    assistant_message: str = ""
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "user_id": self.user_id,
+            "user_message": self.user_message,
+            "assistant_message": self.assistant_message,
+        }
+
+
 # ---------------------------------------------------------------------------
 # Event registry for deserialization
 # ---------------------------------------------------------------------------
@@ -379,5 +398,6 @@ DOMAIN_EVENTS_REGISTRY: dict[str, type[DomainEvent]] = {
         GoogleChatDedupeCompleted,
         MessageProcessingFailed,
         GoogleChatAttachmentDownloaded,
+        ConversationMemorySaveRequested,
     ]
 }

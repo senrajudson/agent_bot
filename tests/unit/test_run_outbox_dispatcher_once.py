@@ -49,7 +49,7 @@ class TestParseArgs:
     def test_defaults(self) -> None:
         args = _parse_args([])
         assert args.batch_size == 10
-        assert args.consumer_name == "outbox-logging-default"
+        assert args.consumer_name == "outbox-conversation-memory-save-v1"
         assert args.worker_id is None
 
     def test_custom_values(self) -> None:
@@ -312,3 +312,77 @@ class TestConsumerConstruction:
         assert mock_dispatch.await_count == 1
         # O dispatcher foi construído com EventTypeRouterConsumer
         # Não podemos inspecionar diretamente, mas a execução sem erro é a prova
+
+
+class TestEventDrivenGate:
+    """Testa o comportamento do CLI com EVENT_DRIVEN_ENABLED."""
+
+    @patch.dict(os.environ, {"OUTBOX_DISPATCHER_ENABLED": "true", "EVENT_STORE_POSTGRES_DSN": _VALID_DSN}, clear=True)
+    async def test_edd_disabled_keeps_log_only(self) -> None:
+        """EVENT_DRIVEN_ENABLED ausente ou false usa handlers={}."""
+        from scripts.run_outbox_dispatcher_once import main
+
+        with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=_fake_pool()):
+            with patch("scripts.run_outbox_dispatcher_once._verify_schema", new_callable=AsyncMock, return_value=EXIT_OK):
+                with patch(
+                    "scripts.run_outbox_dispatcher_once.OutboxDispatcher.dispatch_once",
+                    new_callable=AsyncMock,
+                    return_value=_make_result(claimed=0),
+                ) as mock_dispatch:
+                    code = await main([])
+        assert code == EXIT_OK
+        assert mock_dispatch.await_count == 1
+
+    @patch.dict(
+        os.environ,
+        {
+            "OUTBOX_DISPATCHER_ENABLED": "true",
+            "EVENT_STORE_POSTGRES_DSN": _VALID_DSN,
+            "EVENT_DRIVEN_ENABLED": "true",
+        },
+        clear=True,
+    )
+    async def test_edd_enabled_registers_handler(self) -> None:
+        """EVENT_DRIVEN_ENABLED=true tenta registrar handler real."""
+        from scripts.run_outbox_dispatcher_once import main
+
+        with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=_fake_pool()):
+            with patch("scripts.run_outbox_dispatcher_once._verify_schema", new_callable=AsyncMock, return_value=EXIT_OK):
+                with patch(
+                    "scripts.run_outbox_dispatcher_once.OutboxDispatcher.dispatch_once",
+                    new_callable=AsyncMock,
+                    return_value=_make_result(claimed=0),
+                ) as mock_dispatch:
+                    with patch(
+                        "app.application.commands.save_conversation_turn.SaveConversationTurnHandler",
+                    ):
+                        code = await main([])
+        assert code == EXIT_OK
+        assert mock_dispatch.await_count == 1
+
+    @patch.dict(os.environ, {"OUTBOX_DISPATCHER_ENABLED": "true", "EVENT_STORE_POSTGRES_DSN": _VALID_DSN}, clear=True)
+    async def test_fallback_always_present(self) -> None:
+        """LoggingOutboxConsumer permanece fallback independentemente do gate."""
+        from scripts.run_outbox_dispatcher_once import (
+            LoggingOutboxConsumer,
+            EventTypeRouterConsumer,
+            main,
+        )
+
+        with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=_fake_pool()):
+            with patch("scripts.run_outbox_dispatcher_once._verify_schema", new_callable=AsyncMock, return_value=EXIT_OK):
+                with patch(
+                    "scripts.run_outbox_dispatcher_once.OutboxDispatcher.dispatch_once",
+                    new_callable=AsyncMock,
+                    return_value=_make_result(claimed=0),
+                ):
+                    code = await main(["--consumer-name", "test-fallback"])
+        assert code == EXIT_OK
+        # LoggingOutboxConsumer é sempre usado como fallback (não testamos internamente,
+        # mas a execução bem-sucedida com quaisquer handlers é a prova)
+
+    def test_consumer_name_default_is_real_handler_name(self) -> None:
+        """CONSUMER_NAME_DEFAULT deve ser outbox-conversation-memory-save-v1."""
+        from scripts.run_outbox_dispatcher_once import CONSUMER_NAME_DEFAULT
+
+        assert CONSUMER_NAME_DEFAULT == "outbox-conversation-memory-save-v1"

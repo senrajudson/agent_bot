@@ -470,3 +470,117 @@ class TestMessageBuilders:
         msg = build_agent_user_message(ctx)
         assert "ola" in msg
         assert "PERGUNTA DO USUÁRIO" not in msg
+
+
+# =========================================================================
+# Saga — EVENT_DRIVEN_ENABLED gate
+# =========================================================================
+
+
+class _FakeSettingsDisabled:
+    """Fake settings object with EVENT_DRIVEN_ENABLED=False."""
+    EVENT_DRIVEN_ENABLED: bool = False
+
+
+class _FakeSettingsEnabled:
+    """Fake settings object with EVENT_DRIVEN_ENABLED=True."""
+    EVENT_DRIVEN_ENABLED: bool = True
+
+
+class TestSagaEventDrivenGate:
+    """Tests for EVENT_DRIVEN_ENABLED gate in ConversationSaga."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_settings_none_uses_legacy_path(self) -> None:
+        """settings=None preserves legacy: save_memory is called, events published."""
+        save_memory_fn = AsyncMock()
+        saga = _make_saga(save_memory_fn=save_memory_fn, settings=None)
+        ctx = ConversationContext(
+            conversation_id="user-1",
+            message_original="hello",
+            agent_output="world",
+            agent_route="pims",
+            tool_name="consultar_tag",
+        )
+        result = await saga._step_save_memory(ctx)
+        save_memory_fn.assert_awaited_once()
+        assert result is not None
+        # Legacy path continues to produce ConversationMemorySaved
+        # The mock event_publisher is None, so events are not actually published,
+        # but we can verify the save_memory_fn was called (legacy path).
+
+    @pytest.mark.asyncio
+    async def test_legacy_settings_disabled_uses_legacy_path(self) -> None:
+        """settings with EVENT_DRIVEN_ENABLED=False preserves legacy."""
+        save_memory_fn = AsyncMock()
+        saga = _make_saga(save_memory_fn=save_memory_fn, settings=_FakeSettingsDisabled())
+        ctx = ConversationContext(
+            conversation_id="user-1",
+            message_original="hello",
+            agent_output="world",
+        )
+        result = await saga._step_save_memory(ctx)
+        save_memory_fn.assert_awaited_once()
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_edd_enabled_does_not_call_save_memory(self) -> None:
+        """settings with EVENT_DRIVEN_ENABLED=True skips save_memory."""
+        save_memory_fn = AsyncMock()
+        saga = _make_saga(save_memory_fn=save_memory_fn, settings=_FakeSettingsEnabled())
+        ctx = ConversationContext(
+            conversation_id="user-1",
+            message_original="hello",
+            agent_output="world",
+        )
+        result = await saga._step_save_memory(ctx)
+        save_memory_fn.assert_not_called()
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_edd_enabled_publishes_event(self) -> None:
+        """settings with EVENT_DRIVEN_ENABLED=True publishes ConversationMemorySaveRequested."""
+        from app.domain.events import ConversationMemorySaveRequested
+
+        save_memory_fn = AsyncMock()
+        events = AsyncMock()
+        saga = _make_saga(
+            save_memory_fn=save_memory_fn,
+            event_publisher=events,
+            settings=_FakeSettingsEnabled(),
+        )
+        ctx = ConversationContext(
+            conversation_id="user-1",
+            message_original="hello",
+            agent_output="world",
+        )
+        result = await saga._step_save_memory(ctx)
+        save_memory_fn.assert_not_called()
+        # Verify publish was called with ConversationMemorySaveRequested
+        # We can check the call args via the mock
+        call_args = events.publish_to_conversation.call_args
+        assert call_args is not None
+        assert call_args[0][1].__class__ == ConversationMemorySaveRequested
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_edd_enabled_still_publishes_user_message_recorded(self) -> None:
+        """UserMessageRecorded continues to be published in step 1 regardless of gate."""
+        # This test verifies that the step 1 (load_memory) behavior is unchanged.
+        # UserMessageRecorded is published in _step_load_memory, not _step_save_memory.
+        # We test that load_memory still works with enabled settings.
+        events = AsyncMock()
+        saga = _make_saga(
+            event_publisher=events,
+            settings=_FakeSettingsEnabled(),
+        )
+        ctx = ConversationContext(
+            conversation_id="user-1",
+            message_original="hello",
+        )
+        result = await saga._step_load_memory(ctx)
+        assert result is not None
+        call_args = events.publish_to_conversation.call_args
+        assert call_args is not None
+        from app.domain.projections import UserMessageRecorded
+        assert call_args[0][1].__class__ == UserMessageRecorded

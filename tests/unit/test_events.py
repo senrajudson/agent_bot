@@ -174,8 +174,8 @@ class TestConversationMemorySaved:
 # Event registry
 # =========================================================================
 class TestEventRegistry:
-    def test_registry_has_23_events(self) -> None:
-        assert len(DOMAIN_EVENTS_REGISTRY) == 23
+    def test_registry_has_24_events(self) -> None:
+        assert len(DOMAIN_EVENTS_REGISTRY) == 24
 
     def test_registry_values_are_event_classes(self) -> None:
         for name, cls in DOMAIN_EVENTS_REGISTRY.items():

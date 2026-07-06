@@ -323,6 +323,7 @@ class ConversationSaga:
         run_agent_fn: RunAgentFn,
         save_memory_fn: SaveMemoryFn,
         event_publisher=None,
+        settings: Any | None = None,
     ) -> None:
         self._load_memory = load_memory_fn
         self._ocr = ocr_fn
@@ -331,6 +332,7 @@ class ConversationSaga:
         self._run_agent = run_agent_fn
         self._save_memory = save_memory_fn
         self._events = event_publisher
+        self._settings = settings
 
     async def execute(self, ctx: ConversationContext) -> ConversationContext:
         """Run all steps in order, stopping on error.
@@ -386,6 +388,15 @@ class ConversationSaga:
                     _truncate_error_message(str(exc)),
                 )
                 pass  # Fire-and-forget: publish failure in saga is non-critical
+
+    # -----------------------------------------------------------------------
+    # EDD gate helper
+    # -----------------------------------------------------------------------
+
+    def _is_edd_enabled(self) -> bool:
+        if self._settings is None:
+            return False
+        return bool(getattr(self._settings, "EVENT_DRIVEN_ENABLED", False))
 
     # -----------------------------------------------------------------------
     # Steps
@@ -541,6 +552,27 @@ class ConversationSaga:
             return ctx
         if not ctx.message_original and not ctx.agent_output:
             return ctx
+
+        if self._is_edd_enabled():
+            from app.domain.events import ConversationMemorySaveRequested
+
+            event = ConversationMemorySaveRequested(
+                aggregate_id=ctx.conversation_id,
+                aggregate_type="conversation",
+                conversation_id=ctx.conversation_id,
+                user_id=ctx.user_id,
+                user_message=ctx.message_original,
+                assistant_message=ctx.agent_output or "",
+                metadata={
+                    "user_id": ctx.user_id,
+                    "categoria": ctx.agent_route or "erro_no_orchestrator",
+                    "next_action": ctx.tool_name or "orchestrator",
+                    "tool_name": ctx.tool_name,
+                },
+            )
+            await self._publish(ctx, event)
+            return ctx
+
         await self._save_memory(
             SaveConversationTurn(
                 conversation_id=ctx.conversation_id,

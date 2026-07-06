@@ -8,7 +8,7 @@ implementations as conforming to these Protocols.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Protocol, runtime_checkable
 
 from app.domain.enums import TemporalDataMethod
 from app.domain.value_objects import (
@@ -176,3 +176,10 @@ class PimsOpsRepository(Protocol):
     async def get_status_report(
         self, lookback_minutes: int | None = None
     ) -> dict: ...
+
+
+@runtime_checkable
+class ConversationMemorySaver(Protocol):
+    """Protocol for persisting a conversation turn from outbox event payload."""
+
+    async def save(self, payload: Mapping[str, Any]) -> None: ...

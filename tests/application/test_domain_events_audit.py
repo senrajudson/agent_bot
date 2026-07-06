@@ -62,7 +62,8 @@ EXPECTED_DOMAIN_EVENT_TYPES: frozenset[str] = frozenset({
     "GoogleChatDedupeCompleted",
     "MessageProcessingFailed",
     "GoogleChatAttachmentDownloaded",
-})  # 23 tipos. ruff: noqa: E501
+    "ConversationMemorySaveRequested",
+})  # 24 tipos. ruff: noqa: E501
 
 # 2. Projection events conhecidos (fora do DOMAIN_EVENTS_REGISTRY)
 EXPECTED_SAGA_PROJECTION_EVENT_TYPES: frozenset[str] = frozenset({
@@ -77,10 +78,12 @@ EXPECTED_SAGA_DOMAIN_EVENT_TYPES: frozenset[str] = frozenset({
     "RagContextRetrieved",            # _step_retrieve_rag (pims only)
     "AgentRunStarted",                # _step_run_agent
     "AgentRunCompleted",              # _step_run_agent
-    "ConversationMemorySaved",        # _step_save_memory
+    "ConversationMemorySaved",        # _step_save_memory (EDD=false legado)
     # OcrExtractionCompleted é CONDICIONAL: publicado APENAS quando há images.
     # No fluxo pims sem imagens, NÃO é publicado.
-})  # 6 tipos + 1 condicional. ruff: noqa: E501
+    # ConversationMemorySaveRequested é CONDICIONAL: publicado apenas quando
+    # EVENT_DRIVEN_ENABLED=true. No fluxo padrão (EDD=false), não é publicado.
+})  # 6 tipos + 2 condicionais. ruff: noqa: E501
 
 # 4. Todos os tipos publicados pela Saga (domínio + projection)
 EXPECTED_SAGA_PUBLISHED_EVENT_TYPES: frozenset[str] = (
@@ -90,7 +93,7 @@ EXPECTED_SAGA_PUBLISHED_EVENT_TYPES: frozenset[str] = (
 # 5. Eventos de domínio existentes mas NÃO publicados pela Saga
 EXPECTED_UNPUBLISHED_DOMAIN_EVENT_TYPES: frozenset[str] = frozenset(
     EXPECTED_DOMAIN_EVENT_TYPES - EXPECTED_SAGA_DOMAIN_EVENT_TYPES
-)  # 16 tipos
+)  # 18 tipos
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +149,8 @@ def _make_saga() -> tuple[ConversationSaga, InMemoryEventStore]:
 # ---------------------------------------------------------------------------
 
 class TestEventCatalog:
-    def test_registry_has_23_events(self) -> None:
-        assert len(DOMAIN_EVENTS_REGISTRY) == 23
+    def test_registry_has_24_events(self) -> None:
+        assert len(DOMAIN_EVENTS_REGISTRY) == 24
 
     def test_registry_keys_match_snapshot(self) -> None:
         assert set(DOMAIN_EVENTS_REGISTRY.keys()) == EXPECTED_DOMAIN_EVENT_TYPES
@@ -235,7 +238,7 @@ class TestSagaUnpublishedEvents:
         )
 
     def test_no_unpublished_event_appears_in_saga_output(self) -> None:
-        # Nenhum dos 16 eventos não publicados deve aparecer na saída
+        # Nenhum dos 18 eventos não publicados deve aparecer na saída
         all_published = (
             EXPECTED_SAGA_DOMAIN_EVENT_TYPES | EXPECTED_SAGA_PROJECTION_EVENT_TYPES
         )
