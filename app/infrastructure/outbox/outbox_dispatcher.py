@@ -470,6 +470,21 @@ class PostgresOutboxStore:
                          attempts, max_attempts, moved_to_dlq_at, original_created_at,
                          correlation_id, causation_id, metadata)
                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),$12,$13,$14,$15)
+                    ON CONFLICT (outbox_id) DO UPDATE SET
+                        event_id = EXCLUDED.event_id,
+                        stream_id = EXCLUDED.stream_id,
+                        stream_version = EXCLUDED.stream_version,
+                        aggregate_id = EXCLUDED.aggregate_id,
+                        event_type = EXCLUDED.event_type,
+                        event_payload = EXCLUDED.event_payload,
+                        final_error = EXCLUDED.final_error,
+                        final_error_class = EXCLUDED.final_error_class,
+                        attempts = EXCLUDED.attempts,
+                        max_attempts = EXCLUDED.max_attempts,
+                        moved_to_dlq_at = NOW(),
+                        correlation_id = EXCLUDED.correlation_id,
+                        causation_id = EXCLUDED.causation_id,
+                        metadata = EXCLUDED.metadata
                     """,
                     event.outbox_id,
                     event.event_id,

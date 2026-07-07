@@ -20,6 +20,7 @@ SQL_FILES=(
     "$REPO_ROOT/db/edd/002_create_outbox_events.sql"
     "$REPO_ROOT/db/edd/003_create_processed_events.sql"
     "$REPO_ROOT/db/edd/004_create_outbox_dlq.sql"
+    "$REPO_ROOT/db/edd/005_create_outbox_recovery_audit.sql"
 )
 
 PSQL_BIN="${PSQL_BIN:-psql}"
@@ -32,7 +33,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Apply EDD schema SQL files in order (001 → 002 → 003 → 004).
+Apply EDD schema SQL files in order (001 → 002 → 003 → 004 → 005).
 
 Options:
   --apply     Actually apply SQL files (default: dry-run only)

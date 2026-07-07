@@ -548,3 +548,69 @@ async def test_processed_events_idempotency_under_repeated_dispatch(
     row = await fetch_one(pg_pool, "outbox_events", outbox_id=oid)
     assert row is not None
     assert row["status"] == "dispatched"
+
+
+# ---------------------------------------------------------------------------
+# D23 — move_to_dlq upsert: second call must not raise UniqueViolationError
+# ---------------------------------------------------------------------------
+
+
+async def test_move_to_dlq_is_upsert_on_conflict(
+    pg_pool: asyncpg.Pool,
+) -> None:
+    oid = await insert_outbox_event(
+        pg_pool, status="pending", attempts=2, max_attempts=3
+    )
+    store = PostgresOutboxStore(pool=pg_pool)
+    events = await store.claim_batch(
+        worker_id="w-1", batch_size=10, lock_ttl_seconds=30
+    )
+    event = events[0]
+
+    # First call: creates outbox_dlq row
+    await store.move_to_dlq(event=event, error=ValueError("first error"))
+
+    first_dlq_all = await fetch_all(pg_pool, "outbox_dlq")
+    first_matching = [r for r in first_dlq_all if r["outbox_id"] == oid]
+    assert len(first_matching) == 1
+    first_moved_at = first_matching[0]["moved_to_dlq_at"]
+
+    # Second call: must NOT raise UniqueViolationError
+    await store.move_to_dlq(event=event, error=ValueError("second error"))
+
+    # Assert: still 1 row in outbox_dlq
+    all_dlq = await fetch_all(pg_pool, "outbox_dlq")
+    matching = [r for r in all_dlq if r["outbox_id"] == oid]
+    assert len(matching) == 1
+    dlq_row = matching[0]
+
+    # Assert: final error reflects the second call
+    assert "second error" in dlq_row["final_error"]
+    assert dlq_row["final_error_class"] == "ValueError"
+
+    # Assert: attempts reflect the second call (2+1=3)
+    assert dlq_row["attempts"] == 3
+    assert dlq_row["max_attempts"] == 3
+
+    # Assert: moved_to_dlq_at was updated (second call)
+    assert dlq_row["moved_to_dlq_at"] > first_moved_at, (
+        f"moved_to_dlq_at must be updated; "
+        f"first={first_moved_at}, second={dlq_row['moved_to_dlq_at']}"
+    )
+
+    # Assert: original_created_at is preserved
+    event_row = await fetch_one(pg_pool, "outbox_events", outbox_id=oid)
+    assert event_row is not None
+    assert dlq_row["original_created_at"] == event_row["created_at"], (
+        f"original_created_at must be preserved; "
+        f"got {dlq_row['original_created_at']}, "
+        f"expected {event_row['created_at']}"
+    )
+
+    # Assert: outbox_events.status remains dead_letter
+    assert event_row["status"] == "dead_letter"
+
+    # Assert: event_payload remains in dlq
+    import json
+    payload = json.loads(dlq_row["event_payload"])
+    assert isinstance(payload, dict)

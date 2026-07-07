@@ -42,6 +42,7 @@ SQL_FILES = (
     "db/edd/002_create_outbox_events.sql",
     "db/edd/003_create_processed_events.sql",
     "db/edd/004_create_outbox_dlq.sql",
+    "db/edd/005_create_outbox_recovery_audit.sql",
 )
 
 ALLOWED_TABLES = frozenset({
@@ -49,6 +50,7 @@ ALLOWED_TABLES = frozenset({
     "outbox_events",
     "processed_events",
     "outbox_dlq",
+    "outbox_recovery_audit",
 })
 
 ALLOWED_OUTBOX_WHERE_COLS = frozenset({
@@ -78,11 +80,20 @@ ALLOWED_DLQ_WHERE_COLS = frozenset({
     "stream_id",
 })
 
+ALLOWED_RECOVERY_AUDIT_WHERE_COLS = frozenset({
+    "outbox_id",
+    "event_id",
+    "operation_id",
+    "operation",
+    "command_source",
+})
+
 TABLE_WHERE_COLS: dict[str, frozenset[str]] = {
     "outbox_events": ALLOWED_OUTBOX_WHERE_COLS,
     "processed_events": ALLOWED_PROCESSED_WHERE_COLS,
     "event_store_events": ALLOWED_EVENT_STORE_WHERE_COLS,
     "outbox_dlq": ALLOWED_DLQ_WHERE_COLS,
+    "outbox_recovery_audit": ALLOWED_RECOVERY_AUDIT_WHERE_COLS,
 }
 
 

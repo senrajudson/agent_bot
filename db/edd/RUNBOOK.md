@@ -129,11 +129,10 @@ Regras:
 - **Não** executar `UPDATE` em `outbox_events` para forçar reprocessamento.
 - **Não** executar `DELETE` em `outbox_dlq` para permitir re‑INSERT.
 
-Motivo do bloqueio de `--execute`:
-`outbox_dlq` tem `uq_dlq_outbox_id UNIQUE(outbox_id)` e `move_to_dlq` usa `INSERT` sem `ON CONFLICT`.
-Se um evento `dead_letter` for recolocado como `pending` e falhar de novo, o `INSERT` na DLQ
-colidirá com a constraint `uq_dlq_outbox_id`. Para desbloquear `--execute` futuro, é necessário
-resolver este problema (ex.: `ON CONFLICT DO UPDATE` / upsert em `move_to_dlq`).
+Histórico:
+
+- **Prompt 22**: `move_to_dlq` usava `INSERT` sem `ON CONFLICT`. `outbox_dlq` tinha `uq_dlq_outbox_id UNIQUE(outbox_id)`. Se um evento `dead_letter` fosse recolocado como `pending` e falhasse de novo, o `INSERT` na DLQ colidiria com a constraint.
+- **Prompt 23**: `move_to_dlq` foi alterado para `INSERT ... ON CONFLICT(outbox_id) DO UPDATE`. Segunda ida para DLQ do mesmo `outbox_id` não gera `UniqueViolationError`. `outbox_dlq` continua sendo snapshot atual por `outbox_id`. Snapshot anterior pode ser sobrescrito.
 
 Pré‑condições para reabertura de recovery executável:
 
@@ -144,21 +143,35 @@ Pré‑condições para reabertura de recovery executável:
 | 3 | Operação de memória idempotente (no-op em duplicata) | ✅ **Satisfeita (Prompt 21)** |
 | 4 | Allowlist por `event_type` (hard-coded: `ConversationMemorySaveRequested`) | ✅ **Satisfeita (Prompt 21)** |
 | 5 | Dry‑run obrigatório antes de qualquer recovery real | ✅ **Satisfeita (Prompt 21 — `recover_outbox_event.py`)** |
-| 6 | Confirmação explícita do operador | ❌ **Pendente (depende de `--execute`)** |
-| 7 | Auditoria da operação manual (registro em ticket/issue) | ❌ **Pendente (execução apenas local/QA)** |
-| — | Resolver `uq_dlq_outbox_id` para segunda falha terminal | ❌ **Pendente (upsert em `move_to_dlq`)** |
+| 6 | `move_to_dlq` com upsert (sem colisão UNIQUE em segunda DLQ) | ✅ **Satisfeita (Prompt 23)** |
+| 7 | Auditoria persistente (`outbox_recovery_audit` append-only) | ✅ **Satisfeita (Prompt 23)** |
+| 8 | Confirmação explícita do operador | ❌ **Pendente (depende de `--execute`)** |
+| 9 | `--execute` propriamente dito | ❌ **Pendente (Prompt 24)** |
 
-> **Status Prompt 22**: Recovery executável segue bloqueado. Worker contínuo controlado local/QA foi entregue (ver seção 13).
+> **Status Prompt 23**: `move_to_dlq` alterado para upsert. `outbox_recovery_audit` criada. Recovery executável segue bloqueado até Prompt 24.
 
-### 11c. Auditoria manual
+### 11c. Auditoria de operações de recovery
 
-Não há tabela de auditoria neste ciclo. Operações manuais devem ser registradas em ticket/issue:
+O **Prompt 23** criou a tabela `outbox_recovery_audit` em `db/edd/005_create_outbox_recovery_audit.sql`:
+
+- **Append-only**: a tabela possui trigger `BEFORE UPDATE OR DELETE` que bloqueia alterações e exclusões.
+- **Sem PII**: `event_payload`, `user_message`, `assistant_message`, `conversation_id` e `user_id` não são armazenados.
+- **CHECK constraints**: `operation`, `command_source`, `previous_status`/`new_status`, `ticket IS NOT NULL OR reason IS NOT NULL`, e `attempts >= 0`.
+- **FK**: `outbox_id` referencia `outbox_events(outbox_id) ON DELETE RESTRICT`.
+- **Índices**: por `outbox_id`, `event_id`, `executed_at` e `operation`. `operation_id` é UNIQUE.
+- **Campos**: `operation_id`, `outbox_id`, `event_id`, `event_type`, `operation`, `command_source`, `previous_status`, `new_status`, `previous_attempts`, `new_attempts`, `ticket`, `reason`, `requested_by`, `executed_at`, `sanitized_error`, `metadata`.
+
+**Estado atual**: `outbox_recovery_audit` existe, mas **nenhum código de aplicação escreve nela** neste ciclo. A escrita será implementada no Prompt 24 (recovery executável).
+
+> **TRUNCATE**: a trigger não bloqueia `TRUNCATE`. `TRUNCATE` em `outbox_recovery_audit` só pode ser executado por role DBA com ticket de autorização e auditoria externa.
+
+Operações manuais anteriores (sem `outbox_recovery_audit`) ainda devem ser registradas em ticket/issue:
 
 ```text
 Data: YYYY-MM-DD
 Operador: nome
 Ação: inspeção / análise / (futuro: purge / recovery)
-Tabela: outbox_events / outbox_dlq
+Tabela: outbox_events / outbox_dlq / outbox_recovery_audit
 Filtros: event_id, outbox_id, event_type
 Motivo: ...
 ```
@@ -422,18 +435,18 @@ O worker emite 11 eventos de log estruturados, todos via `extra={}` (sem `logger
 - Não usar em produção ainda.
 - Docker/service: prompt futuro.
 - Múltiplos workers concorrentes: não suportado.
-- Recovery executável: continua bloqueado (Prompt 22 + futuro).
+- Recovery executável: continua bloqueado (Prompts 22, 23 + futuro).
 
 ## 14. Fora do escopo
 
 - Replay automático de `outbox_dlq` (não existe; decisão futura)
 - Purge automático de `outbox_dlq` (não existe; decisão futura)
-- Tabela de auditoria de operações manuais (não existe; registre em ticket/issue — seção 11c)
+- `--execute` para recovery (não existe; será Prompt 24)
+- Purge automático de `outbox_recovery_audit` (não existe; decisão futura)
 
 ## 15. Próximos prompts possíveis
 
+- **Prompt 24: Safe Recovery Execute** — implementar `--execute` com confirmação textual, transação de requeue, escrita na `outbox_recovery_audit` e validações V1–V8 do dry-run.
 - Purge de `outbox_dlq` com dry-run (após política de retenção estar madura)
-- Recovery executável de `outbox_dlq` (após resolver `uq_dlq_outbox_id` em `move_to_dlq` e definir auditoria persistente)
-- Tabela de auditoria para operações manuais
 - Mecanismo de injeção de falha no CLI para validação live
 - Operacionalização do worker contínuo em Docker (profile `worker`)

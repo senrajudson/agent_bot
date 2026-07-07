@@ -20,16 +20,18 @@ Este schema **não ativa runtime**. O Postgres continua sob ativação explícit
 ## 3. Ordem futura de aplicação
 
 | Ordem | Arquivo | Finalidade |
-|---|---|---|
+|---|---|---|---|
 | 1 | `app/infrastructure/event_store/sql/001_create_event_store_events.sql` | Base: Event Log existente (já aplicado em ambiente de teste) |
 | 2 | `002_create_outbox_events.sql` | Cria tabela `outbox_events` (fila de dispatch transacional) |
 | 3 | `003_create_processed_events.sql` | Cria tabela `processed_events` (idempotência por consumer) |
 | 4 | `004_create_outbox_dlq.sql` | Cria tabela `outbox_dlq` (dead-letter queue separada) |
+| 5 | `005_create_outbox_recovery_audit.sql` | Cria tabela `outbox_recovery_audit` (auditoria append-only para operações de recovery) |
 
 - `001` é a base conceitual do Event Store já existente. **Não re-aplicar** em ambiente produtivo.
 - `002` cria a outbox transacional com campos para retry, locking e auditoria.
 - `003` garante dedup de eventos por consumer (idempotência).
 - `004` armazena eventos que esgotaram tentativas de dispatch (DLQ).
+- `005` cria a tabela de auditoria append-only para operações de recovery.
 
 Cada DDL pode ser aplicado isoladamente. Não há FK física entre tabelas.
 

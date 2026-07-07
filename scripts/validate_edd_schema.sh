@@ -19,9 +19,10 @@ SQL_FILES=(
     "$REPO_ROOT/db/edd/002_create_outbox_events.sql"
     "$REPO_ROOT/db/edd/003_create_processed_events.sql"
     "$REPO_ROOT/db/edd/004_create_outbox_dlq.sql"
+    "$REPO_ROOT/db/edd/005_create_outbox_recovery_audit.sql"
 )
 
-EXPECTED_TABLES=("event_store_events" "outbox_events" "processed_events" "outbox_dlq")
+EXPECTED_TABLES=("event_store_events" "outbox_events" "processed_events" "outbox_dlq" "outbox_recovery_audit")
 
 PSQL_BIN="${PSQL_BIN:-psql}"
 DSN=""
@@ -58,10 +59,11 @@ Environment variables:
   PSQL_BIN                  Path to psql binary (default: psql)
 
 Tables checked:
-  event_store_events    (inherited, from 001)
-  outbox_events         (from 002)
-  processed_events      (from 003)
-  outbox_dlq            (from 004)
+  event_store_events         (inherited, from 001)
+  outbox_events              (from 002)
+  processed_events           (from 003)
+  outbox_dlq                 (from 004)
+  outbox_recovery_audit      (from 005)
 
 Notes:
   - This script does NOT apply SQL (use apply_edd_schema.sh).
@@ -322,6 +324,43 @@ validate_schema() {
     assert_index_exists "idx_dlq_stream"
     assert_index_exists "idx_dlq_event_type"
     assert_index_exists "idx_dlq_moved_to_dlq_at"
+    echo ""
+
+    # --- outbox_recovery_audit ---
+    echo "--- outbox_recovery_audit ---"
+    assert_table_exists "outbox_recovery_audit"
+    assert_column_exists "outbox_recovery_audit" "id"
+    assert_column_exists "outbox_recovery_audit" "operation_id"
+    assert_column_exists "outbox_recovery_audit" "outbox_id"
+    assert_column_exists "outbox_recovery_audit" "event_id"
+    assert_column_exists "outbox_recovery_audit" "event_type"
+    assert_column_exists "outbox_recovery_audit" "operation"
+    assert_column_exists "outbox_recovery_audit" "command_source"
+    assert_column_exists "outbox_recovery_audit" "previous_status"
+    assert_column_exists "outbox_recovery_audit" "new_status"
+    assert_column_exists "outbox_recovery_audit" "previous_attempts"
+    assert_column_exists "outbox_recovery_audit" "new_attempts"
+    assert_column_exists "outbox_recovery_audit" "executed_at"
+    assert_column_exists "outbox_recovery_audit" "metadata"
+    assert_constraint_exists "outbox_recovery_audit" "uq_recovery_audit_operation_id"
+    assert_constraint_exists "outbox_recovery_audit" "fk_recovery_audit_outbox_id"
+    assert_constraint_exists "outbox_recovery_audit" "chk_recovery_audit_operation"
+    assert_constraint_exists "outbox_recovery_audit" "chk_recovery_audit_command_source"
+    assert_index_exists "idx_recovery_audit_outbox_id"
+    assert_index_exists "idx_recovery_audit_event_id"
+    assert_index_exists "idx_recovery_audit_executed_at"
+    assert_index_exists "idx_recovery_audit_operation"
+    # Verify forbidden columns do not exist
+    local forbidden_cols=("event_payload" "payload" "user_message" "assistant_message" "conversation_id" "user_id")
+    for col in "${forbidden_cols[@]}"; do
+        local count
+        count=$(run_scalar "SELECT count(*) FROM information_schema.columns WHERE table_name = 'outbox_recovery_audit' AND column_name = '$col';")
+        if [[ "$count" -eq 0 ]]; then
+            pass "Forbidden column '$col' is absent from outbox_recovery_audit"
+        else
+            fail "Forbidden column '$col' EXISTS in outbox_recovery_audit"
+        fi
+    done
     echo ""
 
     # --- Summary ---
