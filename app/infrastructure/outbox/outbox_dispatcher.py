@@ -19,11 +19,16 @@ e registra sucesso em ``processed_events`` ou aplica retry/DLQ em falhas.
 from __future__ import annotations
 
 import json
+import logging
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
+
+from app.infrastructure.outbox._error_redaction import sanitize_exception
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -192,14 +197,6 @@ class OutboxDispatcher:
         )
         return min(raw, self._backoff_cap_seconds)
 
-    def _truncate_error(self, error: BaseException) -> str:
-        msg = str(error)
-        if not msg:
-            msg = error.__class__.__name__
-        if len(msg) <= self._error_max_length:
-            return msg
-        return msg[: self._error_max_length]
-
     def _error_class(self, error: BaseException) -> str:
         return error.__class__.__name__
 
@@ -250,11 +247,38 @@ class OutboxDispatcher:
                         error=exc,
                         delay_seconds=delay,
                     )
+                    logger.warning(
+                        "outbox_event_retry_scheduled",
+                        extra={
+                            "event_id": event.event_id,
+                            "event_type": event.event_type,
+                            "consumer_name": self._consumer_name,
+                            "attempts": attempts_after,
+                            "max_attempts": event.max_attempts,
+                            "next_attempt_at_seconds": delay,
+                            "action": "retry_scheduled",
+                            "error_class": exc.__class__.__name__,
+                            "sanitized_error": sanitize_exception(exc, max_length=512),
+                        },
+                    )
                     retried += 1
                 else:
                     await self._store.move_to_dlq(
                         event=event,
                         error=exc,
+                    )
+                    logger.error(
+                        "outbox_event_dead_lettered",
+                        extra={
+                            "event_id": event.event_id,
+                            "event_type": event.event_type,
+                            "consumer_name": self._consumer_name,
+                            "attempts": attempts_after,
+                            "max_attempts": event.max_attempts,
+                            "action": "dead_lettered",
+                            "error_class": exc.__class__.__name__,
+                            "sanitized_error": sanitize_exception(exc, max_length=512),
+                        },
                     )
                     dlq += 1
                 continue
@@ -279,15 +303,6 @@ class OutboxDispatcher:
 # ---------------------------------------------------------------------------
 # Postgres Outbox Store
 # ---------------------------------------------------------------------------
-
-
-def _truncate(message: str, max_length: int) -> str:
-    """Truncar mensagem de erro para o tamanho máximo permitido."""
-    if not message:
-        return "unknown error"
-    if len(message) <= max_length:
-        return message
-    return message[:max_length]
 
 
 class PostgresOutboxStore:
@@ -412,7 +427,7 @@ class PostgresOutboxStore:
         error: BaseException,
         delay_seconds: float,
     ) -> None:
-        error_msg = _truncate(str(error), 4096) or error.__class__.__name__
+        error_msg = sanitize_exception(error) or error.__class__.__name__
         error_cls = error.__class__.__name__
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -442,7 +457,7 @@ class PostgresOutboxStore:
         event: OutboxEvent,
         error: BaseException,
     ) -> None:
-        error_msg = _truncate(str(error), 4096) or error.__class__.__name__
+        error_msg = sanitize_exception(error) or error.__class__.__name__
         error_cls = error.__class__.__name__
         new_attempts = event.attempts + 1
         async with self._pool.acquire() as conn:

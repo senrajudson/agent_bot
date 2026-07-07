@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -17,7 +18,6 @@ from app.infrastructure.outbox.outbox_dispatcher import (
     OutboxStore,
     OutboxDispatcher,
     PostgresOutboxStore,
-    _truncate,
     _row_to_event,
 )
 
@@ -510,7 +510,123 @@ class TestErrorPolicy:
 
 
 # =========================================================================
-# Grupo 4 — Backoff/erro
+# Grupo 4 — Failure logging (retry + DLQ)
+# =========================================================================
+
+
+USER_SECRET_SENTINEL = "USER_SECRET_SENTINEL_DO_NOT_LEAK"
+ASSISTANT_SECRET_SENTINEL = "ASSISTANT_SECRET_SENTINEL_DO_NOT_LEAK"
+
+
+class TestFailureLogging:
+    @pytest.mark.asyncio
+    async def test_warning_on_retry(self, caplog) -> None:
+        caplog.set_level(
+            logging.WARNING,
+            logger="app.infrastructure.outbox.outbox_dispatcher",
+        )
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=0, max_attempts=3)
+        consumer.set_raise(
+            event.event_id,
+            RuntimeError(
+                f"simulated failure: user_message={USER_SECRET_SENTINEL} "
+                f"assistant_message={ASSISTANT_SECRET_SENTINEL}"
+            ),
+        )
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        result = await d.dispatch_once()
+        assert result.retry_count == 1
+        assert result.dlq_count == 0
+        assert len(store.retry_calls) == 1
+        assert len(store.dlq_calls) == 0
+        assert len(store.dispatched_calls) == 0
+        records = [
+            r
+            for r in caplog.records
+            if r.name == "app.infrastructure.outbox.outbox_dispatcher"
+        ]
+        assert len(records) >= 1
+        assert records[0].levelname == "WARNING"
+        assert records[0].message == "outbox_event_retry_scheduled"
+        assert records[0].action == "retry_scheduled"
+        assert records[0].error_class == "RuntimeError"
+        assert USER_SECRET_SENTINEL not in caplog.text
+        assert ASSISTANT_SECRET_SENTINEL not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_error_on_dlq(self, caplog) -> None:
+        caplog.set_level(
+            logging.ERROR,
+            logger="app.infrastructure.outbox.outbox_dispatcher",
+        )
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=2, max_attempts=3)
+        consumer.set_raise(
+            event.event_id,
+            RuntimeError(
+                f"terminal failure: user_message={USER_SECRET_SENTINEL} "
+                f"assistant_message={ASSISTANT_SECRET_SENTINEL}"
+            ),
+        )
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        result = await d.dispatch_once()
+        assert result.dlq_count == 1
+        assert result.retry_count == 0
+        assert len(store.dlq_calls) == 1
+        assert len(store.dispatched_calls) == 0
+        records = [
+            r
+            for r in caplog.records
+            if r.name == "app.infrastructure.outbox.outbox_dispatcher"
+        ]
+        assert len(records) >= 1
+        assert records[0].levelname == "ERROR"
+        assert records[0].message == "outbox_event_dead_lettered"
+        assert records[0].action == "dead_lettered"
+        assert records[0].error_class == "RuntimeError"
+        assert USER_SECRET_SENTINEL not in caplog.text
+        assert ASSISTANT_SECRET_SENTINEL not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_log_does_not_include_event_payload(self, caplog) -> None:
+        caplog.set_level(
+            logging.WARNING,
+            logger="app.infrastructure.outbox.outbox_dispatcher",
+        )
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=0, max_attempts=3)
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        assert "event_payload" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_log_does_not_use_logger_exception(self, caplog) -> None:
+        caplog.set_level(
+            logging.WARNING,
+            logger="app.infrastructure.outbox.outbox_dispatcher",
+        )
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=0, max_attempts=3)
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        for record in caplog.records:
+            if record.name == "app.infrastructure.outbox.outbox_dispatcher":
+                assert record.exc_info is None or record.exc_info[0] is None
+
+
+# =========================================================================
+# Grupo 5 — Backoff/erro
 # =========================================================================
 
 
@@ -538,30 +654,9 @@ class TestHelpers:
         assert d._calculate_delay(1) == 0.5
         assert d._calculate_delay(5) == 0.5
 
-    def test_truncate_short_message(self) -> None:
-        d = OutboxDispatcher(store=_FakeStore(), consumer=_FakeConsumer())
-        assert d._truncate_error(ValueError("hi")) == "hi"
-
-    def test_truncate_long_message(self) -> None:
-        d = OutboxDispatcher(
-            store=_FakeStore(),
-            consumer=_FakeConsumer(),
-            error_max_length=10,
-        )
-        assert d._truncate_error(ValueError("a" * 20)) == "a" * 10
-
-    def test_truncate_empty_uses_class(self) -> None:
-        d = OutboxDispatcher(store=_FakeStore(), consumer=_FakeConsumer())
-        assert d._truncate_error(ValueError("")) == "ValueError"
-
     def test_error_class(self) -> None:
         d = OutboxDispatcher(store=_FakeStore(), consumer=_FakeConsumer())
         assert d._error_class(ValueError("x")) == "ValueError"
-
-    def test_module_truncate_function(self) -> None:
-        assert _truncate("hello", 10) == "hello"
-        assert _truncate("hello world long", 5) == "hello"
-        assert _truncate("", 10) == "unknown error"
 
 
 # =========================================================================

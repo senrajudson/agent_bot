@@ -81,9 +81,13 @@ LIMIT 50;
 ## 10. Cuidados com payload e `last_error`
 
 - `event_payload` em `outbox_dlq` pode conter `user_message` e `assistant_message` em texto claro. **Não expor.**
-- `last_error` em `outbox_events` pode conter a mensagem da exceção. Se a exceção ecoa conteúdo do usuário, vaza. Tratar como sensível.
-- Logs do `ConversationMemorySaveOutboxHandler` e do `LoggingOutboxConsumer` foram verificados (Prompt 18, T3 e T4) e não vazam `user_message`/`assistant_message`.
-- A implementação de redaction automática de `last_error` é decisão futura.
+- `last_error` em `outbox_events` e `final_error` em `outbox_dlq` são **sanitizados** automaticamente pelo helper `app/infrastructure/outbox/_error_redaction.py` antes da persistência (Prompt 19). Valores de `user_message`, `assistant_message`, `token`, `password`, `passwd`, `secret`, `api_key`, `authorization` e `Bearer` são redigidos como `<REDACTED>`. `last_error_class` e `final_error_class` preservam a classe original da exceção.
+- Logs do `ConversationMemorySaveOutboxHandler`, do `LoggingOutboxConsumer` e do `OutboxDispatcher` foram verificados e não vazam `user_message`/`assistant_message`/`event_payload` (Prompts 18 e 19).
+- `OutboxDispatcher` emite logs estruturados seguros:
+  - `WARNING outbox_event_retry_scheduled` — evento re-agendado para retry.
+  - `ERROR outbox_event_dead_lettered` — evento movido para DLQ.
+  - Campos seguros: `event_id`, `event_type`, `consumer_name`, `attempts`, `max_attempts`, `action`, `error_class`, `sanitized_error` (máx. 512 chars). Sem `event_payload`, sem `user_message`, sem `assistant_message`, sem `logger.exception`.
+- `event_payload` em `outbox_dlq` continua snapshot integral por design do schema. **Não expor.**
 
 ## 11. Retenção de DLQ pendente
 
@@ -102,12 +106,8 @@ Política de retenção/expurgo de `outbox_dlq` é **decisão futura**. Não há
 - Worker contínuo (não existe; CLI é one-shot)
 - Replay automático de `outbox_dlq` (não existe; decisão futura)
 - Purge automático de `outbox_dlq` (não existe; decisão futura)
-- Refator de `_truncate_error` no `OutboxDispatcher` (Risco 4 do `/analyze`)
-- Redaction automática de `last_error` (decisão futura, prompt próprio)
 
 ## 14. Próximos prompts possíveis
 
-- Logging estruturado de falhas no `OutboxDispatcher` (observabilidade)
 - Política de retenção/expurgo de `outbox_dlq`
-- Redaction automática de `last_error` (afeta `PostgresOutboxStore`)
 - Mecanismo de injeção de falha no CLI para validação live
