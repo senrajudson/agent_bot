@@ -74,6 +74,31 @@ class TestSaveConversationTurnMemorySaver:
         with pytest.raises(RuntimeError, match="Redis down"):
             await adapter.save(payload)
 
+    async def test_save_with_idempotency_key(
+        self, adapter: SaveConversationTurnMemorySaver, fake_handler: AsyncMock
+    ) -> None:
+        payload = {
+            "conversation_id": "user-123",
+            "user_message": "Hello",
+            "assistant_message": "Hi!",
+            "idempotency_key": "evt-001",
+        }
+        await adapter.save(payload)
+        command = fake_handler.handle.call_args[0][0]
+        assert command.idempotency_key == "evt-001"
+
+    async def test_save_without_idempotency_key(
+        self, adapter: SaveConversationTurnMemorySaver, fake_handler: AsyncMock
+    ) -> None:
+        payload = {
+            "conversation_id": "user-123",
+            "user_message": "Hello",
+            "assistant_message": "Hi!",
+        }
+        await adapter.save(payload)
+        command = fake_handler.handle.call_args[0][0]
+        assert command.idempotency_key is None
+
     async def test_save_raises_on_empty_payload(
         self, adapter: SaveConversationTurnMemorySaver
     ) -> None:

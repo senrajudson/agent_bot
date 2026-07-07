@@ -45,6 +45,7 @@ class SaveConversationTurnMemorySaver:
             user_message=payload.get("user_message", ""),
             assistant_message=payload.get("assistant_message", ""),
             metadata=payload.get("metadata") or {},
+            idempotency_key=payload.get("idempotency_key"),
         )
         await self._handler.handle(command)
 
@@ -74,6 +75,7 @@ class ConversationMemorySaveOutboxHandler:
         payload_copy = dict(event.event_payload)
         # Enrich with envelope fields needed by the adapter
         payload_copy["conversation_id"] = event.aggregate_id or ""
+        payload_copy["idempotency_key"] = event.event_id
         if event.metadata:
             payload_copy["turn_metadata"] = dict(event.metadata)
         await self._saver.save(payload_copy)

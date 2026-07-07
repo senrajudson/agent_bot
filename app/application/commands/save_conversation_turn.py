@@ -15,6 +15,7 @@ class SaveConversationTurn(Command):
     user_message: str
     assistant_message: str
     metadata: dict | None = None
+    idempotency_key: str | None = None
 
 
 class SaveConversationTurnHandler:
@@ -32,9 +33,13 @@ class SaveConversationTurnHandler:
             return
         if not command.user_message and not command.assistant_message:
             return
+        kwargs = {}
+        if command.idempotency_key is not None:
+            kwargs["idempotency_key"] = command.idempotency_key
         await self._memory.append_turns(
             conversation_id=command.conversation_id,
             user_message=command.user_message,
             assistant_message=command.assistant_message,
             metadata=command.metadata or {},
+            **kwargs,
         )

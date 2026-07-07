@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -9,9 +10,29 @@ from app.clients.redis_client import get_redis_client
 from app.core.config import settings
 from app.domain.value_objects import ConversationId
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 MEMORY_KEY_PREFIX = "pi_chat:memory"
+
+# Lua script for atomic check-and-append with dedupe.
+# KEYS[1] = dedupe_key
+# KEYS[2] = memory_list_key
+# ARGV[1] = dedupe_ttl_seconds
+# ARGV[2] = memory_ttl_seconds
+# ARGV[3] = max_memory_items
+# ARGV[4] = user_turn_json
+# ARGV[5] = assistant_turn_json
+_LUA_CHECK_AND_APPEND = """
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 'duplicate'
+end
+redis.call('RPUSH', KEYS[2], ARGV[4], ARGV[5])
+redis.call('LTRIM', KEYS[2], -tonumber(ARGV[3]), -1)
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[2]))
+redis.call('SET', KEYS[1], '1', 'EX', tonumber(ARGV[1]))
+return 'appended'
+"""
 
 
 class ChatMemoryTurn(BaseModel):
@@ -23,6 +44,10 @@ class ChatMemoryTurn(BaseModel):
 
 def _memory_key(conversation_id: ConversationId) -> str:
     return f"{MEMORY_KEY_PREFIX}:{conversation_id}:turns"
+
+
+def _dedupe_key(conversation_id: ConversationId, event_id: str) -> str:
+    return f"{MEMORY_KEY_PREFIX}:{conversation_id}:dedupe:{event_id}"
 
 
 def _now_iso() -> str:
@@ -59,13 +84,14 @@ async def append_memory_turns(
     user_message: str,
     assistant_message: str,
     metadata: dict[str, Any] | None = None,
+    *,
+    idempotency_key: str | None = None,
 ) -> None:
     if not conversation_id:
         return
 
     redis = get_redis_client()
     cid = ConversationId.from_user_id(conversation_id)
-    key = _memory_key(cid)
 
     metadata = metadata or {}
 
@@ -83,18 +109,48 @@ async def append_memory_turns(
         metadata=metadata,
     )
 
+    user_turn_json = user_turn.model_dump_json()
+    assistant_turn_json = assistant_turn.model_dump_json()
+    ttl = settings.CHAT_MEMORY_TTL_SECONDS
     max_items = settings.CHAT_MEMORY_MAX_TURNS * 2
+
+    memory_key = _memory_key(cid)
+
+    if idempotency_key is not None:
+        if not idempotency_key:
+            raise ValueError("idempotency_key must not be empty when provided")
+        dedupe_key = _dedupe_key(cid, idempotency_key)
+
+        result = await redis.eval(
+            _LUA_CHECK_AND_APPEND, 2,
+            dedupe_key, memory_key,
+            ttl, ttl, max_items,
+            user_turn_json, assistant_turn_json,
+        )
+
+        if result == b'duplicate' or result == 'duplicate':
+            logger.debug(
+                "memoria_appender_skip idempotency_key=%s conversation_id=%s",
+                idempotency_key[:16] if len(idempotency_key) > 16 else idempotency_key,
+                cid,
+            )
+            return
+        if result != b'appended' and result != 'appended':
+            raise RuntimeError(
+                f"Unexpected Lua script result: {result!r}"
+            )
+        return
 
     pipe = redis.pipeline()
 
     pipe.rpush(
-        key,
-        user_turn.model_dump_json(),
-        assistant_turn.model_dump_json(),
+        memory_key,
+        user_turn_json,
+        assistant_turn_json,
     )
 
-    pipe.ltrim(key, -max_items, -1)
-    pipe.expire(key, settings.CHAT_MEMORY_TTL_SECONDS)
+    pipe.ltrim(memory_key, -max_items, -1)
+    pipe.expire(memory_key, ttl)
 
     await pipe.execute()
 

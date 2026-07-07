@@ -30,6 +30,16 @@ A outbox é gravada em `event_store_events` e `outbox_events` em uma única tran
 
 Chave primária lógica: `(consumer_name, event_id)`. Mecanismo `ON CONFLICT DO NOTHING` garante que o consumer não seja chamado duas vezes para o mesmo evento. Antes de executar o consumer, o dispatcher verifica `is_processed()` — se já existe linha, o evento é marcado como `dispatched` sem executar o handler novamente.
 
+### Idempotência de negócio (Prompt 21)
+
+O `ConversationMemorySaveOutboxHandler` utiliza **idempotência de negócio** no Redis via Lua atômico (`EVAL`). A operação `append_memory_turns` aceita um parâmetro opcional `idempotency_key` (o `event_id` do `OutboxEvent`). Quando presente, um script Lua verifica se a chave de dedupe já existe; se sim, a operação é ignorada (no-op success); se não, executa `RPUSH` + `LTRIM` + `EXPIRE` + `SET EX` atômicamente.
+
+**Chave de dedupe**: `pi_chat:memory:{conversation_id}:dedupe:{event_id}`
+
+**TTL**: igual a `CHAT_MEMORY_TTL_SECONDS` (7 dias).
+
+**Comportamento de duplicata**: no-op success — não lança erro, não duplica turn, não altera a lista de memória. Permite que o dispatcher prossiga com `mark_dispatched` normalmente.
+
 ## 6. `outbox_dlq` e dados sensíveis
 
 `outbox_dlq` persiste `event_payload` integral por design atual do `PostgresOutboxStore.move_to_dlq()`. **Tratar como armazenamento sensível.** Não expor conteúdo em logs públicos, dashboards ou relatórios sem redação. Política de retenção/expurgo é decisão futura (ver seção 11).
@@ -108,10 +118,10 @@ LIMIT 50;
 
 ### 11b. Política de recovery
 
-> **Recovery está bloqueado neste ciclo.**
+> **Recovery executável está bloqueado neste ciclo.**
+> **Recovery dry-run está disponível** via `scripts/recover_outbox_event.py` (ver seção 11g).
 
 Regras:
-- **Não** reprocessar eventos com `event_type = ConversationMemorySaveRequested`.
 - **Não** recolocar `dead_letter` como `pending`.
 - **Não** limpar `processed_events`.
 - **Não** usar novo `consumer_name` para replay.
@@ -119,20 +129,24 @@ Regras:
 - **Não** executar `UPDATE` em `outbox_events` para forçar reprocessamento.
 - **Não** executar `DELETE` em `outbox_dlq` para permitir re‑INSERT.
 
-Motivo:
-`ConversationMemorySaveOutboxHandler` **não possui idempotência de negócio**:
-`append_memory_turns` faz `rpush` no Redis sem dedup. Reprocessar o mesmo evento
-duplica o turn na memória de conversa, poluindo o histórico e inflando tokens.
+Motivo do bloqueio de `--execute`:
+`outbox_dlq` tem `uq_dlq_outbox_id UNIQUE(outbox_id)` e `move_to_dlq` usa `INSERT` sem `ON CONFLICT`.
+Se um evento `dead_letter` for recolocado como `pending` e falhar de novo, o `INSERT` na DLQ
+colidirá com a constraint `uq_dlq_outbox_id`. Para desbloquear `--execute` futuro, é necessário
+resolver este problema (ex.: `ON CONFLICT DO UPDATE` / upsert em `move_to_dlq`).
 
-Pré‑condições para reabertura de recovery (todas obrigatórias):
+Pré‑condições para reabertura de recovery executável:
 
-1. Handler idempotente de negócio (ex.: `SET NX` por `event_id`, ou `LPOS` antes de `rpush`).
-2. Dedupe key por `event_id` ou `turn_id`.
-3. Operação de memória idempotente.
-4. Allowlist por `event_type`.
-5. Dry‑run obrigatório antes de qualquer recovery real.
-6. Confirmação explícita do operador.
-7. Auditoria da operação manual (registro em ticket/issue).
+| # | Pré-condição | Status |
+|---|---|---|
+| 1 | Handler idempotente de negócio (Lua check-and-rpush) | ✅ **Satisfeita (Prompt 21)** |
+| 2 | Dedupe key por `event_id` (`pi_chat:memory:{cid}:dedupe:{event_id}`) | ✅ **Satisfeita (Prompt 21)** |
+| 3 | Operação de memória idempotente (no-op em duplicata) | ✅ **Satisfeita (Prompt 21)** |
+| 4 | Allowlist por `event_type` (hard-coded: `ConversationMemorySaveRequested`) | ✅ **Satisfeita (Prompt 21)** |
+| 5 | Dry‑run obrigatório antes de qualquer recovery real | ✅ **Satisfeita (Prompt 21 — `recover_outbox_event.py`)** |
+| 6 | Confirmação explícita do operador | ❌ **Pendente (depende de `--execute`)** |
+| 7 | Auditoria da operação manual (registro em ticket/issue) | ❌ **Pendente (execução apenas local/QA)** |
+| — | Resolver `uq_dlq_outbox_id` para segunda falha terminal | ❌ **Pendente (upsert em `move_to_dlq`)** |
 
 ### 11c. Auditoria manual
 
@@ -224,8 +238,75 @@ python scripts/inspect_outbox.py outbox-pending --json --limit 5
 ### 11f. Histórico
 
 > A seção 11 original (Prompts 12–19) marcava retenção como "decisão futura".
-> A partir do Prompt 20, a política está definida nas seções 11a–11e.
+> A partir do Prompt 20, a política está definida nas seções 11a–11f.
+> A partir do Prompt 21, a política está definida nas seções 11a–11g.
 > Esta subseção existe apenas para rastreabilidade e será removida em Prompt futuro.
+
+### 11g. Script dry-run `recover_outbox_event.py`
+
+**Localização**: `scripts/recover_outbox_event.py`
+
+**Função**: Analisar elegibilidade de um evento `dead_letter` para recovery futuro.
+**Read-only**: apenas `SELECT`. Sem `UPDATE`, `DELETE`, `INSERT`, `TRUNCATE`.
+**Sem `--execute`**: este script não recoloca eventos como `pending`.
+
+**Argumentos**:
+
+| Argumento | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `--outbox-id` | `int` | Sim | ID do evento `outbox_events` a analisar |
+| `--ticket` ou `--reason` | `str` | Sim (um dos dois) | Identificador do ticket ou justificativa textual |
+| `--consumer-name` | `str` | Não | Nome do consumer (default: `outbox-conversation-memory-save-v1`) |
+| `--json` | flag | Não | Saída em JSON único em vez de tabela texto |
+
+**Variáveis de ambiente**:
+
+| Variável | Obrigatória | Notas |
+|---|---|---|
+| `EVENT_STORE_POSTGRES_DSN` | Sim | Apenas `127.0.0.1` ou `localhost`. |
+| `OUTBOX_DISPATCHER_ENABLED` | **Não** | Script é read-only, não necessita da flag. |
+
+**Validações (ordem)**:
+
+| # | Validação | Se falhar | `reason_code` |
+|---|---|---|---|
+| V1 | DSN local | exit 2 | — |
+| V2 | Schema (`outbox_events`, `outbox_dlq`, `processed_events`) | exit 3 | — |
+| V3 | `outbox_id` existe em `outbox_events` | eligible=false | `outbox_not_found` |
+| V4 | `status = 'dead_letter'` | eligible=false | `status_not_dead_letter` |
+| V5 | `event_type` em allowlist (`ConversationMemorySaveRequested`) | eligible=false | `event_type_not_allowed` |
+| V6 | `attempts >= max_attempts` | eligible=false | `attempts_below_max` |
+| V7 | `outbox_dlq` tem snapshot para o `outbox_id` | eligible=false | `dlq_snapshot_missing` |
+| V8 | `processed_events` **não** tem `(consumer_name, event_id)` | eligible=false | `processed_events_already_marked` |
+
+**Exit codes**:
+
+| Código | Significado |
+|---|---|
+| 0 | Dry-run executado; `eligible=true` ou `eligible=false` |
+| 1 | Argumentos inválidos (faltando `--outbox-id`, `--ticket`/`--reason`, etc.) |
+| 2 | DSN ausente, inválido ou não‑local |
+| 3 | Schema/tabela ausente (execute `scripts/apply_edd_schema.sh --apply`) |
+| 4 | Erro de conexão ou query |
+
+**Regras de segurança**:
+- Apenas `SELECT`. Sem `UPDATE/DELETE/INSERT/TRUNCATE`.
+- `event_payload`, `user_message`, `assistant_message`, `conversation_id`, `user_id` jamais selecionados ou expostos.
+- DSN bruto jamais impresso.
+- `event_id` (UUID) é exposto pois não contém PII.
+
+**Exemplos**:
+
+```bash
+# Análise elegível (texto)
+python scripts/recover_outbox_event.py --outbox-id 42 --ticket TICKET-123
+
+# Análise inelegível (JSON)
+python scripts/recover_outbox_event.py --outbox-id 99 --reason "analise" --json
+
+# Ajuda
+python scripts/recover_outbox_event.py --help
+```
 
 ## 12. O que não fazer manualmente
 
@@ -234,7 +315,7 @@ python scripts/inspect_outbox.py outbox-pending --json --limit 5
 - **Não** executar `TRUNCATE` em qualquer das 4 tabelas sem backup e aprovação.
 - **Não** executar `INSERT` manual em `outbox_events` para "replay" — usar o caminho de reemissão de evento pela saga.
 - **Não** expor `outbox_dlq.event_payload` em logs, dashboards ou relatórios.
-- **Não** executar recovery manual: `ConversationMemorySaveRequested` não pode ser reprocessado (handler não idempotente). Veja seção 11b.
+- **Não** executar recovery executável (UPDATE em `outbox_events` para forçar reprocessamento). Recovery dry-run está disponível via `scripts/recover_outbox_event.py` (seção 11g). `--execute` não existe neste ciclo.
 - **Não** executar purge manual: decisão futura. Veja seção 11a.
 - **Não** executar replay manual: bloqueado até recovery ser reaberto (seção 11b).
 
@@ -248,5 +329,6 @@ python scripts/inspect_outbox.py outbox-pending --json --limit 5
 ## 14. Próximos prompts possíveis
 
 - Purge de `outbox_dlq` com dry-run (após política de retenção estar madura)
-- Recovery de `outbox_dlq` com dry-run (após handler real ser idempotente de negócio)
+- Recovery executável de `outbox_dlq` (após resolver `uq_dlq_outbox_id` em `move_to_dlq`)
+- Tabela de auditoria para operações manuais
 - Mecanismo de injeção de falha no CLI para validação live

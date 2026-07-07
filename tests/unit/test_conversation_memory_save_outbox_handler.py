@@ -145,6 +145,16 @@ class TestConversationMemorySaveOutboxHandler:
         with pytest.raises(ValueError, match="Invalid consumer_name"):
             ConversationMemorySaveOutboxHandler(saver=FakeSaver())
 
+    async def test_handle_injects_idempotency_key(
+        self, handler: ConversationMemorySaveOutboxHandler, saver: FakeSaver
+    ) -> None:
+        payload = {"user_id": None, "user_message": "m", "assistant_message": "a"}
+        event = _make_event(event_payload=payload)
+        await handler.handle(event)
+        assert len(saver.saved_payloads) == 1
+        saved = saver.saved_payloads[0]
+        assert saved["idempotency_key"] == event.event_id
+
     async def test_handle_does_not_log_payload_on_failure(
         self, saver: FakeSaver, caplog
     ) -> None:
