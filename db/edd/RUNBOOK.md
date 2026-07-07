@@ -118,7 +118,7 @@ LIMIT 50;
 
 ### 11b. Política de recovery
 
-> **Recovery executável está bloqueado neste ciclo.**
+> **Recovery executável está bloqueado neste ciclo (Prompt 22).**
 > **Recovery dry-run está disponível** via `scripts/recover_outbox_event.py` (ver seção 11g).
 
 Regras:
@@ -147,6 +147,8 @@ Pré‑condições para reabertura de recovery executável:
 | 6 | Confirmação explícita do operador | ❌ **Pendente (depende de `--execute`)** |
 | 7 | Auditoria da operação manual (registro em ticket/issue) | ❌ **Pendente (execução apenas local/QA)** |
 | — | Resolver `uq_dlq_outbox_id` para segunda falha terminal | ❌ **Pendente (upsert em `move_to_dlq`)** |
+
+> **Status Prompt 22**: Recovery executável segue bloqueado. Worker contínuo controlado local/QA foi entregue (ver seção 13).
 
 ### 11c. Auditoria manual
 
@@ -319,16 +321,119 @@ python scripts/recover_outbox_event.py --help
 - **Não** executar purge manual: decisão futura. Veja seção 11a.
 - **Não** executar replay manual: bloqueado até recovery ser reaberto (seção 11b).
 
-## 13. Fora do escopo
+## 13. Worker contínuo controlado
 
-- Worker contínuo (não existe; CLI é one-shot)
+### 13.1. Visão geral
+
+`scripts/run_outbox_worker.py` executa `OutboxDispatcher.dispatch_once()` em loop controlado.
+Diferente de `run_outbox_dispatcher_once.py` (one-shot), o worker roda continuamente até
+shutdown (SIGINT/SIGTERM) ou atingir `--max-iterations`.
+
+### 13.2. Escopo
+
+- **Local/QA only** neste ciclo.
+- Não operacionalizado em Docker/service.
+- Processos concorrentes: apenas um (sem SKIP LOCKED multi-worker ainda).
+
+### 13.3. Gates obrigatórios
+
+| Gate | Variável | Comportamento |
+|---|---|---|
+| 1 | `OUTBOX_WORKER_ENABLED=true` | Gate próprio, independente de `OUTBOX_DISPATCHER_ENABLED` |
+| 2 | `EVENT_DRIVEN_ENABLED=true` | Registra handler real (`ConversationMemorySaveOutboxHandler`) |
+| 3 | `EVENT_STORE_POSTGRES_DSN` | Apontando para `127.0.0.1` ou `localhost` |
+
+Todos os gates são verificados antes de conectar ao Postgres.
+Se qualquer gate falhar, o worker sai com `exit 2` sem abrir pool.
+
+### 13.4. Uso
+
+```bash
+# Loop infinito
+OUTBOX_WORKER_ENABLED=true \
+EVENT_DRIVEN_ENABLED=true \
+EVENT_STORE_POSTGRES_DSN=postgresql://u:p@127.0.0.1:5432/events \
+python scripts/run_outbox_worker.py
+
+# Modo teste (1 iteração)
+python scripts/run_outbox_worker.py --max-iterations 1
+
+# Config custom
+python scripts/run_outbox_worker.py \
+  --batch-size 20 \
+  --interval-seconds 10 \
+  --max-iterations 100
+```
+
+### 13.5. Argumentos
+
+| Argumento | Default | Validação |
+|---|---|---|
+| `--batch-size` | 10 | `> 0` |
+| `--interval-seconds` | 5.0 | `>= 0` |
+| `--max-iterations` | None (infinito) | `> 0` se fornecido; `0` inválido |
+| `--backoff-base-seconds` | 1.0 | `>= 0` |
+| `--backoff-max-seconds` | 30.0 | `>= backoff_base` |
+| `--jitter-seconds` | 0.0 | `>= 0` |
+| `--consumer-name` | `outbox-conversation-memory-save-v1` | regex `^outbox-[a-z]...` |
+| `--worker-id` | auto (hostname+uuid8) | não-vazio se fornecido |
+
+### 13.6. Exit codes
+
+| Code | Significado |
+|---|---|
+| 0 | Sucesso, shutdown limpo, `max_iterations` concluído |
+| 1 | Argumentos inválidos |
+| 2 | Gate/DSN inválido |
+| 3 | Schema/config operacional ausente |
+| 5 | Startup failure inesperado |
+| 4 | Reservado (não usado neste ciclo) |
+
+### 13.7. Shutdown
+
+- SIGINT (Ctrl+C) e SIGTERM → shutdown gracioso.
+- `shutdown_event` é setado → iteração atual termina (incluindo sleep ativo) → pool fecha → `exit 0`.
+- Double signal: 2º sinal loga `outbox_worker_shutdown_double_signal` (WARNING) sem explodir.
+
+### 13.8. Logs seguros
+
+O worker emite 11 eventos de log estruturados, todos via `extra={}` (sem `logger.exception`):
+
+| Evento | Nível | Campos chave |
+|---|---|---|
+| `outbox_worker_starting` | INFO | batch_size, interval, max_iterations, worker_id, dsn_host |
+| `outbox_worker_started` | INFO | worker_id, consumer_name, dsn_host |
+| `outbox_worker_iteration` | INFO | iteration, claimed, processed, retry, dlq |
+| `outbox_worker_idle` | INFO | iteration, sleep_seconds |
+| `outbox_worker_error` | WARNING | iteration, error_class, sanitized_error, backoff_seconds |
+| `outbox_worker_shutdown_signal` | INFO | signal |
+| `outbox_worker_shutdown_double_signal` | WARNING | signal |
+| `outbox_worker_shutdown` | INFO | reason |
+| `outbox_worker_stopped` | INFO | total_iterations, total_claimed, total_processed, total_dlq |
+| `outbox_worker_signal_handler_unavailable` | WARNING | signal |
+| `outbox_worker_pool_close_failed` | WARNING | error_class, sanitized_error |
+
+**Campos proibidos**: `event_payload`, `payload`, `user_message`, `assistant_message`,
+`conversation_id`, `user_id`, DSN bruto, `token`, `password`, `secret`, `api_key`,
+`authorization`, `Bearer`.
+
+### 13.9. Limites
+
+- Não usar em produção ainda.
+- Docker/service: prompt futuro.
+- Múltiplos workers concorrentes: não suportado.
+- Recovery executável: continua bloqueado (Prompt 22 + futuro).
+
+## 14. Fora do escopo
+
 - Replay automático de `outbox_dlq` (não existe; decisão futura)
 - Purge automático de `outbox_dlq` (não existe; decisão futura)
 - Tabela de auditoria de operações manuais (não existe; registre em ticket/issue — seção 11c)
 
-## 14. Próximos prompts possíveis
+## 15. Próximos prompts possíveis
 
 - Purge de `outbox_dlq` com dry-run (após política de retenção estar madura)
-- Recovery executável de `outbox_dlq` (após resolver `uq_dlq_outbox_id` em `move_to_dlq`)
+- Recovery executável de `outbox_dlq` (após resolver `uq_dlq_outbox_id` em `move_to_dlq` e definir auditoria persistente)
 - Tabela de auditoria para operações manuais
 - Mecanismo de injeção de falha no CLI para validação live
+- Operacionalização do worker contínuo em Docker (profile `worker`)
