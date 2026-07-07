@@ -36,6 +36,10 @@ def handler(saver: FakeSaver) -> ConversationMemorySaveOutboxHandler:
     return ConversationMemorySaveOutboxHandler(saver=saver)
 
 
+USER_SECRET_SENTINEL = "USER_SECRET_SENTINEL_DO_NOT_LEAK"
+ASSISTANT_SECRET_SENTINEL = "ASSISTANT_SECRET_SENTINEL_DO_NOT_LEAK"
+
+
 _ADD_EVENT_PAYLOAD = {
     "user_id": None,
     "user_message": "Hello",
@@ -140,3 +144,24 @@ class TestConversationMemorySaveOutboxHandler:
     async def test_init_with_invalid_consumer_name_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid consumer_name"):
             ConversationMemorySaveOutboxHandler(saver=FakeSaver())
+
+    async def test_handle_does_not_log_payload_on_failure(
+        self, saver: FakeSaver, caplog
+    ) -> None:
+        import logging
+        caplog.set_level(logging.DEBUG)
+        payload = {
+            "user_id": None,
+            "user_message": USER_SECRET_SENTINEL,
+            "assistant_message": ASSISTANT_SECRET_SENTINEL,
+        }
+        saver.should_raise = RuntimeError
+        handler = ConversationMemorySaveOutboxHandler(saver=saver)
+        event = _make_event(event_payload=payload)
+        with pytest.raises(RuntimeError, match="simulated saver failure"):
+            await handler.handle(event)
+        log_text = caplog.text
+        assert USER_SECRET_SENTINEL not in log_text
+        assert ASSISTANT_SECRET_SENTINEL not in log_text
+        assert "user_message" not in log_text
+        assert "assistant_message" not in log_text
