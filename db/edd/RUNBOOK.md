@@ -574,6 +574,37 @@ A partir do Prompt 25, o fluxo EDD emite logs estruturados seguros em `stderr` v
 **Métricas Counter/Histogram/Gauge**: não implementadas neste Prompt.
 **Spans OTel/Phoenix**: não implementados neste Prompt.
 
+### 13.11. Testes E2E do fluxo EDD (Prompt 26)
+
+Os testes E2E validam a arquitetura EDD completa: `/chat` → Event Store → Outbox → dispatcher → handler → processed_events, além de DLQ, recovery e idempotência.
+
+**Localização:**
+```
+tests/integration/edd/test_e2e_chat_outbox_flow.py
+```
+
+**Como rodar:**
+```bash
+EVENT_STORE_POSTGRES_DSN="postgresql://...@127.0.0.1:5432/agent_bot_events" \
+  poetry run pytest tests/integration/edd/test_e2e_chat_outbox_flow.py -v
+```
+
+**Pré-requisitos:**
+- Postgres real acessível via `EVENT_STORE_POSTGRES_DSN` (opt-in; sem a variável, testes são skipados).
+- Schema 001-005 já aplicado (o conftest cria schema descartável por teste).
+- Redis **não** é obrigatório — `InMemoryConversationSaver` substitui.
+- LLM/provider **não** é chamado — mockado via `monkeypatch`.
+
+**O que os testes provam:**
+1. **Happy path**: `/chat` real publica eventos → `event_store_events` e `outbox_events` → `OutboxDispatcher.dispatch_once` com `ConversationMemorySaveOutboxHandler` real → `processed_events` → `outbox.status='dispatched'` → DLQ vazio.
+2. **DLQ + recovery**: evento com `attempts=max_attempts-1` + consumer falho → DLQ → recovery dry-run → recovery execute → `outbox_recovery_audit` → reprocessamento → idempotência.
+
+**O que os testes NÃO cobrem:**
+- Worker loop contínuo (coberto por testes unitários).
+- Subprocess CLI (não usado nos testes).
+- LLM externo real (mockado).
+- Redis real (substituído por saver in-memory).
+
 ## 14. Fora do escopo
 
 - Replay automático de `outbox_dlq` (não existe; decisão futura)

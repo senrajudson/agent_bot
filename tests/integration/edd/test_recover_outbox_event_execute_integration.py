@@ -22,6 +22,7 @@ from tests.integration.edd.conftest import (
     count_rows,
     fetch_one,
     fetch_all,
+    insert_dead_letter_event,
     insert_outbox_event,
 )
 
@@ -40,80 +41,6 @@ _DSN_OK = "postgresql://u:p@127.0.0.1:5432/events"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-async def insert_dead_letter_event(
-    pool: asyncpg.Pool,
-    *,
-    event_type: str = "ConversationMemorySaveRequested",
-    attempts: int = 3,
-    max_attempts: int = 3,
-    aggregate_id: str | None = "conv-exec-test",
-    event_payload: dict[str, Any] | None = None,
-    with_dlq_snapshot: bool = True,
-) -> tuple[int, str]:
-    """Insert a dead_letter event + optional outbox_dlq snapshot.
-
-    Returns (outbox_id, event_id).
-    """
-    if event_payload is None:
-        event_payload = {"user_message": "test", "assistant_message": "test"}
-    now = datetime.now(timezone.utc)
-    event_id = str(uuid.uuid4())
-
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO outbox_events (
-                event_id, stream_id, stream_version, aggregate_id,
-                event_type, event_payload, status, attempts, max_attempts,
-                available_at, dead_lettered_at, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-            RETURNING outbox_id
-            """,
-            event_id,
-            "test-stream-exec",
-            1,
-            aggregate_id,
-            event_type,
-            json.dumps(event_payload),
-            "dead_letter",
-            attempts,
-            max_attempts,
-            now,
-            now,
-            now,
-            now,
-        )
-        outbox_id = row["outbox_id"]
-
-    if with_dlq_snapshot:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO outbox_dlq (
-                    outbox_id, event_id, stream_id, stream_version, aggregate_id,
-                    event_type, event_payload, final_error, final_error_class,
-                    attempts, max_attempts, moved_to_dlq_at, original_created_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-                """,
-                outbox_id,
-                event_id,
-                "test-stream-exec",
-                1,
-                aggregate_id,
-                event_type,
-                json.dumps(event_payload),
-                "final error",
-                "ValueError",
-                attempts,
-                max_attempts,
-                now,
-                now,
-            )
-
-    return outbox_id, event_id
-
 
 def _make_execute_args(
     outbox_id: int,

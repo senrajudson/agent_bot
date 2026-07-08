@@ -17,7 +17,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Mapping
 
 import asyncpg
 import pytest
@@ -217,6 +217,25 @@ async def pg_pool(
 
 
 # ---------------------------------------------------------------------------
+# InMemoryConversationSaver — substitute for Redis-backed memory in E2E
+# ---------------------------------------------------------------------------
+
+
+class InMemoryConversationSaver:
+    """Implements ``ConversationMemorySaver`` Protocol in memory.
+
+    Records every ``save(payload)`` call in ``self.turns`` for assertion.
+    Does not depend on Redis, Postgres, or any external service.
+    """
+
+    def __init__(self) -> None:
+        self.turns: list[dict[str, Any]] = []
+
+    async def save(self, payload: Mapping[str, Any]) -> None:
+        self.turns.append(dict(payload))
+
+
+# ---------------------------------------------------------------------------
 # Event factories
 # ---------------------------------------------------------------------------
 
@@ -295,6 +314,85 @@ async def insert_outbox_event(pool: asyncpg.Pool, **kwargs: Any) -> int:
             *[defaults[c] for c in cols],
         )
     return int(row["outbox_id"])
+
+
+async def insert_dead_letter_event(
+    pool: asyncpg.Pool,
+    *,
+    event_type: str = "ConversationMemorySaveRequested",
+    status: str = "dead_letter",
+    attempts: int = 3,
+    max_attempts: int = 3,
+    aggregate_id: str | None = "conv-e2e-test",
+    event_payload: dict[str, Any] | None = None,
+    with_dlq_snapshot: bool = True,
+) -> tuple[int, str]:
+    """Insert a dead-letter-candidate event + optional ``outbox_dlq`` snapshot.
+
+    When *status* is ``'dead_letter'`` and *attempts* >= *max_attempts*,
+    the row is ready for recovery tests.  When *status* is ``'pending'``
+    and *attempts* is ``max_attempts-1``, one ``dispatch_once`` with a
+    failing consumer will move it to DLQ automatically.
+
+    Returns ``(outbox_id, event_id)``.
+    """
+    if event_payload is None:
+        event_payload = {"user_message": "synthetic", "assistant_message": "synthetic"}
+    now = datetime.now(timezone.utc)
+    event_id = str(uuid.uuid4())
+
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO outbox_events (
+                event_id, stream_id, stream_version, aggregate_id,
+                event_type, event_payload, status, attempts, max_attempts,
+                available_at, dead_lettered_at, created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            RETURNING outbox_id
+            """,
+            event_id,
+            "test-stream-exec",
+            1,
+            aggregate_id,
+            event_type,
+            json.dumps(event_payload),
+            status,
+            attempts,
+            max_attempts,
+            now,
+            now if status == "dead_letter" else None,
+            now,
+            now,
+        )
+        outbox_id = row["outbox_id"]
+
+    if with_dlq_snapshot:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO outbox_dlq (
+                    outbox_id, event_id, stream_id, stream_version, aggregate_id,
+                    event_type, event_payload, final_error, final_error_class,
+                    attempts, max_attempts, moved_to_dlq_at, original_created_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                """,
+                outbox_id,
+                event_id,
+                "test-stream-exec",
+                1,
+                aggregate_id,
+                event_type,
+                json.dumps(event_payload),
+                "final error",
+                "ValueError",
+                attempts,
+                max_attempts,
+                now,
+                now,
+            )
+
+    return outbox_id, event_id
 
 
 async def fetch_one(
