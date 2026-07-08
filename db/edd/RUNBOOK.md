@@ -1,5 +1,7 @@
 # Runbook — Outbox, Retry e DLQ
 
+> Para visão arquitetural do fluxo EDD, consulte `db/edd/ARCHITECTURE.md`.
+
 ## 1. Objetivo
 
 Descrever operacionalmente a outbox transacional do Agent Bot: como identificar pendências, como inspecionar DLQ e quais cuidados tomar com dados sensíveis.

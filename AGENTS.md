@@ -1822,7 +1822,7 @@ Esta seção documenta o estado real do **PostgresEventStore** como backend opci
 - `PostgresEventStore` existe em `app/infrastructure/event_store/postgres_event_store.py` e é instanciável sem abrir conexão (pool asyncpg é lazy).
 - É **backend opcional** — não é backend padrão obrigatório. O backend padrão é `InMemoryEventStore` (em memória).
 - `factory.get_event_store()` pode selecionar `postgres` via env var `EVENT_STORE_BACKEND=postgres` + `EVENT_STORE_POSTGRES_DSN`. Sem o DSN, levanta `ValueError`.
-- `process_message` (`app/agent/orchestrator.py:209`) instancia `InMemoryEventStore()` **diretamente**, sem consumir o factory. A env var `EVENT_STORE_BACKEND` não tem efeito no `/chat` hoje.
+- `process_message` recebe `event_publisher` injetado pelo caller. Em `app/main.py:62`, o publisher é construído via `build_runtime_event_publisher(pool, settings)` que, quando `EVENT_DRIVEN_ENABLED=true` e `EVENT_STORE_BACKEND=transactional_postgres`, retorna `EventPublisherImpl(TransactionalPostgresEventStore(pool))`.
 - Não há teste contra Postgres real nesta fase. O arquivo `tests/unit/test_postgres_event_store.py` é 100% unitário (sem rede, sem Docker, sem testcontainers).
 - O DDL append-only está em `app/infrastructure/event_store/sql/001_create_event_store_events.sql`. Aplicação do schema é externa ao código.
 - O serviço `event_store_postgres` no `docker-compose.yaml` está sob `profiles: [events]` e não sobe por padrão.
@@ -1846,122 +1846,34 @@ Event Sourcing real não deve ser implementado sem pelo menos uma necessidade co
 
 > **Não é Event Sourcing completo**: o Event Store ainda não é fonte da verdade do estado. Veja seção 24.
 
-> **Governança do bloco EDD futuro**: ver seção 34 — EDD — Event Driven Design com Postgres.
+> **Documentação da arquitetura EDD**: ver seção 34 — EDD — Event Driven Design com Postgres.
 
 ---
 
-## 34. EDD — Event Driven Design com Postgres (Governança do Bloco)
+## 34. EDD — Event Driven Design com Postgres
 
-> **Estado: governança de bloco futuro.** Nenhum item desta seção está implementado como estado corrente. O estado atual do Event Store permanece descrito na seção 33 (InMemoryEventStore, não ativo no `/chat`). Esta seção fixa regras para o novo bloco de evolução arquitetural **EDD — Event Driven Design real com Postgres**.
+> **Estado: implementado e validado (Prompts 12–27).**
+> Para arquitetura, consulte `db/edd/ARCHITECTURE.md`.
+> Para operação, consulte `db/edd/RUNBOOK.md`.
 
-### 34.1 Contexto e Estado Inicial
+### 34.1 Resumo do estado atual
 
-- A refatoração anterior (seção 24, Etapas 0-8) foi concluída e classificada como **Event Publishing / Event Log preparation**.
-- O projeto **não é Event Sourcing completo** (ver seções 24 e 33).
-- Um banco PostgreSQL **separado** foi provisionado para o agente:
-  - container: `event_store_postgres`
-  - database: `agent_bot_events`
-  - separado do banco do n8n
-  - status atual: container healthy
-- O banco do n8n **não** deve ser usado pelo agente.
-- Kafka **não** será usado neste bloco.
-- Estratégia inicial: **Postgres Event Log + Transactional Outbox + workers concorrentes**.
+- O **Event Driven Design** com Postgres está funcional e comprovado por testes E2E reais.
+- O fluxo utiliza: `TransactionalPostgresEventStore` → `OutboxDispatcher` → `EventTypeRouterConsumer` → `ConversationMemorySaveOutboxHandler`.
+- O handler real atual é **`ConversationMemorySaveOutboxHandler`** (persiste turnos de conversa no Redis).
+- O evento real que passa pela outbox é **`ConversationMemorySaveRequested`**.
+- O **fallback produtivo** quando EDD está desabilitado é **`NullEventPublisher`** (no-op), **não** `InMemoryEventStore`.
 
-Alvo incremental (não implementado ainda):
+### 34.2 Decisões arquiteturais mantidas
 
-```text
-/chat
-  -> EventPublisher
-  -> Postgres Event Log
-  -> Postgres Outbox
-  -> Dispatcher/Worker concorrente
-  -> Consumers/Handlers idempotentes
-  -> Projections/Read Models
-```
+- **Postgres como fila**: o projeto usa Postgres como Event Store + Transactional Outbox, não Kafka ou broker distribuído.
+- **Sem Event Sourcing completo**: o Event Store não é fonte da verdade do estado do sistema.
+- **Feature flag**: `EVENT_DRIVEN_ENABLED=false` preserva o comportamento anterior sem alterações.
+- **Separado do n8n**: banco `event_store_postgres` exclusivo do agente.
 
-Este bloco **não** implementa Event Sourcing real no primeiro ciclo.
+### 34.3 Documentação relacionada
 
-### 34.2 Princípios Obrigatórios
-
-As regras abaixo são **obrigatórias** para todo prompt, plano, task ou implementação deste bloco EDD.
-
-#### 1. Event Driven Design primeiro, Event Sourcing depois
-O objetivo inicial é Event Driven Design real. Postgres será usado primeiro como: Event Log durável; Transactional Outbox; fila concorrente para workers; base para projections/read models. **Não** tratar o EventStore como fonte única da verdade do estado neste momento. **Não** implementar AggregateRoot, replay, snapshots ou reidratação de estado no primeiro ciclo.
-
-#### 2. Postgres, não Kafka
-Usar Postgres como fila/outbox inicial. Kafka fica fora do escopo atual. Kafka só deve ser reavaliado futuramente se houver necessidade concreta de: alto volume de eventos; múltiplos serviços externos consumindo os mesmos eventos; replay distribuído em larga escala; particionamento e consumer groups em escala; retenção longa de streams fora do Postgres.
-
-#### 3. Banco separado
-Usar apenas o banco `event_store_postgres`. **Não** usar: banco do n8n; tabelas do n8n; usuário do n8n; migrations do n8n; schema do n8n. O Event Log do agente deve ter schema, usuário, permissões, backup e ciclo de vida próprios.
-
-#### 4. Não quebrar o /chat
-**Não** alterar contrato HTTP. **Não** alterar `ChatRequest`, `ChatResponse`, endpoint `/chat` ou comportamento externo do `/chat`. Qualquer integração com Postgres no fluxo principal deve ser gradual e protegida por feature flag.
-
-#### 5. Feature flag obrigatória antes de ativar runtime
-Nenhuma escrita no Postgres deve ser ativada no fluxo principal sem feature flag. Exemplo conceitual:
-
-```text
-EVENT_DRIVEN_ENABLED=false
-EVENT_STORE_BACKEND=postgres
-EVENT_STORE_POSTGRES_DSN=...
-```
-
-Com flag desligada, o comportamento atual deve ser preservado.
-
-#### 6. Outbox antes de consumers complexos
-Antes de criar consumers reais, deve existir: schema de Event Log; schema de Outbox; testes do schema; publisher transacional; política de falha; dispatcher controlado. **Não** criar projection complexa antes da Outbox estar estável.
-
-#### 7. Concorrência via Postgres SKIP LOCKED
-Workers concorrentes devem usar estratégia compatível com Postgres, preferencialmente `SELECT ... FOR UPDATE SKIP LOCKED`. Objetivos: múltiplos workers podem processar eventos pendentes; dois workers não devem processar o mesmo item ao mesmo tempo; lock deve expirar via `locked_until`; item falhado deve voltar para retry ou ir para dead letter.
-
-#### 8. Idempotência obrigatória
-Todo consumer/handler deve ser idempotente. Processar o mesmo evento duas vezes **não** pode: duplicar read model indevidamente; corromper estado; gerar side effect externo duplicado sem proteção; quebrar projection. Consumers devem ter chave de idempotência ou tabela de controle quando necessário.
-
-#### 9. Retry e dead letter obrigatórios
-Nenhum dispatcher real deve ser considerado pronto para uso sem: contador de tentativas; `available_at`; `locked_by`; `locked_until`; `last_error`; política de retry; dead letter após limite de tentativas; logs estruturados.
-
-#### 10. Não chamar de Event Sourcing completo
-Enquanto o estado principal do sistema não for reconstruído a partir dos eventos, usar apenas termos como: Event Driven Design; Event Publishing; Event Log; Transactional Outbox; Event Log preparation. **Não** chamar de Event Sourcing completo.
-
-#### 11. Ciclos pequenos
-**Não** misturar no mesmo ciclo: schema; publisher; dispatcher; consumers; projections; integração com /chat; feature flag; Event Sourcing. Cada ciclo deve ter escopo pequeno, validável e reversível.
-
-#### 12. Produção sensível
-Antes de ativar qualquer dependência de Postgres no `/chat`, deve existir decisão explícita sobre política de falha:
-
-- se Postgres falhar, /chat falha?
-- se Postgres falhar, degrada para NullEventPublisher?
-- se Postgres falhar, usa InMemoryEventStore?
-- se Postgres falhar, grava log e continua?
-
-**Não** assumir essa decisão automaticamente.
-
-### 34.3 Fora do Escopo Inicial
-
-**Não** implementar agora: Event Sourcing real; AggregateRoot; replay; snapshots; checkpoint de replay completo; read database complexo; Kafka; RabbitMQ; Google Pub/Sub; integração com n8n; uso do banco do n8n; alteração do contrato `/chat`; ativação de Postgres no `/chat`.
-
-### 34.4 Primeiros Ciclos Esperados
-
-```text
-EDD Prompt 1 — Analyze do estado atual e desenho alvo
-EDD Prompt 2 — Schema Postgres de Event Log / Outbox / offsets / dead letters
-EDD Prompt 3 — Contrato de eventos e versionamento
-EDD Prompt 4 — Publisher transacional em Postgres, ainda sem ativar no /chat
-EDD Prompt 5 — Dispatcher/Worker concorrente com SKIP LOCKED
-```
-
-### 34.5 Terminologia Permitida vs Proibida
-
-| Permitido (neste bloco) | Proibido (até pré-condições da seção 33 serem atendidas) |
+| Documento | Conteúdo |
 |---|---|
-| Event Driven Design | Event Sourcing completo |
-| Event Publishing | AggregateRoot |
-| Event Log | Replay / reidratação de estado |
-| Transactional Outbox | Snapshots |
-| Event Log preparation | Checkpoint de replay completo |
-
-### 34.6 Relação com Seções 24 e 33
-
-- A **seção 24** descreve a refatoração concluída (Etapas 0-8) que levou ao estado atual de Event Publishing / Event Log preparation.
-- A **seção 33** descreve o estado corrente do `PostgresEventStore` (opcional, não ativo no `/chat`, `InMemoryEventStore` como padrão) e lista as **pré-condições para reabrir Event Sourcing real**.
-- Esta seção 34 fixa a **governança** do bloco EDD futuro e **não** altera a descrição de estado corrente das seções 24 e 33. Em caso de aparente conflito, a seção 33 descreve estado atual e a seção 34 descreve regras para evolução futura.
+| `db/edd/ARCHITECTURE.md` | Arquitetura detalhada: fluxo, componentes, tabelas, decisões, limitações |
+| `db/edd/RUNBOOK.md` | Operação: schema, dispatcher, worker, inspect, recovery, segurança |
