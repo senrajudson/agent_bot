@@ -163,12 +163,20 @@ class TestParserAndGates:
         assert code == 0
         assert dsn == _DSN_OK
 
-    def test_execute_rejected(self) -> None:
+    def test_execute_without_confirmation_exits_1(self) -> None:
         with pytest.raises(SystemExit) as exc:
             recover_outbox_event._parse_args(
                 ["--outbox-id", "1", "--ticket", "T1", "--execute"]
             )
         assert exc.value.code == 1
+
+    def test_execute_with_confirmation_passes_parser(self) -> None:
+        args = recover_outbox_event._parse_args(
+            ["--outbox-id", "1", "--ticket", "T1",
+             "--execute", "--yes-i-confirm-recovery"]
+        )
+        assert args.execute is True
+        assert args.yes_i_confirm_recovery is True
 
 
 # =========================================================================
@@ -419,3 +427,178 @@ class TestOutputFormat:
         assert data["eligible"] is False
         assert data["reason_code"] == "outbox_not_found"
         assert data["outbox_id"] == 999
+
+
+# =========================================================================
+# Execute parser
+# =========================================================================
+
+
+class TestExecuteParser:
+    def test_execute_without_ticket_or_reason_exits_1(self) -> None:
+        with pytest.raises(SystemExit) as exc:
+            recover_outbox_event._parse_args(
+                ["--outbox-id", "1", "--execute", "--yes-i-confirm-recovery"]
+            )
+        assert exc.value.code == 1
+
+    def test_execute_rejects_operation_id_argument(self) -> None:
+        with pytest.raises(SystemExit):
+            recover_outbox_event._parse_args(
+                ["--outbox-id", "1", "--ticket", "T1",
+                 "--execute", "--yes-i-confirm-recovery",
+                 "--operation-id", "fake-uuid"]
+            )
+
+    def test_requested_by_default_is_none(self) -> None:
+        args = recover_outbox_event._parse_args(
+            ["--outbox-id", "1", "--ticket", "T1",
+             "--execute", "--yes-i-confirm-recovery"]
+        )
+        assert args.requested_by is None
+
+    def test_requested_by_passed(self) -> None:
+        args = recover_outbox_event._parse_args(
+            ["--outbox-id", "1", "--ticket", "T1",
+             "--execute", "--yes-i-confirm-recovery",
+             "--requested-by", "alice"]
+        )
+        assert args.requested_by == "alice"
+
+    def test_dry_run_still_works_without_execute(self) -> None:
+        args = recover_outbox_event._parse_args(
+            ["--outbox-id", "1", "--ticket", "T1"]
+        )
+        assert args.execute is False
+        assert args.yes_i_confirm_recovery is False
+        assert args.requested_by is None
+
+
+# =========================================================================
+# Execute safety
+# =========================================================================
+
+
+class TestExecuteSafety:
+    def test_execute_does_not_import_dispatcher(self) -> None:
+        src = Path(recover_outbox_event.__file__).read_text()
+        assert "OutboxDispatcher" not in src
+        assert "PostgresOutboxStore" not in src
+        assert "run_outbox_worker" not in src
+
+    def test_execute_remote_dsn_blocked(self) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = (
+            "postgresql://u:p@db.example.com:5432/events"
+        )
+        code, _ = recover_outbox_event._check_dsn()
+        assert code == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_create_pool_failure_returns_4(self) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+
+        async def _boom(*args: Any, **kwargs: Any) -> None:
+            raise OSError("connection refused")
+
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _boom
+            code = await recover_outbox_event._run_execute(
+                _DSN_OK,
+                recover_outbox_event._parse_args([
+                    "--outbox-id", "1", "--ticket", "T1",
+                    "--execute", "--yes-i-confirm-recovery",
+                ]),
+            )
+        assert code == 4, f"pool failure should return EXIT_QUERY (4), got {code}"
+
+    @pytest.mark.asyncio
+    async def test_execute_not_eligible_returns_4(self) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+
+        with patch.object(
+            recover_outbox_event, "_execute_recovery", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = recover_outbox_event.EXIT_QUERY
+            code = await recover_outbox_event._run_execute(
+                _DSN_OK,
+                recover_outbox_event._parse_args([
+                    "--outbox-id", "1", "--ticket", "T1",
+                    "--execute", "--yes-i-confirm-recovery",
+                ]),
+            )
+        assert code == 4, f"not eligible should return EXIT_QUERY (4), got {code}"
+
+    def test_dry_run_read_only_preserved(self, fake_pool: FakeAsyncPGPool) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+
+        async def _fake_create_pool(*args: Any, **kwargs: Any) -> FakeAsyncPGPool:
+            return fake_pool
+
+        fake_pool.conn.set_fetchrow_results(
+            [{"outbox_id": 1, "event_id": "e1", "event_type": "ConversationMemorySaveRequested",
+              "status": "dead_letter", "attempts": 3, "max_attempts": 3},
+             {"dlq_id": 1}, None],
+        )
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _fake_create_pool
+            import argparse
+            args = recover_outbox_event._parse_args(["--outbox-id", "1", "--ticket", "T1"])
+            code = asyncio.run(recover_outbox_event._run_once(_DSN_OK, args))
+        assert code == 0
+        all_sql = " ".join(fake_pool.conn.fetched_sql)
+        assert "SELECT" in all_sql
+        assert "UPDATE" not in all_sql
+        assert "INSERT" not in all_sql
+        assert "not_eligible" not in all_sql
+
+
+# =========================================================================
+# Execute output safety
+# =========================================================================
+
+
+class TestExecuteOutputSafety:
+    def test_execute_output_safe_keys(self) -> None:
+        safe_rd = recover_outbox_event._sanitize_execute_record({
+            "executed": True,
+            "event_payload": {"secret": "data"},
+            "user_message": "should be hidden",
+            "assistant_message": "should be hidden",
+            "aggregate_id": "conv-abc",
+            "conversation_id": "conv-abc",
+            "user_id": "u-1",
+            "dsn": "postgresql://u:p@127.0.0.1/db",
+        })
+        assert "executed" in safe_rd
+        assert "event_payload" not in safe_rd
+        assert "user_message" not in safe_rd
+        assert "assistant_message" not in safe_rd
+        assert "aggregate_id" not in safe_rd
+        assert "conversation_id" not in safe_rd
+        assert "user_id" not in safe_rd
+        assert "dsn" not in safe_rd
+
+    def test_execute_json_output_has_operation_id(self) -> None:
+        from io import StringIO
+        rd = {
+            "executed": True,
+            "eligible": True,
+            "outbox_id": 1,
+            "event_id": "evt-1",
+            "event_type": "ConversationMemorySaveRequested",
+            "previous_status": "dead_letter",
+            "new_status": "pending",
+            "previous_attempts": 3,
+            "new_attempts": 0,
+            "operation_id": "00000000-0000-0000-0000-000000000001",
+            "consumer_name": "cn",
+            "reason_code": None,
+            "next_step": "run worker or one-shot separately",
+        }
+        out = StringIO()
+        with patch("sys.stdout", out):
+            recover_outbox_event._print_execute_json(rd)
+        import json as _json
+        data = _json.loads(out.getvalue())
+        assert data["executed"] is True
+        assert data["operation_id"] == "00000000-0000-0000-0000-000000000001"

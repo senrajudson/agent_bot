@@ -118,23 +118,24 @@ LIMIT 50;
 
 ### 11b. Política de recovery
 
-> **Recovery executável está bloqueado neste ciclo (Prompt 22).**
 > **Recovery dry-run está disponível** via `scripts/recover_outbox_event.py` (ver seção 11g).
+> **Recovery executável (`--execute`)** está disponível via `scripts/recover_outbox_event.py` (ver seção 11h).
 
 Regras:
-- **Não** recolocar `dead_letter` como `pending`.
-- **Não** limpar `processed_events`.
+- Recovery deve ser feito **exclusivamente** via `--execute` no `recover_outbox_event.py`.
+- **Não** executar `UPDATE` manual em `outbox_events` para forçar reprocessamento.
+- **Não** limpar `processed_events` para permitir reprocessamento.
 - **Não** usar novo `consumer_name` para replay.
 - **Não** criar novo `event_id`.
-- **Não** executar `UPDATE` em `outbox_events` para forçar reprocessamento.
-- **Não** executar `DELETE` em `outbox_dlq` para permitir re‑INSERT.
+- **Não** executar `DELETE` em `outbox_dlq`.
 
 Histórico:
 
 - **Prompt 22**: `move_to_dlq` usava `INSERT` sem `ON CONFLICT`. `outbox_dlq` tinha `uq_dlq_outbox_id UNIQUE(outbox_id)`. Se um evento `dead_letter` fosse recolocado como `pending` e falhasse de novo, o `INSERT` na DLQ colidiria com a constraint.
 - **Prompt 23**: `move_to_dlq` foi alterado para `INSERT ... ON CONFLICT(outbox_id) DO UPDATE`. Segunda ida para DLQ do mesmo `outbox_id` não gera `UniqueViolationError`. `outbox_dlq` continua sendo snapshot atual por `outbox_id`. Snapshot anterior pode ser sobrescrito.
+- **Prompt 24**: `--execute` implementado em `recover_outbox_event.py`. Confirmação textual obrigatória. Single `outbox_id`. Local/QA only. Não chama dispatcher/worker. Dry-run permanece read-only.
 
-Pré‑condições para reabertura de recovery executável:
+Pré‑condições para recovery executável (todas satisfeitas):
 
 | # | Pré-condição | Status |
 |---|---|---|
@@ -145,10 +146,10 @@ Pré‑condições para reabertura de recovery executável:
 | 5 | Dry‑run obrigatório antes de qualquer recovery real | ✅ **Satisfeita (Prompt 21 — `recover_outbox_event.py`)** |
 | 6 | `move_to_dlq` com upsert (sem colisão UNIQUE em segunda DLQ) | ✅ **Satisfeita (Prompt 23)** |
 | 7 | Auditoria persistente (`outbox_recovery_audit` append-only) | ✅ **Satisfeita (Prompt 23)** |
-| 8 | Confirmação explícita do operador | ❌ **Pendente (depende de `--execute`)** |
-| 9 | `--execute` propriamente dito | ❌ **Pendente (Prompt 24)** |
+| 8 | Confirmação explícita do operador | ✅ **Satisfeita (Prompt 24 — `--yes-i-confirm-recovery`)** |
+| 9 | `--execute` propriamente dito | ✅ **Satisfeita (Prompt 24)** |
 
-> **Status Prompt 23**: `move_to_dlq` alterado para upsert. `outbox_recovery_audit` criada. Recovery executável segue bloqueado até Prompt 24.
+> **Status Prompt 24**: `--execute` implementado. Confirmação textual obrigatória. Single `outbox_id`. Local/QA only. Não chama dispatcher/worker. Dry-run permanece read-only.
 
 ### 11c. Auditoria de operações de recovery
 
@@ -161,7 +162,7 @@ O **Prompt 23** criou a tabela `outbox_recovery_audit` em `db/edd/005_create_out
 - **Índices**: por `outbox_id`, `event_id`, `executed_at` e `operation`. `operation_id` é UNIQUE.
 - **Campos**: `operation_id`, `outbox_id`, `event_id`, `event_type`, `operation`, `command_source`, `previous_status`, `new_status`, `previous_attempts`, `new_attempts`, `ticket`, `reason`, `requested_by`, `executed_at`, `sanitized_error`, `metadata`.
 
-**Estado atual**: `outbox_recovery_audit` existe, mas **nenhum código de aplicação escreve nela** neste ciclo. A escrita será implementada no Prompt 24 (recovery executável).
+**Estado atual (Prompt 24)**: `outbox_recovery_audit` existe e é escrita pelo `recover_outbox_event.py --execute` com `operation='recovery_execute'`. Dry-run não escreve na audit.
 
 > **TRUNCATE**: a trigger não bloqueia `TRUNCATE`. `TRUNCATE` em `outbox_recovery_audit` só pode ser executado por role DBA com ticket de autorização e auditoria externa.
 
@@ -183,7 +184,7 @@ Motivo: ...
 | `dead_letter` | Status terminal de `outbox_events`. Evento excedeu `max_attempts`. |
 | `outbox_dlq` | Tabela separada que armazena snapshot do evento na falha terminal. |
 | `retry` | Reagendamento automático com backoff exponencial (`mark_retry`). |
-| `recovery` | (Bloqueado) Ação manual de recolocar evento como `pending`. |
+| `recovery` | Ação de recolocar evento `dead_letter` como `pending` via `recover_outbox_event.py --execute`. |
 | `replay` | (Bloqueado) Reexecução de evento para reconstruir estado. |
 | `purge` | (Futuro exclusão manual de registros antigos. |
 
@@ -323,16 +324,128 @@ python scripts/recover_outbox_event.py --outbox-id 99 --reason "analise" --json
 python scripts/recover_outbox_event.py --help
 ```
 
+### 11h. Script execute `--execute`
+
+**Localização**: `scripts/recover_outbox_event.py` (mesmo arquivo do dry-run, seção 11g).
+
+**Função**: Requeue controlado de um único evento `dead_letter` para `pending`, com auditoria persistente. **Não** processa o evento — operador roda worker/one-shot em seguida.
+
+**Argumentos**:
+
+| Argumento | Obrigatório | Descrição |
+|---|---|---|
+| `--outbox-id` | Sim | ID do evento `outbox_events` |
+| `--execute` | Sim | Ativa modo de execução |
+| `--yes-i-confirm-recovery` | Sim | Confirmação textual obrigatória |
+| `--ticket` ou `--reason` | Sim | Identificador de ticket ou justificativa |
+| `--requested-by` | Não | Operador declarado (default: NULL, sem auto-fill) |
+| `--consumer-name` | Não | Default: `outbox-conversation-memory-save-v1` |
+| `--json` | Não | Saída em JSON único |
+
+**Variáveis de ambiente**: `EVENT_STORE_POSTGRES_DSN` (obrigatório, apenas `127.0.0.1` ou `localhost`). **Não** exige `EVENT_DRIVEN_ENABLED` nem `OUTBOX_WORKER_ENABLED`.
+
+**Fluxo**:
+1. Validar parser (confirmação, ticket/reason).
+2. Gate DSN local-only.
+3. Gate schema (4 tabelas: `outbox_events`, `outbox_dlq`, `processed_events`, `outbox_recovery_audit`).
+4. Abrir transação.
+5. `SELECT ... FOR UPDATE` em `outbox_events` por `outbox_id`.
+6. Revalidar elegibilidade: status=dead_letter, event_type na allowlist, attempts>=max_attempts, outbox_dlq existe, processed_events sem linha.
+7. Gerar `operation_id` (uuid4).
+8. Inserir linha em `outbox_recovery_audit` (`operation='recovery_execute'`, `command_source='cli'`).
+9. Atualizar `outbox_events`: `status='pending'`, `attempts=0`, `available_at=NOW()`, limpar `locked_by`/`locked_until`/`last_error`/`last_error_class`/`dead_lettered_at`.
+10. Commit.
+11. Imprimir saída com `operation_id` e `next_step`.
+
+**Campos preservados em `outbox_events`**: `event_id`, `event_payload`, `metadata`, `max_attempts`, `created_at`, `aggregate_id`.
+
+**Campos limpos**: `locked_by=NULL`, `locked_until=NULL`, `last_error=NULL`, `last_error_class=NULL`, `dead_lettered_at=NULL`, `attempts=0`.
+
+**Saída** (sucesso, texto):
+```
+[2026-07-07T12:34:56+00:00]
+executed:          sim
+eligible:          sim
+outbox_id:         42
+event_id:          abc-...
+event_type:        ConversationMemorySaveRequested
+previous_status:   dead_letter
+new_status:        pending
+previous_attempts: 3
+new_attempts:      0
+operation_id:      <uuid4>
+consumer_name:     outbox-conversation-memory-save-v1
+next_step:         run worker or one-shot separately
+```
+
+**Saída JSON**: objeto com mesmas chaves, sem `event_payload`/`aggregate_id`/`user_id`/DSN.
+
+**Exit codes**:
+
+| Código | Significado |
+|---|---|
+| 0 | Execute concluído com sucesso |
+| 1 | Argumentos inválidos / sem confirmação / sem ticket/reason |
+| 2 | DSN ausente/inválido/remoto |
+| 3 | Schema/tabela ausente |
+| 4 | Execute não elegível (revalidação V4–V8) / erro de query controlado |
+| 5 | Erro inesperado / falha transacional |
+
+**Regras de segurança**:
+- Apenas `127.0.0.1` ou `localhost`.
+- `event_payload`, `user_message`, `assistant_message`, `aggregate_id`/`conversation_id`, `user_id` jamais expostos.
+- DSN bruto jamais impresso.
+- `metadata` da audit contém apenas: `script_name`, `hostname`, `consumer_name`, `confirmation_flag`, `execution_mode`.
+- `requested_by` omitido grava NULL (não auto-fill com $USER).
+- Não chama `OutboxDispatcher`, `run_outbox_worker` ou `/chat`.
+
+**Após execute**:
+- Operador roda worker/one-shot separadamente:
+  ```bash
+  OUTBOX_WORKER_ENABLED=true \
+  EVENT_DRIVEN_ENABLED=true \
+  EVENT_STORE_POSTGRES_DSN=postgresql://u:p@127.0.0.1:5432/events \
+  python scripts/run_outbox_worker.py --max-iterations 1
+  ```
+- O `event_id` é o mesmo; a idempotência de negócio (Lua no Redis, Prompt 21) previne duplicação.
+
+**Como verificar a audit**:
+```sql
+SELECT operation_id, outbox_id, event_type, operation, executed_at,
+       ticket, reason, requested_by, metadata
+FROM outbox_recovery_audit
+WHERE outbox_id = 42
+ORDER BY executed_at DESC;
+```
+
+**Quando NÃO usar**:
+- Bulk recovery: proibido.
+- Remover proteção de idempotência: proibido.
+- Executar em PRD: proibido (local/QA only neste ciclo).
+- Replay de evento: proibido (é uma transição, não um replay).
+
+**Exemplos**:
+```bash
+# Básico
+python scripts/recover_outbox_event.py --execute --yes-i-confirm-recovery \
+    --outbox-id 42 --ticket TICKET-123
+
+# Com operador e JSON
+python scripts/recover_outbox_event.py --execute --yes-i-confirm-recovery \
+    --outbox-id 42 --reason "recuperação manual" \
+    --requested-by alice --json
+```
+
 ## 12. O que não fazer manualmente
 
-- **Não** executar `UPDATE` ou `DELETE` em `outbox_events` para forçar reprocessamento. O `is_processed` check impede reexecução pelo dispatcher.
+- **Não** executar `UPDATE` ou `DELETE` em `outbox_events` para forçar reprocessamento. Use `scripts/recover_outbox_event.py --execute` (seção 11h).
 - **Não** executar `UPDATE` em `processed_events`. O `ON CONFLICT DO NOTHING` protege idempotência.
-- **Não** executar `TRUNCATE` em qualquer das 4 tabelas sem backup e aprovação.
+- **Não** executar `TRUNCATE` em qualquer das 5 tabelas sem backup e aprovação.
 - **Não** executar `INSERT` manual em `outbox_events` para "replay" — usar o caminho de reemissão de evento pela saga.
 - **Não** expor `outbox_dlq.event_payload` em logs, dashboards ou relatórios.
-- **Não** executar recovery executável (UPDATE em `outbox_events` para forçar reprocessamento). Recovery dry-run está disponível via `scripts/recover_outbox_event.py` (seção 11g). `--execute` não existe neste ciclo.
+- **Não** executar recovery executável manualmente (UPDATE direto). Recovery via `recover_outbox_event.py --execute` (seção 11h) é o único caminho.
 - **Não** executar purge manual: decisão futura. Veja seção 11a.
-- **Não** executar replay manual: bloqueado até recovery ser reaberto (seção 11b).
+- **Não** executar replay manual: bloqueado (seção 11b).
 
 ## 13. Worker contínuo controlado
 
@@ -435,18 +548,18 @@ O worker emite 11 eventos de log estruturados, todos via `extra={}` (sem `logger
 - Não usar em produção ainda.
 - Docker/service: prompt futuro.
 - Múltiplos workers concorrentes: não suportado.
-- Recovery executável: continua bloqueado (Prompts 22, 23 + futuro).
+- Recovery executável: disponível via `recover_outbox_event.py --execute` (seção 11h).
 
 ## 14. Fora do escopo
 
 - Replay automático de `outbox_dlq` (não existe; decisão futura)
 - Purge automático de `outbox_dlq` (não existe; decisão futura)
-- `--execute` para recovery (não existe; será Prompt 24)
+- `--execute` para recovery (✅ Prompt 24 — implementado; PRD: decisão futura)
 - Purge automático de `outbox_recovery_audit` (não existe; decisão futura)
 
 ## 15. Próximos prompts possíveis
 
-- **Prompt 24: Safe Recovery Execute** — implementar `--execute` com confirmação textual, transação de requeue, escrita na `outbox_recovery_audit` e validações V1–V8 do dry-run.
 - Purge de `outbox_dlq` com dry-run (após política de retenção estar madura)
 - Mecanismo de injeção de falha no CLI para validação live
 - Operacionalização do worker contínuo em Docker (profile `worker`)
+- `outbox_dlq` bulk recovery (decisão futura; atualmente proibido)
