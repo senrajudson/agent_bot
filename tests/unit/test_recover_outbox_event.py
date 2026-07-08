@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from collections import deque
@@ -550,6 +551,185 @@ class TestExecuteSafety:
         assert "UPDATE" not in all_sql
         assert "INSERT" not in all_sql
         assert "not_eligible" not in all_sql
+
+
+# =========================================================================
+# Structured logs
+# =========================================================================
+
+
+class TestRecoveryDryRunLogs:
+    @pytest.mark.asyncio
+    async def test_dry_run_started_logged(self, caplog, fake_pool) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+        caplog.set_level(logging.INFO, logger="recover_outbox_event")
+        fake_pool.conn.set_fetchrow_results([
+            _OUTBOX_EVENT_DEAD_LETTER,
+            {"dlq_id": 1},
+            None,
+        ])
+
+        async def _fake_create_pool(*a, **kw):
+            return fake_pool
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _fake_create_pool
+            await recover_outbox_event._run_once(
+                _DSN_OK,
+                recover_outbox_event._parse_args(
+                    ["--outbox-id", "1", "--ticket", "T1"]
+                ),
+            )
+        assert any(
+            r.message == "outbox_recovery_dry_run_started"
+            for r in caplog.records
+        ), "dry_run_started log expected"
+
+    @pytest.mark.asyncio
+    async def test_dry_run_finished_logged_eligible(self, caplog, fake_pool) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+        caplog.set_level(logging.INFO, logger="recover_outbox_event")
+        fake_pool.conn.set_fetchrow_results([
+            _OUTBOX_EVENT_DEAD_LETTER,
+            {"dlq_id": 1},
+            None,
+        ])
+
+        async def _fake_create_pool(*a, **kw):
+            return fake_pool
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _fake_create_pool
+            await recover_outbox_event._run_once(
+                _DSN_OK,
+                recover_outbox_event._parse_args(
+                    ["--outbox-id", "1", "--ticket", "T1"]
+                ),
+            )
+        finished = [
+            r for r in caplog.records
+            if r.message == "outbox_recovery_dry_run_finished"
+        ]
+        assert len(finished) >= 1
+        assert getattr(finished[0], "eligible", None) is True
+
+    @pytest.mark.asyncio
+    async def test_dry_run_finished_logged_ineligible(self, caplog, fake_pool) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+        caplog.set_level(logging.INFO, logger="recover_outbox_event")
+        fake_pool.conn.set_fetchrow_results([None])
+
+        async def _fake_create_pool(*a, **kw):
+            return fake_pool
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _fake_create_pool
+            await recover_outbox_event._run_once(
+                _DSN_OK,
+                recover_outbox_event._parse_args(
+                    ["--outbox-id", "999", "--ticket", "T1"]
+                ),
+            )
+        finished = [
+            r for r in caplog.records
+            if r.message == "outbox_recovery_dry_run_finished"
+        ]
+        assert len(finished) >= 1
+        assert getattr(finished[0], "eligible", None) is False
+        assert getattr(finished[0], "reason_code", None) is not None
+
+    @pytest.mark.asyncio
+    async def test_dry_run_finished_includes_duration_ms(self, caplog, fake_pool) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = _DSN_OK
+        caplog.set_level(logging.INFO, logger="recover_outbox_event")
+        fake_pool.conn.set_fetchrow_results([
+            _OUTBOX_EVENT_DEAD_LETTER,
+            {"dlq_id": 1},
+            None,
+        ])
+
+        async def _fake_create_pool(*a, **kw):
+            return fake_pool
+        with patch("asyncpg.create_pool", new_callable=AsyncMock) as mock_pool:
+            mock_pool.side_effect = _fake_create_pool
+            await recover_outbox_event._run_once(
+                _DSN_OK,
+                recover_outbox_event._parse_args(
+                    ["--outbox-id", "1", "--ticket", "T1"]
+                ),
+            )
+        finished = [
+            r for r in caplog.records
+            if r.message == "outbox_recovery_dry_run_finished"
+        ]
+        assert len(finished) >= 1
+        dur = getattr(finished[0], "duration_ms", None)
+        assert dur is not None
+        assert isinstance(dur, int)
+        assert dur >= 0
+
+
+class TestCorrelationIdInEligibility:
+    @pytest.mark.asyncio
+    async def test_check_eligibility_returns_correlation_id(self, fake_pool) -> None:
+        fake_pool.conn.set_fetchrow_results([
+            {
+                "outbox_id": 1,
+                "event_id": "evt-001",
+                "event_type": "ConversationMemorySaveRequested",
+                "status": "dead_letter",
+                "attempts": 3,
+                "max_attempts": 3,
+                "correlation_id": "corr-999",
+                "causation_id": "cause-888",
+            },
+            {"dlq_id": 1},
+            None,
+        ])
+        rd = await recover_outbox_event._check_eligibility(
+            fake_pool, outbox_id=1, consumer_name="cn", ticket_or_reason="t"
+        )
+        assert rd["correlation_id"] == "corr-999"
+        assert rd["causation_id"] == "cause-888"
+
+    @pytest.mark.asyncio
+    async def test_check_eligibility_locked_includes_correlation_id(self, fake_pool) -> None:
+        fake_pool.conn.set_fetchrow_results([
+            {
+                "outbox_id": 1,
+                "event_id": "evt-001",
+                "event_type": "ConversationMemorySaveRequested",
+                "status": "dead_letter",
+                "attempts": 3,
+                "max_attempts": 3,
+                "correlation_id": "corr-111",
+                "causation_id": "cause-222",
+            },
+            {"dlq_id": 1},
+            None,
+        ])
+        rd = await recover_outbox_event._check_eligibility_locked(
+            fake_pool.conn, outbox_id=1, consumer_name="cn"
+        )
+        assert rd["correlation_id"] == "corr-111"
+        assert rd["causation_id"] == "cause-222"
+
+
+class TestRecoverySelectIncludesCorrelationId:
+    def test_select_includes_correlation_id_columns(self) -> None:
+        src = Path(recover_outbox_event.__file__).read_text()
+        assert "correlation_id" in src
+        assert "causation_id" in src
+        # Verifies that we're not selecting aggregate_id for log
+        # (the SELECT must not include aggregate_id)
+        # Since we changed _check_eligibility and _check_eligibility_locked,
+        # aggregate_id should NOT be in the SELECT
+        import re as _re
+        select_pattern = _re.findall(
+            r"SELECT\s+[\w_,\s]+\s+FROM outbox_events",
+            src,
+        )
+        for select in select_pattern:
+            assert "aggregate_id" not in select.split("FROM")[0], (
+                f"SELECT must not include aggregate_id: {select}"
+            )
 
 
 # =========================================================================

@@ -33,6 +33,7 @@ import re
 import signal
 import socket
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any, NoReturn
@@ -526,11 +527,13 @@ async def _run_loop(
         iteration += 1
 
         try:
+            t_iter = time.monotonic()
             result: OutboxDispatchResult = await dispatcher.dispatch_once()
             consecutive_errors = 0
             total_claimed += result.claimed_count
             total_processed += result.processed_count
             total_dlq += result.dlq_count
+            iter_duration_ms = int((time.monotonic() - t_iter) * 1000)
 
             if result.claimed_count == 0:
                 logger.info(
@@ -558,6 +561,7 @@ async def _run_loop(
                         "dispatched_count": result.dispatched_count,
                         "retry_count": result.retry_count,
                         "dlq_count": result.dlq_count,
+                        "duration_ms": iter_duration_ms,
                     },
                 )
                 if args.max_iterations is None or iteration < args.max_iterations:

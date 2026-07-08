@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import NoReturn
 
@@ -29,6 +30,7 @@ from app.infrastructure.outbox.outbox_dispatcher import (
     OutboxDispatchResult,
     PostgresOutboxStore,
 )
+from app.infrastructure.outbox._error_redaction import sanitize_exception
 
 # ---------------------------------------------------------------------------
 # Exit codes
@@ -139,15 +141,30 @@ async def _verify_schema(pool: asyncpg.Pool) -> int:
             )
             return EXIT_CONFIG
         except asyncpg.PostgresError as exc:
-            logger.error("Erro de configuração do banco: %s", exc)
+            logger.error(
+                "outbox_dispatcher_once_failed",
+                extra={
+                    "attempted_action": "schema_check-postgres",
+                    "error_class": exc.__class__.__name__,
+                    "sanitized_error": sanitize_exception(exc, max_length=512),
+                },
+            )
             return EXIT_CONFIG
         except Exception as exc:
-            logger.error("Erro inesperado ao verificar schema: %s", exc)
+            logger.error(
+                "outbox_dispatcher_once_failed",
+                extra={
+                    "attempted_action": "schema_check-unknown",
+                    "error_class": exc.__class__.__name__,
+                    "sanitized_error": sanitize_exception(exc, max_length=512),
+                },
+            )
             return EXIT_CONFIG
     return EXIT_OK
 
 
 async def _run_once(dsn: str, args: argparse.Namespace) -> int:
+    t0 = time.monotonic()
     try:
         pool = await asyncpg.create_pool(
             dsn,
@@ -156,17 +173,42 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
             command_timeout=COMMAND_TIMEOUT,
         )
     except Exception as exc:
-        logger.error("Falha ao criar pool asyncpg: %s", exc)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(
+            "outbox_dispatcher_once_failed",
+            extra={
+                "attempted_action": "pool_create",
+                "error_class": exc.__class__.__name__,
+                "sanitized_error": sanitize_exception(exc, max_length=512),
+                "duration_ms": duration_ms,
+            },
+        )
         return EXIT_STORE
 
     async with pool:
         schema_code = await _verify_schema(pool)
         if schema_code != EXIT_OK:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_dispatcher_once_failed",
+                extra={
+                    "attempted_action": "schema_check",
+                    "sanitized_error": f"exit_code={schema_code}",
+                    "duration_ms": duration_ms,
+                },
+            )
             return schema_code
 
+        logger.info(
+            "outbox_dispatcher_once_started",
+            extra={
+                "batch_size": args.batch_size,
+                "consumer_name": args.consumer_name,
+                "worker_id": args.worker_id,
+            },
+        )
+
         store = PostgresOutboxStore(pool=pool)
-        fallback = LoggingOutboxConsumer(args.consumer_name)
-        handlers: dict[str, OutboxConsumer] = {}
 
         edd_enabled = os.environ.get("EVENT_DRIVEN_ENABLED", "").lower() == "true"
         if edd_enabled:
@@ -202,14 +244,27 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
 
                 save_handler = SaveConversationTurnHandler(memory=_CLIMemoryAdapter())
                 saver = SaveConversationTurnMemorySaver(save_handler)
-                handlers["ConversationMemorySaveRequested"] = ConversationMemorySaveOutboxHandler(saver)
+                handlers: dict[str, OutboxConsumer] = {
+                    "ConversationMemorySaveRequested": ConversationMemorySaveOutboxHandler(saver),
+                }
             except Exception as exc:
-                logger.error("Falha ao registrar handler real: %s", exc)
+                duration_ms = int((time.monotonic() - t0) * 1000)
+                logger.error(
+                    "outbox_dispatcher_once_failed",
+                    extra={
+                        "attempted_action": "handler_registration",
+                        "error_class": exc.__class__.__name__,
+                        "sanitized_error": sanitize_exception(exc, max_length=512),
+                        "duration_ms": duration_ms,
+                    },
+                )
                 return EXIT_CONFIG
+        else:
+            handlers: dict[str, OutboxConsumer] = {}
 
         consumer = EventTypeRouterConsumer(
             handlers=handlers,
-            fallback=fallback,
+            fallback=LoggingOutboxConsumer(args.consumer_name),
         )
 
         dispatcher_kwargs: dict = {}
@@ -227,7 +282,16 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
         try:
             result: OutboxDispatchResult = await dispatcher.dispatch_once()
         except Exception as exc:
-            logger.error("dispatch_once falhou: %s", exc)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_dispatcher_once_failed",
+                extra={
+                    "attempted_action": "dispatch_once",
+                    "error_class": exc.__class__.__name__,
+                    "sanitized_error": sanitize_exception(exc, max_length=512),
+                    "duration_ms": duration_ms,
+                },
+            )
             return EXIT_STORE
 
         try:
@@ -237,10 +301,52 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
                 ensure_ascii=False,
             )
         except Exception as exc:
-            logger.error("Falha ao serializar resultado como JSON: %s", exc)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_dispatcher_once_failed",
+                extra={
+                    "attempted_action": "json_serialize",
+                    "error_class": exc.__class__.__name__,
+                    "sanitized_error": sanitize_exception(exc, max_length=512),
+                    "duration_ms": duration_ms,
+                },
+            )
             return EXIT_ARGS
 
         print(json_str, flush=True)
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "outbox_dispatcher_once_finished",
+            extra={
+                "batch_size": args.batch_size,
+                "consumer_name": args.consumer_name,
+                "processed_count": result.processed_count,
+                "dispatched_count": result.dispatched_count,
+                "already_processed_count": result.already_processed_count,
+                "retry_count": result.retry_count,
+                "dlq_count": result.dlq_count,
+                "duration_ms": duration_ms,
+            },
+        )
+
+        if result.retry_count > 0:
+            logger.warning(
+                "outbox_dispatcher_once_retry_detected",
+                extra={
+                    "consumer_name": args.consumer_name,
+                    "retry_count": result.retry_count,
+                },
+            )
+
+        if result.dlq_count > 0:
+            logger.warning(
+                "outbox_dispatcher_once_dlq_detected",
+                extra={
+                    "consumer_name": args.consumer_name,
+                    "dlq_count": result.dlq_count,
+                },
+            )
 
         if result.retry_count > 0 or result.dlq_count > 0:
             return EXIT_RESULT_FAIL

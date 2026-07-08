@@ -626,6 +626,125 @@ class TestFailureLogging:
 
 
 # =========================================================================
+# Grupo 4b — correlation_id/causation_id logging
+# =========================================================================
+
+
+class TestCorrelationIdLogging:
+    @pytest.mark.asyncio
+    async def test_retry_log_includes_correlation_id(self, caplog) -> None:
+        caplog.set_level(logging.WARNING, logger="app.infrastructure.outbox.outbox_dispatcher")
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=0, max_attempts=3)
+        event = OutboxEvent(
+            outbox_id=event.outbox_id,
+            event_id=event.event_id,
+            stream_id=event.stream_id,
+            stream_version=event.stream_version,
+            aggregate_id=event.aggregate_id,
+            event_type=event.event_type,
+            event_payload={"message_id": "m1"},
+            status=event.status,
+            attempts=event.attempts,
+            max_attempts=event.max_attempts,
+            available_at=event.available_at,
+            locked_by=event.locked_by,
+            locked_until=event.locked_until,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+            correlation_id="corr-123",
+            causation_id="cause-456",
+            metadata=event.metadata,
+        )
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        records = [
+            r for r in caplog.records
+            if r.message == "outbox_event_retry_scheduled"
+        ]
+        assert len(records) >= 1
+        assert getattr(records[0], "correlation_id", None) == "corr-123"
+        assert getattr(records[0], "causation_id", None) == "cause-456"
+
+    @pytest.mark.asyncio
+    async def test_retry_log_omits_correlation_id_when_none(self, caplog) -> None:
+        caplog.set_level(logging.WARNING, logger="app.infrastructure.outbox.outbox_dispatcher")
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=0, max_attempts=3)
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        records = [
+            r for r in caplog.records
+            if r.message == "outbox_event_retry_scheduled"
+        ]
+        assert len(records) >= 1
+        assert getattr(records[0], "correlation_id", None) is None
+        assert getattr(records[0], "causation_id", None) is None
+
+    @pytest.mark.asyncio
+    async def test_dlq_log_includes_causation_id(self, caplog) -> None:
+        caplog.set_level(logging.ERROR, logger="app.infrastructure.outbox.outbox_dispatcher")
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=2, max_attempts=3)
+        event = OutboxEvent(
+            outbox_id=event.outbox_id,
+            event_id=event.event_id,
+            stream_id=event.stream_id,
+            stream_version=event.stream_version,
+            aggregate_id=event.aggregate_id,
+            event_type=event.event_type,
+            event_payload={"message_id": "m1"},
+            status=event.status,
+            attempts=event.attempts,
+            max_attempts=event.max_attempts,
+            available_at=event.available_at,
+            locked_by=event.locked_by,
+            locked_until=event.locked_until,
+            created_at=event.created_at,
+            updated_at=event.updated_at,
+            correlation_id="corr-789",
+            causation_id="cause-012",
+            metadata=event.metadata,
+        )
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        records = [
+            r for r in caplog.records
+            if r.message == "outbox_event_dead_lettered"
+        ]
+        assert len(records) >= 1
+        assert getattr(records[0], "correlation_id", None) == "corr-789"
+        assert getattr(records[0], "causation_id", None) == "cause-012"
+
+    @pytest.mark.asyncio
+    async def test_dlq_log_omits_correlation_id_when_none(self, caplog) -> None:
+        caplog.set_level(logging.ERROR, logger="app.infrastructure.outbox.outbox_dispatcher")
+        store = _FakeStore()
+        consumer = _FakeConsumer()
+        event = _make_event(attempts=2, max_attempts=3)
+        consumer.set_raise(event.event_id, RuntimeError("err"))
+        store.set_claim_return([event])
+        d = OutboxDispatcher(store=store, consumer=consumer)
+        await d.dispatch_once()
+        records = [
+            r for r in caplog.records
+            if r.message == "outbox_event_dead_lettered"
+        ]
+        assert len(records) >= 1
+        assert getattr(records[0], "correlation_id", None) is None
+        assert getattr(records[0], "causation_id", None) is None
+
+
+# =========================================================================
 # Grupo 5 — Backoff/erro
 # =========================================================================
 

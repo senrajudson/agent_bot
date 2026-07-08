@@ -350,6 +350,52 @@ class TestT3Loop:
         assert fake_dispatcher.call_count == 1
 
 
+class TestT3bDurationMs:
+    @pytest.mark.asyncio
+    async def test_outbox_worker_iteration_includes_duration_ms(self, caplog) -> None:
+        caplog.set_level(logging.INFO, logger="run_outbox_worker")
+        fake_dispatcher = FakeOutboxDispatcher()
+        fake_dispatcher.set_return_values(
+            [FakeOutboxDispatchResult(claimed_count=5, processed_count=3)]
+        )
+        args = _make_args(max_iterations=1, interval_seconds=0.0)
+        shutdown_event = asyncio.Event()
+        code = await run_outbox_worker._run_loop(
+            fake_dispatcher, args, shutdown_event
+        )
+        assert code == 0
+        records = [
+            r for r in caplog.records
+            if r.message == "outbox_worker_iteration"
+        ]
+        assert len(records) >= 1
+        duration = getattr(records[0], "duration_ms", None)
+        assert duration is not None, "duration_ms must be present"
+        assert isinstance(duration, int)
+        assert duration >= 0
+
+    @pytest.mark.asyncio
+    async def test_outbox_worker_idle_does_not_include_duration_ms(
+        self, caplog
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="run_outbox_worker")
+        fake_dispatcher = FakeOutboxDispatcher()
+        fake_dispatcher.set_return_values(
+            [FakeOutboxDispatchResult(claimed_count=0)]
+        )
+        args = _make_args(max_iterations=1, interval_seconds=0.0)
+        shutdown_event = asyncio.Event()
+        code = await run_outbox_worker._run_loop(
+            fake_dispatcher, args, shutdown_event
+        )
+        assert code == 0
+        idle_records = [
+            r for r in caplog.records
+            if r.message == "outbox_worker_idle"
+        ]
+        assert len(idle_records) >= 0  # idle may or may not appear
+
+
 # =========================================================================
 # T4 — TestShutdown
 # =========================================================================

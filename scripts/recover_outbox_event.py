@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
@@ -91,8 +92,19 @@ logging.basicConfig(
 logger = logging.getLogger("recover_outbox_event")
 
 
+from app.infrastructure.outbox._error_redaction import sanitize_exception
+
+
 def _redact_dsn(dsn: str) -> str:
     return re.sub(r"(://)[^@]+(@)", r"\1[REDACTED]\2", dsn)
+
+
+def _safe_error_extra(exc: BaseException, attempted: str) -> dict[str, Any]:
+    return {
+        "attempted_action": attempted,
+        "error_class": exc.__class__.__name__,
+        "sanitized_error": sanitize_exception(exc, max_length=512),
+    }
 
 
 def _outbox_id_type(val: str) -> int:
@@ -251,12 +263,15 @@ async def _check_eligibility(
         "status": None,
         "attempts": None,
         "max_attempts": None,
+        "correlation_id": None,
+        "causation_id": None,
     }
 
     # V3 — outbox_id exists
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT event_id, event_type, status, attempts, max_attempts "
+            "SELECT event_id, event_type, status, attempts, max_attempts, "
+            "correlation_id, causation_id "
             "FROM outbox_events WHERE outbox_id = $1",
             outbox_id,
         )
@@ -270,6 +285,8 @@ async def _check_eligibility(
     result["status"] = row["status"]
     result["attempts"] = row["attempts"]
     result["max_attempts"] = row["max_attempts"]
+    result["correlation_id"] = row.get("correlation_id")
+    result["causation_id"] = row.get("causation_id")
 
     # V4 — status must be dead_letter
     if row["status"] != "dead_letter":
@@ -344,11 +361,14 @@ async def _check_eligibility_locked(
         "status": None,
         "attempts": None,
         "max_attempts": None,
+        "correlation_id": None,
+        "causation_id": None,
     }
 
     # V3 — outbox_id exists (already locked by FOR UPDATE)
     row = await conn.fetchrow(
-        "SELECT event_id, event_type, status, attempts, max_attempts "
+        "SELECT event_id, event_type, status, attempts, max_attempts, "
+        "correlation_id, causation_id "
         "FROM outbox_events WHERE outbox_id = $1",
         outbox_id,
     )
@@ -362,6 +382,8 @@ async def _check_eligibility_locked(
     result["status"] = row["status"]
     result["attempts"] = row["attempts"]
     result["max_attempts"] = row["max_attempts"]
+    result["correlation_id"] = row.get("correlation_id")
+    result["causation_id"] = row.get("causation_id")
 
     # V4 — status must be dead_letter
     if row["status"] != "dead_letter":
@@ -498,6 +520,7 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
     import asyncpg
     from uuid import uuid4
 
+    t0 = time.monotonic()
     operation_id = str(uuid4())
     metadata = _build_audit_metadata(args)
 
@@ -509,20 +532,50 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
             command_timeout=COMMAND_TIMEOUT,
         )
     except Exception as exc:
-        logger.error("Falha ao criar pool asyncpg: %s", exc)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(
+            "outbox_recovery_failed",
+            extra={
+                **_safe_error_extra(exc, "pool_create"),
+                "outbox_id": args.outbox_id,
+                "consumer_name": args.consumer_name,
+                "duration_ms": duration_ms,
+            },
+        )
         return EXIT_QUERY
 
     async with pool:
         schema_code = await _verify_schema(pool, TABLES_TO_CHECK)
         if schema_code != EXIT_OK:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_recovery_failed",
+                extra={
+                    "outbox_id": args.outbox_id,
+                    "consumer_name": args.consumer_name,
+                    "attempted_action": "schema_check",
+                    "sanitized_error": f"exit_code={schema_code}",
+                    "duration_ms": duration_ms,
+                },
+            )
             return schema_code
+
+        logger.info(
+            "outbox_recovery_execute_started",
+            extra={
+                "outbox_id": args.outbox_id,
+                "consumer_name": args.consumer_name,
+                "command_source": "cli",
+            },
+        )
 
         try:
             async with pool.acquire() as conn:
                 async with conn.transaction():
                     # 1. SELECT FOR UPDATE on the target row
                     row = await conn.fetchrow(
-                        "SELECT event_id, event_type, status, attempts, max_attempts "
+                        "SELECT event_id, event_type, status, attempts, max_attempts, "
+                        "correlation_id, causation_id "
                         "FROM outbox_events WHERE outbox_id = $1 FOR UPDATE",
                         args.outbox_id,
                     )
@@ -541,6 +594,8 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
                     previous_attempts = row["attempts"]
                     event_id = row["event_id"]
                     event_type = row["event_type"]
+                    correlation_id = row.get("correlation_id")
+                    causation_id = row.get("causation_id")
 
                     # 3. Insert audit record (BEFORE the UPDATE)
                     await conn.execute(
@@ -574,7 +629,7 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
                     # 4. UPDATE outbox_events to pending
                     #    Only columns that exist in the schema:
                     #    locked_by, locked_until (NOT locked_at / lock_owner)
-                    result = await conn.execute(
+                    update_result = await conn.execute(
                         """
                         UPDATE outbox_events
                         SET status = 'pending',
@@ -590,10 +645,10 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
                         """,
                         args.outbox_id,
                     )
-                    if result != "UPDATE 1":
+                    if update_result != "UPDATE 1":
                         logger.error(
                             "UPDATE affected %s rows, expected 1 for outbox_id=%s",
-                            result,
+                            update_result,
                             args.outbox_id,
                         )
                         return EXIT_UNEXPECTED
@@ -601,6 +656,7 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
                     # 5. Transaction commits here
 
             # 6. Build safe output record
+            duration_ms = int((time.monotonic() - t0) * 1000)
             out_rd: dict[str, Any] = {
                 "executed": True,
                 "eligible": True,
@@ -617,6 +673,21 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
                 "next_step": "run worker or one-shot separately",
             }
 
+            execute_extra: dict[str, Any] = {
+                "outbox_id": args.outbox_id,
+                "consumer_name": args.consumer_name,
+                "event_id": event_id,
+                "event_type": event_type,
+                "operation_id": operation_id,
+                "command_source": "cli",
+                "duration_ms": duration_ms,
+            }
+            if correlation_id:
+                execute_extra["correlation_id"] = correlation_id
+            if causation_id:
+                execute_extra["causation_id"] = causation_id
+            logger.info("outbox_recovery_execute_finished", extra=execute_extra)
+
             if args.json:
                 _print_execute_json(out_rd)
             else:
@@ -625,7 +696,20 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
             return EXIT_OK
 
         except _NotEligible as exc:
-            # Rollback already happened, output not-eligible result
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            blocked_extra: dict[str, Any] = {
+                "outbox_id": args.outbox_id,
+                "consumer_name": args.consumer_name,
+                "reason_code": exc.reason_code,
+                "command_source": "cli",
+                "duration_ms": duration_ms,
+            }
+            if correlation_id:
+                blocked_extra["correlation_id"] = correlation_id
+            if causation_id:
+                blocked_extra["causation_id"] = causation_id
+            logger.warning("outbox_recovery_execute_blocked", extra=blocked_extra)
+
             ne_rd: dict[str, Any] = {
                 "executed": False,
                 "eligible": False,
@@ -641,14 +725,29 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
             return EXIT_QUERY
 
         except asyncpg.PostgresError as exc:
+            duration_ms = int((time.monotonic() - t0) * 1000)
             logger.error(
-                "Erro transacional: %s",
-                _sanitize_execute_record({"error": str(exc)})["error"],
+                "outbox_recovery_failed",
+                extra={
+                    **_safe_error_extra(exc, "execute_recovery-postgres"),
+                    "outbox_id": args.outbox_id,
+                    "consumer_name": args.consumer_name,
+                    "duration_ms": duration_ms,
+                },
             )
             return EXIT_QUERY
 
         except Exception as exc:
-            logger.error("Erro inesperado: %s", exc)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_recovery_failed",
+                extra={
+                    **_safe_error_extra(exc, "execute_recovery-unknown"),
+                    "outbox_id": args.outbox_id,
+                    "consumer_name": args.consumer_name,
+                    "duration_ms": duration_ms,
+                },
+            )
             return EXIT_UNEXPECTED
 
 
@@ -660,6 +759,7 @@ async def _execute_recovery(dsn: str, args: argparse.Namespace) -> int:
 async def _run_once(dsn: str, args: argparse.Namespace) -> int:
     import asyncpg
 
+    t0 = time.monotonic()
     try:
         pool = await asyncpg.create_pool(
             dsn,
@@ -668,13 +768,40 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
             command_timeout=COMMAND_TIMEOUT,
         )
     except Exception as exc:
-        logger.error("Falha ao criar pool asyncpg: %s", exc)
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(
+            "outbox_recovery_failed",
+            extra={
+                **_safe_error_extra(exc, "pool_create"),
+                "duration_ms": duration_ms,
+            },
+        )
         return EXIT_QUERY
 
     async with pool:
         schema_code = await _verify_schema(pool, TABLES_TO_CHECK)
         if schema_code != EXIT_OK:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_recovery_failed",
+                extra={
+                    "outbox_id": args.outbox_id,
+                    "consumer_name": args.consumer_name,
+                    "attempted_action": "schema_check",
+                    "sanitized_error": f"exit_code={schema_code}",
+                    "duration_ms": duration_ms,
+                },
+            )
             return schema_code
+
+        logger.info(
+            "outbox_recovery_dry_run_started",
+            extra={
+                "outbox_id": args.outbox_id,
+                "consumer_name": args.consumer_name,
+                "command_source": "cli",
+            },
+        )
 
         try:
             rd = await _check_eligibility(
@@ -684,8 +811,36 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
                 ticket_or_reason=args.ticket or args.reason,
             )
         except Exception as exc:
-            logger.error("Falha na consulta: %s", exc)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_recovery_failed",
+                extra={
+                    **_safe_error_extra(exc, "eligibility_check"),
+                    "outbox_id": args.outbox_id,
+                    "consumer_name": args.consumer_name,
+                    "duration_ms": duration_ms,
+                },
+            )
             return EXIT_QUERY
+
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    extra: dict[str, Any] = {
+        "outbox_id": args.outbox_id,
+        "consumer_name": args.consumer_name,
+        "eligible": rd["eligible"],
+        "duration_ms": duration_ms,
+    }
+    if rd.get("event_id"):
+        extra["event_id"] = rd["event_id"]
+    if rd.get("event_type"):
+        extra["event_type"] = rd["event_type"]
+    if rd.get("correlation_id"):
+        extra["correlation_id"] = rd["correlation_id"]
+    if rd.get("causation_id"):
+        extra["causation_id"] = rd["causation_id"]
+    if not rd["eligible"] and rd.get("reason_code"):
+        extra["reason_code"] = rd["reason_code"]
+    logger.info("outbox_recovery_dry_run_finished", extra=extra)
 
     if args.json:
         _print_json(rd)

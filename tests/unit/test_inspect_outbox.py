@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from contextlib import redirect_stdout, redirect_stderr
@@ -486,13 +487,82 @@ class TestT8SchemaQueryErrors:
         ):
             inspect_outbox.main(["outbox-pending"])
         assert any(
-            "unexpected failure" in rec.message
+            rec.message == "outbox_inspect_failed"
             for rec in caplog.records
         ), "erro deve estar no log"
-        assert not any(
-            "SENSITIVE" in rec.message
+        assert any(
+            getattr(rec, "sanitized_error", None)
             for rec in caplog.records
-        ), "SENSITIVE não deve vazar em log"
+        ), "sanitized_error deve estar presente"
+        assert not any(
+            "SENSITIVE" in str(getattr(rec, "sanitized_error", ""))
+            for rec in caplog.records
+        ), "SENSITIVE não deve vazar em sanitized_error"
+
+
+# =========================================================================
+# Structured logs
+# =========================================================================
+
+
+class TestT9InspectStructuredLogs:
+    def test_inspect_started_logged(self, caplog) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = (
+            "postgresql://u:p@127.0.0.1:5432/events"
+        )
+        caplog.set_level(logging.INFO, logger="inspect_outbox")
+        with patch(
+            "asyncpg.create_pool",
+            side_effect=RuntimeError("pool error"),
+        ):
+            inspect_outbox.main(["outbox-pending"])
+        assert any(
+            r.message == "outbox_inspect_failed"
+            for r in caplog.records
+        ), "inspect_failed must be logged"
+
+    def test_inspect_failed_has_duration_ms(self, caplog) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = (
+            "postgresql://u:p@127.0.0.1:5432/events"
+        )
+        caplog.set_level(logging.ERROR, logger="inspect_outbox")
+        with patch(
+            "asyncpg.create_pool",
+            side_effect=RuntimeError("pool error"),
+        ):
+            inspect_outbox.main(["outbox-pending"])
+        failed = [
+            r for r in caplog.records
+            if r.message == "outbox_inspect_failed"
+        ]
+        assert len(failed) >= 1
+        dur = getattr(failed[0], "duration_ms", None)
+        assert dur is not None
+        assert isinstance(dur, int)
+        assert dur >= 0
+
+    def test_inspect_failed_sanitizes_error(self, caplog) -> None:
+        os.environ["EVENT_STORE_POSTGRES_DSN"] = (
+            "postgresql://u:p@127.0.0.1:5432/events"
+        )
+        caplog.set_level(logging.ERROR, logger="inspect_outbox")
+        with patch(
+            "asyncpg.create_pool",
+            side_effect=RuntimeError(
+                "secret_token_in_error_message"
+            ),
+        ):
+            inspect_outbox.main(["outbox-pending"])
+        failed = [
+            r for r in caplog.records
+            if r.message == "outbox_inspect_failed"
+        ]
+        assert len(failed) >= 1
+        err = getattr(failed[0], "sanitized_error", "")
+        assert err != ""
+        # The raw exception message should NOT appear directly (it's sanitized)
+        # but the class name should be present
+        assert getattr(failed[0], "error_class", "") == "RuntimeError"
 
 
 # =========================================================================

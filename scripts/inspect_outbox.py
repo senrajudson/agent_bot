@@ -22,9 +22,12 @@ import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
+
+from app.infrastructure.outbox._error_redaction import sanitize_exception
 
 _repo_root = str(Path(__file__).resolve().parent.parent)
 if _repo_root not in sys.path:
@@ -413,6 +416,8 @@ def _format_and_print(
 async def _run_once(dsn: str, args: argparse.Namespace) -> int:
     import asyncpg
 
+    t0 = time.monotonic()
+
     try:
         pool = await asyncpg.create_pool(
             dsn,
@@ -421,8 +426,17 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
             command_timeout=COMMAND_TIMEOUT,
         )
     except Exception as exc:
-        from app.infrastructure.outbox._error_redaction import sanitize_error_message
-        logger.error("Falha ao criar pool asyncpg: %s", sanitize_error_message(str(exc)))
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        logger.error(
+            "outbox_inspect_failed",
+            extra={
+                "command": args.subcommand,
+                "attempted_action": "pool_create",
+                "error_class": exc.__class__.__name__,
+                "sanitized_error": sanitize_exception(exc, max_length=200),
+                "duration_ms": duration_ms,
+            },
+        )
         return EXIT_QUERY
 
     async with pool:
@@ -433,7 +447,28 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
         }
         schema_code = await _verify_schema(pool, tables[args.subcommand])
         if schema_code != EXIT_OK:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_inspect_failed",
+                extra={
+                    "command": args.subcommand,
+                    "attempted_action": "schema_check",
+                    "sanitized_error": f"exit_code={schema_code}",
+                    "duration_ms": duration_ms,
+                },
+            )
             return schema_code
+
+        logger.info(
+            "outbox_inspect_started",
+            extra={
+                "command": args.subcommand,
+                "event_type": args.event_type,
+                "since": args.since,
+                "outbox_id": args.outbox_id,
+                "limit": args.limit,
+            },
+        )
 
         queries = {
             "outbox-pending": _query_pending,
@@ -443,9 +478,28 @@ async def _run_once(dsn: str, args: argparse.Namespace) -> int:
         try:
             records = await queries[args.subcommand](pool, args)
         except Exception as exc:
-            logger.error("Falha na consulta: %s", exc)
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.error(
+                "outbox_inspect_failed",
+                extra={
+                    "command": args.subcommand,
+                    "attempted_action": "query",
+                    "error_class": exc.__class__.__name__,
+                    "sanitized_error": sanitize_exception(exc, max_length=200),
+                    "duration_ms": duration_ms,
+                },
+            )
             return EXIT_QUERY
 
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    logger.info(
+        "outbox_inspect_finished",
+        extra={
+            "command": args.subcommand,
+            "count": len(records),
+            "duration_ms": duration_ms,
+        },
+    )
     _format_and_print(records, args, dsn)
     return EXIT_OK
 

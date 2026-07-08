@@ -550,6 +550,30 @@ O worker emite 11 eventos de log estruturados, todos via `extra={}` (sem `logger
 - Múltiplos workers concorrentes: não suportado.
 - Recovery executável: disponível via `recover_outbox_event.py --execute` (seção 11h).
 
+### 13.10. Logs estruturados (Prompt 25)
+
+A partir do Prompt 25, o fluxo EDD emite logs estruturados seguros em `stderr` via `logger.<nível>("evento", extra={...})`.
+
+**Eventos novos ou modificados:**
+- `outbox_dispatcher_once_started/finished/failed/retry_detected/dlq_detected` (`scripts/run_outbox_dispatcher_once.py`)
+- `outbox_recovery_dry_run_started/finished` (`scripts/recover_outbox_event.py`)
+- `outbox_recovery_execute_started/finished/blocked` (idem)
+- `outbox_recovery_failed` (idem)
+- `outbox_inspect_started/finished/failed` (`scripts/inspect_outbox.py`)
+- `outbox_worker_iteration` (ganha `duration_ms`)
+- `outbox_event_retry_scheduled/dead_lettered` (ganha `correlation_id`/`causation_id`)
+
+**Campos permitidos em `extra={}`**: batch_size, processed_count, dispatched_count, already_processed_count, retry_count, dlq_count, duration_ms, consumer_name, reason_code, outbox_id, event_id, event_type, correlation_id, causation_id, operation_id, command_source, iteration, error_class, sanitized_error, attempted_action.
+
+**Campos proibidos em `extra={}`**: event_payload, payload, user_message, assistant_message, aggregate_id, conversation_id, user_id, metadata, DSN bruto, token, secret, password, api_key, authorization, Bearer.
+
+**Sanitização**: todos os `logger.error` com exception usam `sanitize_exception` de `app.infrastructure.outbox._error_redaction`. Sem `logger.exception`, sem stack trace.
+
+**DLQ count**: continua via `inspect_outbox.py outbox-dlq`. Sem gauge runtime.
+
+**Métricas Counter/Histogram/Gauge**: não implementadas neste Prompt.
+**Spans OTel/Phoenix**: não implementados neste Prompt.
+
 ## 14. Fora do escopo
 
 - Replay automático de `outbox_dlq` (não existe; decisão futura)

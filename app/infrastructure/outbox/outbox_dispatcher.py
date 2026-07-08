@@ -247,19 +247,24 @@ class OutboxDispatcher:
                         error=exc,
                         delay_seconds=delay,
                     )
+                    retry_extra: dict[str, Any] = {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "consumer_name": self._consumer_name,
+                        "attempts": attempts_after,
+                        "max_attempts": event.max_attempts,
+                        "next_attempt_at_seconds": delay,
+                        "action": "retry_scheduled",
+                        "error_class": exc.__class__.__name__,
+                        "sanitized_error": sanitize_exception(exc, max_length=512),
+                    }
+                    if event.correlation_id:
+                        retry_extra["correlation_id"] = event.correlation_id
+                    if event.causation_id:
+                        retry_extra["causation_id"] = event.causation_id
                     logger.warning(
                         "outbox_event_retry_scheduled",
-                        extra={
-                            "event_id": event.event_id,
-                            "event_type": event.event_type,
-                            "consumer_name": self._consumer_name,
-                            "attempts": attempts_after,
-                            "max_attempts": event.max_attempts,
-                            "next_attempt_at_seconds": delay,
-                            "action": "retry_scheduled",
-                            "error_class": exc.__class__.__name__,
-                            "sanitized_error": sanitize_exception(exc, max_length=512),
-                        },
+                        extra=retry_extra,
                     )
                     retried += 1
                 else:
@@ -267,18 +272,23 @@ class OutboxDispatcher:
                         event=event,
                         error=exc,
                     )
+                    dlq_extra: dict[str, Any] = {
+                        "event_id": event.event_id,
+                        "event_type": event.event_type,
+                        "consumer_name": self._consumer_name,
+                        "attempts": attempts_after,
+                        "max_attempts": event.max_attempts,
+                        "action": "dead_lettered",
+                        "error_class": exc.__class__.__name__,
+                        "sanitized_error": sanitize_exception(exc, max_length=512),
+                    }
+                    if event.correlation_id:
+                        dlq_extra["correlation_id"] = event.correlation_id
+                    if event.causation_id:
+                        dlq_extra["causation_id"] = event.causation_id
                     logger.error(
                         "outbox_event_dead_lettered",
-                        extra={
-                            "event_id": event.event_id,
-                            "event_type": event.event_type,
-                            "consumer_name": self._consumer_name,
-                            "attempts": attempts_after,
-                            "max_attempts": event.max_attempts,
-                            "action": "dead_lettered",
-                            "error_class": exc.__class__.__name__,
-                            "sanitized_error": sanitize_exception(exc, max_length=512),
-                        },
+                        extra=dlq_extra,
                     )
                     dlq += 1
                 continue
