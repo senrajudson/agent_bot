@@ -317,7 +317,7 @@ class TestEventPublisherFireAndForget:
         """EventPublisherImpl.publish engole exceções."""
         src = inspect.getsource(EventPublisherImpl.publish)
         assert "except" in src
-        assert "pass" in src
+        assert "logger.warning" in src
 
     @pytest.mark.asyncio
     async def test_publish_does_not_propagate_eventstore_error(self) -> None:

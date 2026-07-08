@@ -387,7 +387,6 @@ class ConversationSaga:
                     type(exc).__name__,
                     _truncate_error_message(str(exc)),
                 )
-                pass  # Fire-and-forget: publish failure in saga is non-critical
 
     # -----------------------------------------------------------------------
     # EDD gate helper
@@ -645,7 +644,6 @@ async def _publish_error(saga, ctx: ConversationContext, exc: Exception) -> None
                 type(publish_exc).__name__,
                 _truncate_error_message(str(publish_exc)),
             )
-            pass  # Fire-and-forget: error-event publish failure is non-critical
 
 
 # ---------------------------------------------------------------------------

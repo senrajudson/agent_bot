@@ -52,6 +52,14 @@ from app.infrastructure.outbox.outbox_dispatcher import (
 from app.infrastructure.outbox.event_type_router_consumer import (
     EventTypeRouterConsumer,
 )
+from app.infrastructure.outbox._cli_shared import (
+    COMMAND_TIMEOUT,
+    DSN_REGEX,
+    POOL_MIN_SIZE,
+    POOL_MAX_SIZE,
+    redact_dsn as _redact_dsn,
+    setup_edd_cli_logging,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -68,38 +76,19 @@ EXIT_STARTUP = 5
 # Constants
 # ---------------------------------------------------------------------------
 
-DSN_REGEX = re.compile(
-    r"^postgresql://[^@]+@(127\.0\.0\.1|localhost):[0-9]+/[^?]+$"
-)
 BATCH_SIZE_DEFAULT = 10
 INTERVAL_SECONDS_DEFAULT = 5.0
 BACKOFF_BASE_DEFAULT = 1.0
 BACKOFF_MAX_DEFAULT = 30.0
 JITTER_DEFAULT = 0.0
 CONSUMER_NAME_DEFAULT = "outbox-conversation-memory-save-v1"
-POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 1
-COMMAND_TIMEOUT = 30
 
 # ---------------------------------------------------------------------------
 # Logger
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stderr,
-)
+setup_edd_cli_logging()
 logger = logging.getLogger("run_outbox_worker")
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _redact_dsn(dsn: str) -> str:
-    """Redact credentials from a PostgreSQL DSN for safe logging."""
-    return re.sub(r"(://)[^@]+(@)", r"\1[REDACTED]\2", dsn)
 
 
 def _dsn_host_for_log(dsn: str) -> str:

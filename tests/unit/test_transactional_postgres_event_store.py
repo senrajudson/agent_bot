@@ -1001,3 +1001,46 @@ class TestProjectionEventMapping:
                 assert "event_id" not in payload
                 assert "aggregate_id" not in payload
                 assert "metadata" not in payload
+
+
+# =========================================================================
+# TestSafePayload
+# =========================================================================
+
+
+class TestSafePayload:
+    """Tests for TransactionalPostgresEventStore._safe_payload defensive serializer."""
+
+    def test_safe_payload_uses_vars_when_no_payload_method(self) -> None:
+        @dataclass
+        class _CustomEvent:
+            name: str
+            value: int
+
+        event = _CustomEvent(name="test", value=42)
+        result = TransactionalPostgresEventStore._safe_payload(event)
+        assert result == {"name": "test", "value": 42}
+
+    def test_safe_payload_uses_payload_when_returns_dict(self) -> None:
+        @dataclass
+        class _EventWithPayload:
+            name: str
+
+            def _payload(self) -> dict:
+                return {"custom_key": self.name}
+
+        event = _EventWithPayload(name="custom")
+        result = TransactionalPostgresEventStore._safe_payload(event)
+        assert result == {"custom_key": "custom"}
+
+    def test_safe_payload_falls_back_to_vars_when_payload_returns_non_dict(self) -> None:
+        @dataclass
+        class _EventWithBadPayload:
+            x: int
+
+            def _payload(self) -> str:
+                return "not a dict"
+
+        event = _EventWithBadPayload(x=99)
+        result = TransactionalPostgresEventStore._safe_payload(event)
+        assert result == {"x": 99}

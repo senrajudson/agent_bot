@@ -36,7 +36,6 @@ class EventPublisherImpl:
                 type(exc).__name__,
                 _truncate_error_message(str(exc)),
             )
-            pass  # Fire-and-forget: event publish failure is non-critical
 
     async def publish_to_conversation(
         self, conversation_id: str, event: DomainEvent

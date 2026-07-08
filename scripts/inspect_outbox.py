@@ -27,11 +27,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
 
-from app.infrastructure.outbox._error_redaction import sanitize_exception
-
 _repo_root = str(Path(__file__).resolve().parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+
+from app.infrastructure.outbox._cli_shared import (
+    COMMAND_TIMEOUT,
+    DSN_REGEX,
+    POOL_MIN_SIZE,
+    POOL_MAX_SIZE,
+    redact_dsn as _redact_dsn,
+    setup_edd_cli_logging,
+)
+from app.infrastructure.outbox._error_redaction import sanitize_exception
 
 
 # ---------------------------------------------------------------------------
@@ -48,15 +56,9 @@ EXIT_QUERY = 4
 # Constants
 # ---------------------------------------------------------------------------
 
-DSN_REGEX = re.compile(
-    r"^postgresql://[^@]+@(127\.0\.0\.1|localhost):[0-9]+/[^?]+$"
-)
 BATCH_LIMIT_DEFAULT = 50
 BATCH_LIMIT_MAX = 500
 ERROR_TRUNCATE_LEN = 200
-COMMAND_TIMEOUT = 30
-POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 1
 
 
 def _limit_type(val: str) -> int:
@@ -71,21 +73,8 @@ def _limit_type(val: str) -> int:
 # Logger
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stderr,
-)
+setup_edd_cli_logging()
 logger = logging.getLogger("inspect_outbox")
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _redact_dsn(dsn: str) -> str:
-    """Redact credentials from a PostgreSQL DSN for safe logging."""
-    return re.sub(r"(://)[^@]+(@)", r"\1[REDACTED]\2", dsn)
 
 
 # ---------------------------------------------------------------------------

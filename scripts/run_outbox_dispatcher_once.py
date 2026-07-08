@@ -30,6 +30,14 @@ from app.infrastructure.outbox.outbox_dispatcher import (
     OutboxDispatchResult,
     PostgresOutboxStore,
 )
+from app.infrastructure.outbox._cli_shared import (
+    COMMAND_TIMEOUT,
+    DSN_REGEX,
+    POOL_MIN_SIZE,
+    POOL_MAX_SIZE,
+    redact_dsn as _redact_dsn,
+    setup_edd_cli_logging,
+)
 from app.infrastructure.outbox._error_redaction import sanitize_exception
 
 # ---------------------------------------------------------------------------
@@ -47,33 +55,15 @@ EXIT_STORE = 5
 # Constants
 # ---------------------------------------------------------------------------
 
-DSN_REGEX = re.compile(
-    r"^postgresql://[^@]+@(127\.0\.0\.1|localhost):[0-9]+/[^?]+$"
-)
 BATCH_SIZE_DEFAULT = 10
 CONSUMER_NAME_DEFAULT = "outbox-conversation-memory-save-v1"
-COMMAND_TIMEOUT = 30
-POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 1
 
 # ---------------------------------------------------------------------------
 # Logger
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stderr,
-)
+setup_edd_cli_logging()
 logger = logging.getLogger("run_outbox_dispatcher_once")
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _redact_dsn(dsn: str) -> str:
-    return re.sub(r"(://)[^@]+(@)", r"\1[REDACTED]\2", dsn)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

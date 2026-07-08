@@ -185,8 +185,8 @@ Motivo: ...
 | `outbox_dlq` | Tabela separada que armazena snapshot do evento na falha terminal. |
 | `retry` | Reagendamento automático com backoff exponencial (`mark_retry`). |
 | `recovery` | Ação de recolocar evento `dead_letter` como `pending` via `recover_outbox_event.py --execute`. |
-| `replay` | (Bloqueado) Reexecução de evento para reconstruir estado. |
-| `purge` | (Futuro exclusão manual de registros antigos. |
+| `replay` | (Bloqueado — ver seção 12) Reexecução de evento para reconstruir estado. |
+| `purge` | (Futuro) Exclusão manual de registros antigos. |
 
 ### 11e. Script read-only `inspect_outbox.py`
 
@@ -256,7 +256,6 @@ python scripts/inspect_outbox.py outbox-pending --json --limit 5
 > A seção 11 original (Prompts 12–19) marcava retenção como "decisão futura".
 > A partir do Prompt 20, a política está definida nas seções 11a–11f.
 > A partir do Prompt 21, a política está definida nas seções 11a–11g.
-> Esta subseção existe apenas para rastreabilidade e será removida em Prompt futuro.
 
 ### 11g. Script dry-run `recover_outbox_event.py`
 

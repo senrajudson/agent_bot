@@ -77,26 +77,18 @@ FORBIDDEN_OUTPUT_KEYS: frozenset[str] = frozenset({
 
 MAX_REQUESTED_BY_LENGTH = 256
 
-DSN_REGEX = re.compile(
-    r"^postgresql://[^@]+@(127\.0\.0\.1|localhost):[0-9]+/[^?]+$"
+from app.infrastructure.outbox._cli_shared import (
+    COMMAND_TIMEOUT,
+    DSN_REGEX,
+    POOL_MIN_SIZE,
+    POOL_MAX_SIZE,
+    redact_dsn as _redact_dsn,
+    setup_edd_cli_logging,
 )
-COMMAND_TIMEOUT = 30
-POOL_MIN_SIZE = 1
-POOL_MAX_SIZE = 1
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    stream=sys.stderr,
-)
-logger = logging.getLogger("recover_outbox_event")
-
-
 from app.infrastructure.outbox._error_redaction import sanitize_exception
 
-
-def _redact_dsn(dsn: str) -> str:
-    return re.sub(r"(://)[^@]+(@)", r"\1[REDACTED]\2", dsn)
+setup_edd_cli_logging()
+logger = logging.getLogger("recover_outbox_event")
 
 
 def _safe_error_extra(exc: BaseException, attempted: str) -> dict[str, Any]:
@@ -194,9 +186,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error(
             f"--requested-by must be at most {MAX_REQUESTED_BY_LENGTH} characters"
         )
-
-    if args.execute:
-        args.yes_i_confirm_recovery = True
 
     return args
 
