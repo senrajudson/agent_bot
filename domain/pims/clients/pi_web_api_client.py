@@ -15,6 +15,10 @@ POINT_SELECTED_FIELDS = (
     "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet"
 )
 
+SEARCH_SELECTED_FIELDS = (
+    "Items.WebId;Items.Name;Items.Descriptor;Items.EngineeringUnits;Items.PointType;Items.DigitalSet"
+)
+
 
 def _get_auth() -> tuple[str, str] | None:
     if settings.PI_WEB_API_USERNAME and settings.PI_WEB_API_PASSWORD:
@@ -467,3 +471,50 @@ async def buscar_dados_temporais_tag(
             "max_count": max_count if method == "recorded" else None,
         },
     }
+
+
+async def search_pi_points(
+    query: str,
+    max_count: int = 20,
+    selected_fields: str | None = None,
+) -> dict[str, Any]:
+    """Busca PI Points via /points/search (PI Point Search Syntax)."""
+    data_server = await get_data_server()
+    web_id = data_server["WebId"]
+    params: dict[str, Any] = {
+        "dataServerWebId": web_id,
+        "query": query,
+        "maxCount": max_count,
+    }
+    if selected_fields:
+        params["selectedFields"] = selected_fields
+    else:
+        params["selectedFields"] = POINT_SELECTED_FIELDS
+
+    return await _pi_get(
+        f"{_base_url()}/points/search",
+        params=params,
+    )
+
+
+async def get_points_by_name_filter(
+    name_filter: str,
+    max_count: int = 20,
+    selected_fields: str | None = None,
+) -> dict[str, Any]:
+    """Busca PI Points por nome via /dataservers/{webId}/points?nameFilter=."""
+    data_server = await get_data_server()
+    web_id = data_server["WebId"]
+
+    params: dict[str, Any] = {
+        "nameFilter": name_filter,
+    }
+    if selected_fields:
+        params["selectedFields"] = selected_fields
+    else:
+        params["selectedFields"] = POINT_SELECTED_FIELDS
+
+    return await _pi_get(
+        f"{_base_url()}/dataservers/{web_id}/points",
+        params=params,
+    )

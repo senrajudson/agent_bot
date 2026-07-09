@@ -34,7 +34,9 @@ mcp = FastMCP(
         "Use consultar_tag for current values and metadata. "
         "Use tag_statistics for historical aggregations (mean, max, min, sum, consumption). "
         "Use tag_calculus for temporal math (integral, derivative). "
-        "Use status_pims_tool for PIMS operational status via Grafana/Loki logs."
+        "Use status_pims_tool for PIMS operational status via Grafana/Loki logs. "
+        "Use search_pi_points to find/locate PI Points by name, description, "
+        "or text query when the user does not know the exact tag name."
     ),
 )
 
@@ -217,6 +219,38 @@ async def status_pims_tool(
         user_message=pergunta_usuario or "",
         lookback_minutes=lookback_minutes,
         include_raw_response=False,
+    )
+    return result["output"]
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_pi_points
+# ---------------------------------------------------------------------------
+@mcp.tool
+async def search_pi_points(
+    query: str,
+    max_count: int = 20,
+    search_mode: str = "auto",
+) -> str:
+    """
+    Buscar tags/PI Points no PI Server por nome, descrição ou query textual.
+
+    Use quando o usuário pedir para localizar, procurar, encontrar ou listar
+    tags relacionadas a um termo, equipamento, área, variável ou descrição.
+
+    Args:
+        query: Termo de busca (parte do nome, descrição, equipamento, etc.)
+        max_count: Máximo de resultados (default 20, máximo 100)
+        search_mode: Modo de busca: 'auto', 'name', 'description', 'query'
+    """
+    from domain.pims.services.search_points_service import (
+        search_pi_points as svc_search,
+    )
+
+    result = await svc_search(
+        query=query,
+        max_count=max_count,
+        search_mode=search_mode,
     )
     return result["output"]
 

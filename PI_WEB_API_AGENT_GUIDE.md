@@ -6,12 +6,74 @@ Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
 ## Mapa de tools
 
-| Intenção                                                          | Interpretação              | Tool sugerida         |
-| ----------------------------------------------------------------- | -------------------------- | --------------------- |
-| Valor atual, unidade, descrição, tipo, digital set, instrumenttag | Consulta pontual/metadados | `consultar_tag_tool`  |
-| Média, máximo, mínimo, soma, consumo, total por período           | Agregação histórica        | `tag_statistics_tool` |
-| Integral, derivada, taxa de variação, área sob curva              | Cálculo temporal explícito | `tag_calculus_tool`   |
-| Status do PIMS, servidores, logs                                  | Consulta operacional       | `status_pims_tool`    |
+| Intenção                                                                                                             | Interpretação              | Tool sugerida         |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------- |
+| Valor atual, unidade, descrição, tipo, digital set, instrumenttag                                                    | Consulta pontual/metadados | `consultar_tag_tool`  |
+| Descobrir, localizar, procurar, encontrar ou listar tags por nome, descrição, equipamento, área ou termo de processo | Descoberta de tags         | `search_pi_points`    |
+| Média, máximo, mínimo, soma, consumo, total por período                                                              | Agregação histórica        | `tag_statistics_tool` |
+| Integral, derivada, taxa de variação, área sob curva                                                                 | Cálculo temporal explícito | `tag_calculus_tool`   |
+| Status do PIMS, servidores, logs                                                                                     | Consulta operacional       | `status_pims_tool`    |
+
+## Descoberta de tags
+
+Use `search_pi_points` quando o usuário não souber o nome exato da tag e quiser encontrar tags relacionadas a uma descrição, equipamento, área, variável ou parte do nome.
+
+Use `consultar_tag_tool` quando o usuário já informou uma tag específica e quer valor atual, unidade, descrição, tipo, digital set, instrumenttag ou metadados.
+
+## Regra para perguntas naturais sobre tags
+
+Quando o usuário perguntar algo como:
+
+- "tem alguma tag de..."
+- "existe alguma tag de..."
+- "procure uma tag de..."
+- "me retorne uma tag relacionada a..."
+- "qual tag tem a ver com..."
+- "quero uma tag de velocidade do forno"
+- "tem alguma tag de velocidade do forno?"
+
+a intenção é descoberta de tags. Use `search_pi_points`.
+
+Para perguntas como:
+
+- "tag de velocidade do forno"
+- "tag de temperatura do forno"
+- "tag de pressão"
+- "tag de vazão"
+- "tag de espessura"
+- "tag de velocidade da linha"
+
+a palavra `velocidade`, `temperatura`, `pressão`, `vazão` ou similar representa uma variável de processo. Não interpretar como cálculo temporal, derivada ou taxa de variação, a menos que o usuário peça explicitamente cálculo, derivada, integral ou taxa de mudança.
+
+Exemplo:
+
+```text
+Usuário: "tem alguma tag de velocidade do forno?"
+
+search_pi_points:
+  query = "velocidade forno"
+  search_mode = "auto"
+```
+
+Se o usuário mencionar explicitamente busca por descrição:
+
+```text
+Usuário: "procure tags com descrição velocidade"
+
+search_pi_points:
+  query = "velocidade"
+  search_mode = "description"
+```
+
+Se o usuário mencionar explicitamente busca por nome:
+
+```text
+Usuário: "procure tags com nome LFI_RB3"
+
+search_pi_points:
+  query = "LFI_RB3"
+  search_mode = "name"
+```
 
 ## Consumo de vazão
 
@@ -763,6 +825,28 @@ Use para evitar interpretações frágeis em consulta e cálculo.
 
 Use quando o usuário pedir explicitamente integral, derivada, taxa de variação, área sob a curva ou velocidade de mudança.
 
+## Anti-confusão com descoberta de tags
+
+Não use este chunk quando o usuário estiver procurando uma tag que contenha a palavra `velocidade` ou uma variável chamada velocidade.
+
+Exemplos que NÃO são cálculo temporal:
+
+- "tem alguma tag de velocidade do forno?"
+- "procure tags de velocidade"
+- "me retorne uma tag de velocidade da linha"
+- "quero uma tag de velocidade"
+- "existe tag de velocidade do forno?"
+
+Nesses casos, a intenção é descoberta de tags. Use `search_pi_points` e consulte os chunks de descoberta de tags por `/points/search`, especialmente CHUNK 22 e CHUNK 23.
+
+Use `tag_calculus_tool` somente quando o usuário pedir cálculo matemático temporal de forma explícita, como:
+
+- "calcule a derivada da tag"
+- "calcule a taxa de variação"
+- "integre a vazão"
+- "qual a área sob a curva?"
+- "velocidade de mudança da variável"
+
 ## Tool
 
 `tag_calculus_tool` é voltada para cálculo temporal matemático explícito.
@@ -801,6 +885,8 @@ tag_calculus_tool:
 | integral da vazão           | cálculo matemático da área sob a curva | `tag_calculus_tool`   |
 | soma dos valores horários   | agregação dos blocos retornados        | `tag_statistics_tool` |
 | taxa de variação por minuto | derivada temporal                      | `tag_calculus_tool`   |
+| tag de velocidade do forno  | descoberta de tag                      | `search_pi_points`    |
+| procurar tags de velocidade | descoberta de tag                      | `search_pi_points`    |
 
 ## Unidade
 
@@ -837,3 +923,391 @@ consumo vazão mês passado
 Tags: LFI_RB3_VAZ_GN_TOTAL
 Termos: summary Average 1h TimeWeighted consumo start_time end_time ISO período fechado
 ```
+
+---
+
+# CHUNK 22 - PI Web API: descoberta de PI Points por nome ou descrição usando `/points/search`
+
+## Intenção
+
+Use este chunk quando precisar descobrir tags no PI Data Archive por nome de tag, descrição textual, equipamento, área, variável de processo ou termo informado pelo operador.
+
+Este chunk é especialmente importante para perguntas naturais como:
+
+- "tem alguma tag de velocidade do forno?"
+- "me retorne uma tag que tenha a ver com velocidade do forno"
+- "procure tags de velocidade"
+- "procure tags com descrição velocidade"
+- "quais tags têm descrição relacionada a temperatura?"
+- "existe tag de pressão do forno?"
+- "não sei o nome da tag, mas é sobre velocidade"
+- "quero uma tag de vazão do RB3"
+
+Essas perguntas devem usar `search_pi_points`, não `tag_calculus_tool`.
+
+## Endpoint principal
+
+```http
+GET {PI_WEB_API_BASE_URL}/points/search?dataServerWebId={DATA_SERVER_WEB_ID}&query={SEARCH_QUERY}&maxCount={N}
+```
+
+No ambiente PIMS validado:
+
+```text
+PI_WEB_API_BASE_URL = http://10.247.224.39/piwebapi
+PI_SERVER_NAME = PIMS
+DATA_SERVER_WEB_ID = F1DSxhF1MCtATE6DjgaMSVY2ggUElNUw
+```
+
+O `DATA_SERVER_WEB_ID` deve ser obtido dinamicamente pelo endpoint:
+
+```http
+GET http://10.247.224.39/piwebapi/dataservers?name=PIMS
+```
+
+Não hardcodar o WebId em código de produção se houver função de descoberta ou configuração disponível.
+
+## Busca por descrição
+
+Para buscar por descrição, use o filtro `Description`.
+
+```http
+GET http://10.247.224.39/piwebapi/points/search?dataServerWebId=F1DSxhF1MCtATE6DjgaMSVY2ggUElNUw&query=Description:=*velocidade*&maxCount=5
+```
+
+Regras:
+
+- Usar `Description`, não `Descriptor`.
+- O JSON retornado pelo PI Point pode ter campo `Descriptor`, mas a sintaxe de busca usa `Description`.
+- Usar o parâmetro `query`, não `q`.
+- Informar `dataServerWebId`.
+- Usar `maxCount=5` para não estourar o contexto do agente.
+- Para busca parcial, envolver o termo com wildcard `*`.
+
+Exemplo para a tool:
+
+```text
+search_pi_points:
+  query = "velocidade"
+  search_mode = "description"
+```
+
+Query enviada à PI Web API:
+
+```text
+Description:=*velocidade*
+```
+
+## Busca por nome
+
+Para buscar por nome da tag, use o filtro `Name`.
+
+```http
+GET http://10.247.224.39/piwebapi/points/search?dataServerWebId=F1DSxhF1MCtATE6DjgaMSVY2ggUElNUw&query=Name:=*LFI_RB3*&maxCount=5
+```
+
+Exemplo para a tool:
+
+```text
+search_pi_points:
+  query = "LFI_RB3"
+  search_mode = "name"
+```
+
+Query enviada à PI Web API:
+
+```text
+Name:=*LFI_RB3*
+```
+
+## Busca automática
+
+Para `search_mode="auto"`, a tool deve executar buscas separadas, não uma query única combinada.
+
+Ordem recomendada:
+
+```text
+1. Description:=*{termo}*
+2. Name:=*{termo}*
+3. Unir resultados.
+4. Remover duplicados por WebId ou Name.
+5. Retornar no máximo 5 tags.
+```
+
+Exemplo:
+
+```text
+Usuário: "tem alguma tag de velocidade do forno?"
+
+search_pi_points:
+  query = "velocidade forno"
+  search_mode = "auto"
+```
+
+A tool deve tentar primeiro busca por descrição:
+
+```text
+Description:=*velocidade forno*
+```
+
+Se vierem menos de 5 resultados, complementar por nome:
+
+```text
+Name:=*velocidade forno*
+```
+
+Se a busca por frase inteira não encontrar bons candidatos, a implementação da tool pode tentar termos principais ou padrões técnicos validados, como:
+
+```text
+Description:=*velocidade*
+Name:=*VEL*FORNO*
+Name:=*FRN*VELOCIDADE*
+```
+
+A resposta deve listar somente até 5 tags candidatas e pedir mais contexto se o operador precisar refinar.
+
+## Fallback por nameFilter
+
+O endpoint `nameFilter` também funciona para busca por nome:
+
+```http
+GET http://10.247.224.39/piwebapi/dataservers/F1DSxhF1MCtATE6DjgaMSVY2ggUElNUw/points?nameFilter=*velocidade*&maxCount=5
+```
+
+Use `nameFilter` como fallback ou apoio para busca por nome. Não usar `nameFilter` como substituto silencioso de busca por descrição.
+
+## Regras obrigatórias
+
+- Para descoberta de tags, usar `search_pi_points`.
+- Para busca por descrição, usar `/points/search` com `dataServerWebId` e `query=Description:=*termo*`.
+- Para busca por nome, usar `/points/search` com `dataServerWebId` e `query=Name:=*termo*`.
+- Usar `query`, não `q`.
+- Usar `Description`, não `Descriptor`.
+- Não enviar texto cru como `query=velocidade` quando a intenção for busca por descrição.
+- Não combinar `Name` e `Description` na mesma query esperando comportamento de `OR`.
+- Retornar no máximo 5 tags ao agente.
+- Se houver muitos candidatos, pedir ao operador mais contexto, como área, equipamento ou parte do nome da tag.
+
+## Exemplo recomendado em Python
+
+```python
+params = {
+    "dataServerWebId": data_server_web_id,
+    "query": "Description:=*velocidade*",
+    "maxCount": 5,
+}
+
+response = requests.get(
+    f"{PI_WEB_API_BASE_URL}/points/search",
+    params=params,
+    timeout=30,
+    verify=False,
+)
+```
+
+---
+
+# CHUNK 23 - PI Web API Search Query Syntax: regras para montar `query`
+
+## Intenção
+
+Use este chunk para montar corretamente o parâmetro `query` do endpoint `/points/search`.
+
+A PI Web API usa Search Query Syntax baseada em AFSearch para o parâmetro `query`. Não tratar `query` como pesquisa livre estilo Google.
+
+## Endpoint
+
+```http
+GET /points/search?dataServerWebId={DATA_SERVER_WEB_ID}&query={SEARCH_QUERY}&maxCount={N}
+```
+
+Parâmetros obrigatórios no ambiente PIMS:
+
+```text
+dataServerWebId  WebId do DataServer PIMS
+query            expressão de busca PI Point Search Syntax
+maxCount         limite de resultados
+```
+
+No agente, usar `maxCount=5` para descoberta de tags.
+
+## Filtros principais para PI Points
+
+```text
+Name:=*TERMO*          busca pelo nome da tag
+Description:=*TERMO*   busca pela descrição textual da tag
+```
+
+Regras:
+
+- Usar `Name` para nome de tag.
+- Usar `Description` para descrição.
+- Não usar `Descriptor` na query de busca.
+- O retorno da API pode conter campo `Descriptor`, mas a sintaxe de busca usa `Description`.
+- Usar `query`, não `q`.
+- Usar `dataServerWebId`.
+- Não usar busca crua quando a intenção é nome ou descrição.
+- Wildcard `*` significa zero ou mais caracteres.
+- Wildcard `?` significa exatamente um caractere.
+- Sem wildcard, a comparação tende a ser muito restritiva.
+- Não pode haver espaço entre o nome do filtro, o separador e o operador.
+- Usar `Description:=*termo*`, não `Description := *termo*`.
+
+## Busca por descrição
+
+Para perguntas em linguagem natural como:
+
+- "tem alguma tag de velocidade do forno?"
+- "procure tags com descrição velocidade"
+- "quais tags têm descrição de temperatura?"
+- "existe alguma tag de pressão do forno?"
+
+usar busca por descrição como primeira tentativa.
+
+```text
+Description:=*velocidade*
+```
+
+Exemplo:
+
+```http
+GET /points/search?dataServerWebId={DATA_SERVER_WEB_ID}&query=Description:=*velocidade*&maxCount=5
+```
+
+## Busca por nome
+
+Para perguntas que indicam parte do nome técnico da tag, como:
+
+- "procure tags LFI_RB3"
+- "tags com nome VEL_FORNO"
+- "tag que começa com LFS_DC1"
+
+usar busca por nome.
+
+```text
+Name:=*LFI_RB3*
+```
+
+Exemplo:
+
+```http
+GET /points/search?dataServerWebId={DATA_SERVER_WEB_ID}&query=Name:=*LFI_RB3*&maxCount=5
+```
+
+## Modo automático
+
+No modo automático, não combinar `Name` e `Description` em uma única query esperando comportamento de `OR`.
+
+Errado para modo automático:
+
+```text
+Name:=*velocidade* Description:=*velocidade*
+```
+
+Isso significa:
+
+```text
+Name contém velocidade E Description contém velocidade
+```
+
+Não significa:
+
+```text
+Name contém velocidade OU Description contém velocidade
+```
+
+Para `search_mode="auto"`, executar duas chamadas separadas e mesclar os resultados por `WebId` ou `Name`.
+
+Ordem recomendada:
+
+```text
+1. Description:=*{termo}*
+2. Name:=*{termo}*
+3. Remover duplicados.
+4. Retornar no máximo 5 tags.
+```
+
+Se a busca por descrição já retornar 5 tags, não é necessário chamar nome.
+
+Se a busca por descrição retornar menos de 5 tags, chamar nome para complementar.
+
+## Mapeamento recomendado para a tool `search_pi_points`
+
+```text
+search_mode="description":
+  query = Description:=*{termo}*
+
+search_mode="name":
+  query = Name:=*{termo}*
+
+search_mode="auto":
+  1. Description:=*{termo}*
+  2. Name:=*{termo}*
+  unir resultados, remover duplicados e retornar no máximo 5 tags
+
+search_mode="query":
+  aceitar uma query avançada pronta, por exemplo:
+  Description:=*velocidade* Name:=*RB3*
+```
+
+Se `search_mode="query"` receber texto simples sem `Description:=` ou `Name:=`, tratar como busca automática.
+
+## Termos com espaço
+
+Para termos com espaço, a busca por frase inteira pode ser restritiva dependendo da sintaxe e do comportamento do servidor.
+
+Exemplo:
+
+```text
+Description:=*velocidade forno*
+```
+
+Se não retornar resultados suficientes, a tool pode tentar termos principais ou padrões técnicos equivalentes, como:
+
+```text
+Description:=*velocidade*
+Name:=*VEL*FORNO*
+Name:=*FRN*VELOCIDADE*
+```
+
+Para a pergunta:
+
+```text
+tem alguma tag de velocidade do forno?
+```
+
+a intenção continua sendo descoberta de tags. Use `search_pi_points`, não `tag_calculus_tool`.
+
+## Fallback
+
+Se `/points/search` falhar por indisponibilidade ou erro operacional em busca por nome, usar:
+
+```http
+GET /dataservers/{dataServerWebId}/points?nameFilter=*TERMO*&maxCount=5
+```
+
+Atenção:
+
+- `nameFilter` busca por nome da tag.
+- Não usar `nameFilter` como substituto silencioso de busca por descrição.
+- `nameFilter` deve ser fallback ou apoio para busca por nome.
+- Se houver fallback, manter o limite de 5 resultados.
+
+## Limite de resultados
+
+A tool deve retornar no máximo 5 tags para evitar estourar o contexto do agente.
+
+Mesmo que o usuário peça 20, 50 ou 100 resultados, a resposta da tool deve cortar em 5 e orientar o operador a refinar a busca.
+
+Exemplo de resposta esperada:
+
+```text
+Encontrei até 5 tags candidatas:
+1. LFI_RB1_FRN_VELOCIDADE_LIM_INF — VELOCIDADE FORNO LIMITE INFERIOR
+2. LFI_RB1_FRN_VELOCIDADE_LIM_OBJ — VELOCIDADE FORNO LIMITE OBJETIVADO
+3. LFI_RB1_FRN_VELOCIDADE_LIM_SUP — VELOCIDADE FORNO LIMITE SUPERIOR
+
+Para refinar, informe área, equipamento ou parte do nome da tag.
+```
+
+---

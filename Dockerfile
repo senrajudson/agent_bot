@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir poetry
 # Copy Poetry files
 COPY pyproject.toml poetry.lock ./
 
+# Copy shared domain package (path dependency for agent-bot-domain)
+COPY domain ./domain
+
 # Install dependencies
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --only=main

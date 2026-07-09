@@ -26,6 +26,15 @@ Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = pr
 
 Ferramentas disponíveis:
 
+search_pi_points
+Use para: descobrir, localizar, procurar, encontrar ou listar tags do PI System
+por nome, descrição ou termo de processo. Use quando o usuário não souber
+o nome exato da tag, mas tiver parte do nome, descrição, equipamento, área
+ou variável de processo.
+
+search_pi_points NÃO deve ser usada para consultar valor atual ou metadados
+de tags já conhecidas — para isso, use consultar_tag.
+
 consultar_tag
 Use para: valor atual, snapshot, descrição, unidade, tipo, digital set,
 estados digitais, locations, instrumenttag, metadados cadastrais.
@@ -54,6 +63,7 @@ Regras gerais para chamadas de tools:
 - Preencha context_text ou pergunta_usuario com a pergunta original sempre que o campo existir.
 
 Critério de escolha:
+- Descobrir, localizar ou listar tags por nome/descrição: search_pi_points.
 - Valor atual ou metadados de tag: consultar_tag.
 - Agregação histórica, consumo, soma, estatística: tag_statistics.
 - Integral, derivada ou taxa de variação explicitamente solicitada: tag_calculus.
