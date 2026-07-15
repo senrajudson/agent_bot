@@ -148,6 +148,10 @@ def format_pi_batch_response(raw_data: dict[str, Any]) -> dict[str, Any]:
 
         valor_final = _normalizar_valor(value_data.get("Value"))
 
+        good = value_data.get("Good")
+        questionable = value_data.get("Questionable")
+        substituted = value_data.get("Substituted")
+
         tags_limpas.append(
             {
                 "nome": point_data.get("Name"),
@@ -155,6 +159,9 @@ def format_pi_batch_response(raw_data: dict[str, Any]) -> dict[str, Any]:
                 "instrumenttag": instrument_tag,
                 "valor": valor_final,
                 "data_atualizacao": value_data.get("Timestamp"),
+                "good": good,
+                "questionable": questionable,
+                "substituted": substituted,
                 "engineeringUnits": unidade_eng,
                 "pointType": tipo_tag,
                 "digitalSet": digital_set,
@@ -239,6 +246,21 @@ def formatar_mensagem_tags(tags_limpas: list[dict[str, Any]]) -> str:
 
         is_digital = str(point_type).lower() == "digital"
 
+        good = tag_data.get("good")
+        questionable = tag_data.get("questionable")
+        substituted = tag_data.get("substituted")
+
+        if substituted:
+            qualidade = "valor substituído pelo servidor"
+        elif questionable:
+            qualidade = "valor com qualidade suspeita"
+        elif good is False:
+            qualidade = "valor não confiável"
+        elif good is True:
+            qualidade = "valor confiável"
+        else:
+            qualidade = ""
+
         linhas = [
             f"Tag: {nome}",
             f"Descrição: {descricao}",
@@ -250,6 +272,9 @@ def formatar_mensagem_tags(tags_limpas: list[dict[str, Any]]) -> str:
         linhas.append(f"Tipo: {point_type}")
         linhas.append(f"Última atualização: {formatar_data(tag_data.get('data_atualizacao'))}")
         linhas.append(f"Valor: {formatar_valor(valor, engineering_units)}")
+
+        if qualidade:
+            linhas.append(f"Qualidade: {qualidade}")
 
         if is_digital:
             linhas.append(f"Digital set: {digital_set}")

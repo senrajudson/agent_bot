@@ -1,6 +1,6 @@
 # Agent Bot — Guia Completo do Projeto
 
-> Documento atualizado em 2026-06-23. Reflete o estado atual do código-fonte
+> Documento atualizado em 2026-07-14. Reflete o estado atual do código-fonte
 > após refatoração arquitetural (Etapas 0-8).
 
 ---
@@ -97,6 +97,12 @@ agent_bot/                              # monorepo
 │   ├── main.py                         # /chat, /health
 │   ├── core/
 │   │   └── config.py                   # Pydantic Settings (carrega .env)
+│   ├── embeddings/                     # Providers de embedding plugáveis
+│   │   ├── base.py                     # EmbeddingProvider Protocol
+│   │   ├── nomic_provider.py           # Nomic (Ollama)
+│   │   ├── gemini_provider.py          # Gemini API
+│   │   ├── factory.py                  # get_embedding_provider()
+│   │   └── exceptions.py               # EmbeddingError hierarchy
 │   ├── agent/
 │   │   ├── orchestrator.py             # Orquestrador: roteamento → RAG → agente → memória
 │   │   ├── router.py                   # Classificador de intenção via LiteLLM
@@ -176,6 +182,7 @@ agent_bot/                              # monorepo
 │
 ├── scripts/
 │   ├── ingest_pi_guide.py              # Ingestão RAG (CHUNK → Qdrant)
+│   ├── validate_rag_recall.py          # Validação de recall/latência entre coleções
 │   └── clean_polluted_memory.py        # Manutenção Redis
 │
 ├── tests/                              # Diretório vazio (estrutura preparada)
@@ -312,17 +319,49 @@ AGENT_DEFAULT = {
 | Componente | Valor |
 |---|---|
 | Documento fonte | `PI_WEB_API_AGENT_GUIDE.md` (21 CHUNKs) |
-| Vector Store | Qdrant (`pi_web_api_guide`, 768-dim, cosine) |
-| Embeddings | Ollama `nomic-embed-text-v2-moe` (via `POST /api/embed`) |
-| Ingestão | `scripts/ingest_pi_guide.py` |
+| Vector Store | Qdrant (768-dim, cosine) |
+| Embedding Provider | `app/embeddings/` — plugável via `EMBEDDING_PROVIDER` |
+| Providers | `nomic` (Ollama `nomic-embed-text-v2-moe`, legado) / `gemini` (Gemini API `gemini-embedding-2`) |
+| Ingestão | `scripts/ingest_pi_guide.py` (usa provider do `.env`, sem alteração de código) |
+| Coleção ativa | Configurada por `QDRANT_COLLECTION` (ex: `pi_web_api_guide` para Nomic, `pi_web_api_guide_gemini2_768_v1` para Gemini) |
 | CHUNK fixo | CHUNK 01 (sempre injetado, excluído do Qdrant) |
+
+### Arquitetura de Embedding Provider
+
+```
+app/embeddings/
+├── base.py               EmbeddingProvider (Protocol), EmbeddingResult
+├── nomic_provider.py     NomicProvider — httpx → Ollama /api/embed
+├── gemini_provider.py    GeminiProvider — httpx → Gemini API batchEmbedContents
+├── factory.py            get_embedding_provider(settings) → NomicProvider | GeminiProvider
+├── exceptions.py         5 exceções específicas
+└── __init__.py
+```
+
+- `app/clients/qdrant_client.py` e `scripts/ingest_pi_guide.py` consomem o factory — **nenhum código chama Ollama ou Gemini diretamente**.
+- Trocar de provider = alterar `EMBEDDING_PROVIDER` no `.env` + `QDRANT_COLLECTION` para a coleção correspondente + reiniciar.
+
+### Provider Nomic (Legado)
+
+- Modelo: `nomic-embed-text-v2-moe` (via `OLLAMA_BASE_URL/api/embed`)
+- Dimensão: 768
+- Compatível com coleção `pi_web_api_guide` (padrão)
+
+### Provider Gemini
+
+- Modelo: `gemini-embedding-2` (configurável por `GEMINI_EMBEDDING_MODEL`)
+- Dimensão: 768 (`outputDimensionality=768`)
+- Endpoint: `POST /v1beta/models/{model}:embedContent` / `:batchEmbedContents`
+- Retry: 3 tentativas com backoff 0.5/1/2s em 429/5xx
+- Fail-fast: `EmbeddingAuthError` em 401/403 (sem retry)
+- Falha em query-time: retorna vetor vazio (RAG sem contexto) — não derruba `/chat`
 
 ### Como funciona
 
 1. O documento é dividido em **21 CHUNKs** por headers (`# CHUNK 01`, `# CHUNK 02`, ..., `# CHUNK 21`)
 2. Cada CHUNK (exceto o 01) é embedded e armazenado no Qdrant com metadados (`chunk_number`, `title`, `content`)
 3. **CHUNK 01** ("Seleção de tool e resumo operacional") é sempre injetado como contexto fixo
-4. A cada query, o texto do usuário é embedded e busca os top-3 chunks mais similares
+4. A cada query, o texto do usuário é embedded (pelo provider ativo) e busca os top-3 chunks mais similares
 5. O contexto final = **CHUNK 01** (fixo) + **top-3 chunks** (retrieved)
 
 ### Fluxo RAG
@@ -330,7 +369,7 @@ AGENT_DEFAULT = {
 ```
 build_rag_context(query, top_k=3)
   ├─→ _load_fixed_chunk()            ← Lê CHUNK 01 do .md (cached, regex por header)
-  ├─→ retrieve_relevant_chunks()     ← Embed query → Qdrant search
+  ├─→ retrieve_relevant_chunks()     ← _get_provider().embed_query() → Qdrant search
   └─→ Retorna string com contexto concatenado
 ```
 
@@ -345,10 +384,21 @@ O CHUNK 01 contém o resumo operacional mínimo da PI Web API:
 ### Ingestão
 
 ```bash
-# Deletar collection antiga e reingestir
-curl -X DELETE http://10.247.179.197:6333/collections/pi_web_api_guide
-poetry run python scripts/ingest_pi_guide.py
+# Ingestão com provider Nomic (coleção legada — padrão)
+poetry run python scripts/ingest_pi_guide.py --confirm
+
+# Ingestão com provider Gemini (coleção versionada)
+# 1. Configurar .env:
+#   EMBEDDING_PROVIDER=gemini
+#   GEMINI_API_KEY=sua_chave
+#   GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+#   EMBEDDING_VECTOR_SIZE=768
+#   QDRANT_COLLECTION=pi_web_api_guide_gemini2_768_v1
+# 2. Executar:
+poetry run python scripts/ingest_pi_guide.py --confirm
 ```
+
+**Flag `--confirm`**: obrigatória se a coleção já existir. Sem a flag, o script aborta com mensagem de erro para evitar deleção acidental.
 
 Regex de chunks no script: `^#\s+CHUNK\s+(\d+)\s*-\s*(.+)$`
 
@@ -379,7 +429,7 @@ Agent (app/agent/agent.py)
 | Tool | Parâmetros | Descrição |
 |------|-----------|-----------|
 | `consultar_tag` | `tags: list[str]`, `pergunta_usuario: str \| None` | Valor atual e metadados de tags |
-| `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count` | Estatísticas históricas |
+| `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período) |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
 | `status_pims_tool` | `pergunta_usuario: str \| None`, `lookback_minutes: int \| None` | Status via Grafana/Loki |
 
@@ -572,11 +622,25 @@ As 4 tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O a
 - `summary_type`, `summary_duration`, `calculation_basis`: Para `summary`
 - `context_text`: Pergunta original
 - `max_count`: Limite de valores (recorded)
+- `group_by`: Granularidade da série: `1h`, `1d`, `1w`, `1mo` (opcional)
+- `return_series`: Se `True`, retorna breakdown por período (opcional)
 
-**Fluxo interno**:
+**Modo escalar** (padrão): retorna um único valor estatístico sobre o período inteiro.
+
+**Modo série** (com `group_by` ou `return_series=True`): retorna uma lista de itens por período (ex: consumo de cada dia). Para vazão, o consumo é calculado como média do bloco × duração do bloco. Unidade final inferida (ex: `Nm3/h` → `Nm3`). Períodos sem dados são incluídos com `value: null`.
+
+**Fluxo interno (escalar)**:
 1. Busca dados temporais via PI Web API (`buscar_serie_pi`)
-2. Envia dados para Math Tool Service (`/stats`)
-3. Retorna resultado formatado com unidade inferida
+2. Extrai valores com `extrair_values`
+3. Envia dados para Math Tool Service (`/stats`)
+4. Retorna resultado formatado com unidade inferida
+
+**Fluxo interno (série)**:
+1. Busca dados temporais via PI Web API (`buscar_serie_pi`)
+2. Extrai pontos com `extrair_points` (preserva timestamps)
+3. Agrupa por período com `_group_points_by_period`
+4. Calcula consumo/estatística por bucket com `_calcular_consumo_por_periodo`
+5. Retorna série com `items`, `total`, `glosa_interpretativa`
 
 ### 11.3 tag_calculus
 
@@ -596,16 +660,64 @@ As 4 tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O a
 
 ### 11.4 status_pims_tool
 
-**Propósito**: Status operacional do PIMS via logs Grafana/Loki.
+**Propósito**: Status operacional do PIMS via logs Grafana/Loki + conectividade da PI Web API.
 
 **Parâmetros**:
 - `pergunta_usuario`: Pergunta original
 - `lookback_minutes`: Janela de tempo (default: 20 min; 60=status atual, 120=2h, 1440=hoje)
 
+**Classificação de logs (5 categorias)**:
+A tool classifica cada linha de log em uma das 5 categorias abaixo, nesta ordem de precedência:
+
+| Categoria | Critérios |
+|---|---|
+| `erro_critico` | HTTP 5xx; `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused`, `broken pipe`, `panic` |
+| `client_aborted` | HTTP 499; HTTP 4xx com `client aborted`, `client closed request`, `client canceled` |
+| `alerta_real` | HTTP 4xx (exceto 499); `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request`, `unauthorized`, `forbidden` (exceto se também contém HTTP 2xx/304) |
+| `informativo` | HTTP 2xx, HTTP 304; `healthy`, `ok`, `started`, `ready`, `listening` |
+| `ignorado_benigno` | Linha com keyword de alerta mas que também contém HTTP 2xx/304 (ruído benigno de access log); linhas sem nenhum padrão reconhecido |
+
+**Veredito final** (precedência decrescente, 11 regras, 6 níveis):
+
+| # | Condição | Veredito |
+|---|----------|----------|
+| 1 | DS `INDISPONÍVEL` + `total_logs == 0` | `OFFLINE` |
+| 2 | `erros_criticos >= 1` | `CRÍTICO` |
+| 3 | DS `DESCONECTADO` + `alertas_reais >= 1` | `CRÍTICO` |
+| 4 | `alertas_reais >= 50` | `ALERTA` |
+| 5 | `total > 0` + `alertas_reais / total >= 0.01` | `ALERTA` |
+| 6 | `client_aborted >= 1000` ou `client_aborted / total >= 0.20` | `ALERTA` |
+| 7 | DS `DESCONECTADO`/`INCONFIÁVEL`/`AUSENTE`/`INDISPONÍVEL` | `ALERTA` |
+| 8 | `client_aborted > 0` + erros==0 + alertas < limites | `OPERACIONAL` |
+| 9 | `total_logs == 0` + DS `CONECTADO` | `SAUDÁVEL` |
+| 10 | erros==0 + alertas==0 + client_aborted==0 + informativos>0 | `EXCELENTE` |
+| 11 | Fallback | `SAUDÁVEL` |
+
+**Campos no `tool_result`**:
+- `status`: veredito final (`EXCELENTE`, `SAUDÁVEL`, `OPERACIONAL`, `ALERTA`, `CRÍTICO`, `OFFLINE`)
+- `summary`: dicionário com `total_logs`, `erros_criticos`, `alertas_reais`, `client_aborted`, `informativos`, `ignorados_benignos`, e os aliases legados `total_errors`/`total_warnings`
+- `dataserver_check`: verificação de conectividade do DataServer
+- `overall_status`: normalizado para `excellent`/`healthy`/`operational`/`warning`/`critical`/`offline`
+
+**Limites** (constantes internas no módulo):
+- `_LIMIT_ALERTA_ABSOLUTO = 50`
+- `_LIMIT_ALERTA_PERCENTUAL = 0.01`
+- `_LIMIT_CLIENT_ABORTED_ABSOLUTO_OPERACIONAL = 1000`
+- `_LIMIT_CLIENT_ABORTED_PERCENTUAL_OPERACIONAL = 0.20`
+
 **Fluxo interno**:
 1. Consulta Grafana/Loki via `query_loki_range`
-2. Filtra linhas de erro/aviso por keywords
-3. Retorna resumo do status (total logs, erros, alertas, recentes)
+2. Classifica cada linha com `_classify_line()` em 5 categorias
+3. Retorna resumo do status (veredito, total logs, erros críticos, alertas reais, client_aborted, informativos, ignorados benignos)
+4. Consulta PI Web API via `GET /dataservers` para verificar conectividade
+5. Verifica `IsConnected`, `ServerVersion`, `ServerTime`, `WebId` do DataServer configurado (`PI_SERVER_NAME`)
+6. Retorna veredito adicional do DataServer: `CONECTADO`, `DESCONECTADO`, `INCONFIÁVEL`, `AUSENTE` ou `INDISPONÍVEL`
+7. Campo `dataserver_check` com info detalhada no `tool_result`
+8. Campo `overall_status` combinando status de logs e DataServer
+
+**Isolamento de falha**: a falha na checagem do DataServer não impede o retorno de logs; a tool mantém `ok=True` se logs foram consultados com sucesso, mesmo que a PI Web API esteja indisponível.
+
+**Compatibilidade**: campos legados `total_errors` (alias de `erros_criticos`) e `total_warnings` (alias de `alertas_reais`) são preservados no summary.
 
 ---
 
@@ -624,6 +736,7 @@ Cliente HTTP assíncrono (`app/clients/pi_web_api_client.py`) para comunicação
 | `buscar_dados_temporais_tag()` | Qualquer endpoint temporal | Dispatcher unificado |
 | `get_tags_data(tags)` | `POST /batch` | Batch: metadados + valor + attributes |
 | `get_digital_set_states(digital_set)` | Enumeration Sets API | Estados digitais de um Digital Set |
+| `get_dataservers()` | `GET /dataservers` | Retorna lista completa de Items (sem cache, checagem de conectividade) |
 | `get_data_server()` | `GET /dataservers` | Busca data server (cacheado) |
 | `get_all_enumeration_sets()` | `GET /enumerationsets` | Lista todos os digital sets |
 
@@ -877,13 +990,24 @@ class LLMParams(BaseModel):
 |----------|--------|-----------|
 | `MCP_SERVER_URL` | `http://localhost:8015/mcp` | URL do MCP Server |
 
+#### RAG Embedding Provider
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `EMBEDDING_PROVIDER` | `nomic` | Provider ativo: `nomic` (Ollama, legado) ou `gemini` (Gemini API) |
+| `EMBEDDING_MODEL` | — | Provider-agnostic; override do modelo (opcional) |
+| `EMBEDDING_VECTOR_SIZE` | `768` | Dimensionalidade do vetor de embedding |
+| `EMBEDDING_BATCH_SIZE` | `32` | Tamanho do lote de embedding por chamada HTTP |
+| `EMBEDDING_TIMEOUT_SECONDS` | `60` | Timeout de requisição de embedding (query); 120s para ingestão |
+| `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | Modelo de embedding Gemini (quando `EMBEDDING_PROVIDER=gemini`) |
+
 #### Qdrant / RAG
 
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
 | `QDRANT_URL` | `http://10.247.179.197:6333` | URL do Qdrant |
 | `QDRANT_COLLECTION` | `pi_web_api_guide` | Nome da collection |
-| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | Modelo de embeddings |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text-v2-moe` | Modelo de embeddings (legado, usado quando `EMBEDDING_PROVIDER=nomic`) |
 
 #### Redis / Memória
 
@@ -1090,6 +1214,18 @@ Para consumo de vazão em Nm3:
 - `detectar_time_unit()`: detecta unidade temporal a partir do texto do usuário
 - `inferir_time_unit_por_unidade()`: infere unidade temporal baseado na unidade de engenharia da tag
 
+### Classificação de Logs da status_pims_tool
+
+A classificação determinística de logs usa 5 categorias:
+
+- **erro_critico**: HTTP `5xx`, palavras-chave `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused`. Sempre gera veredito `CRÍTICO`.
+- **client_aborted**: HTTP `499`; HTTP 4xx com `client aborted`, `client closed request`, `client canceled`. Separa cancelamentos de cliente de `alerta_real`. Abaixo do limite alto → `OPERACIONAL`; acima → `ALERTA`.
+- **alerta_real**: HTTP `4xx` (exceto 499), palavras-chave `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request`. Gera veredito `ALERTA` se ultrapassar limites configurados.
+- **informativo**: HTTP `2xx`, `304`, `healthy`, `ok`, `started`, `ready`, `listening`. Nunca incrementa contadores de alerta.
+- **ignorado_benigno**: Linha com keyword de alerta mas que também contém HTTP `2xx`/`304` (ruído benigno de access log). Não incrementa `alertas_reais`.
+
+Veredito final usa precedência de 11 regras com 6 níveis (ver seção 11.4). HTTP `200` com palavras como `warning`, `slow` ou `retry` não geram alerta operacional. HTTP `499` com DataServer `CONECTADO` e sem erros gera `OPERACIONAL` (não `ALERTA`).
+
 ### Formato do Google Chat
 
 `app/utils/google_chat_format.py` normaliza markdown para o formato aceito pelo Google Chat (remove `***triple asterisks***`, etc.)
@@ -1179,37 +1315,48 @@ pytest -m integration                                 # Integração (requer Doc
 | Erro "ClosedResourceError" | Conexão MCP fechada; reiniciar mcp_server ou retry |
 | Math Tool `[Errno -3] Temporary failure in name resolution` | DNS intermitente no WSL2 para IPs da rede corporativa (`10.247.179.197`). O `math_tool_client` agora faz retry automático (3 tentativas, backoff 0.5/1/2s). Se persistir, verificar `MATH_TOOL_BASE_URL` em `mcp_server/.env` e conectividade de rede. |
 | Math Tool `ConnectTimeout` em todo request | **Causa raiz**: `domain/core/config.py` não carrega `.env` e usa o default Docker `http://math_tool:8001` (hostname inacessível fora de Docker). **Correção**: `domain/core/config.py` agora carrega `mcp_server/.env` via `env_file`. Verificar que `MATH_TOOL_BASE_URL` aponta para IP correto no `.env`. |
+| RAG Gemini falha com `EmbeddingAuthError` | Verificar `GEMINI_API_KEY` no `.env`; confirmar que a chave tem permissão para o modelo `gemini-embedding-2` no Google Cloud Console. |
+| RAG Gemini falha com `EmbeddingTransientError` | Verificar conectividade de rede para `generativelanguage.googleapis.com`; o provider faz 3 retries com backoff antes de falhar. Se persistir, verificar cota/rate limits da API. |
+| RAG Gemini retorna vectors com dimensão errada | O `outputDimensionality=768` é configurado no payload. Verificar `EMBEDDING_VECTOR_SIZE` no `.env`. Se a API ignorar o parâmetro, reingerir com `EMBEDDING_VECTOR_SIZE` compatível. |
+| Trocar de provider de embedding | Alterar `EMBEDDING_PROVIDER` + `QDRANT_COLLECTION` no `.env` e reiniciar o serviço. A coleção Qdrant deve conter embeddings do mesmo provider/modelo. |
+| `get_embedding_provider()` levanta `EmbeddingConfigError` | Verificar se `EMBEDDING_PROVIDER` está definido como `nomic` ou `gemini`. Se for `gemini`, verificar se `GEMINI_API_KEY` está presente. |
 | Phoenix exibe span órfão `GET` para `http://10.247.179.197:6333` | **Causa**: o `QdrantClient` faz health check no root durante init, e o `HTTPXClientInstrumentor` auto-instrumenta a chamada. **Correção**: `_configure_excluded_urls()` em `app/observability/phoenix.py` define `OTEL_PYTHON_HTTPX_EXCLUDED_URLS` com regex `^<QDRANT_URL>/?$` antes do `register()`. Spans de busca vetorial (`/collections/.../points/search`) permanecem rastreados. |
+| `status_pims_tool` retornava `ALERTA` para registros HTTP 200 | **Causa raiz**: a heurística antiga contava qualquer linha com palavra de alerta (`slow`, `warning`, `retry`) como `alerta_real`, mesmo sendo HTTP 200. **Correção 1 (jul/2026)**: classificador substituído por 4 categorias determinísticas; HTTP 2xx/304 com palavra de alerta viram `ignorado_benigno`. **Correção 2 (jul/2026)**: régua expandida para 6 níveis (`EXCELENTE`/`SAUDÁVEL`/`OPERACIONAL`/`ALERTA`/`CRÍTICO`/`OFFLINE`); HTTP 499 classificado como `client_aborted` (categoria separada de `alerta_real`); 233 HTTP 499 em 5000 logs com DataServer `CONECTADO` agora gera `OPERACIONAL`, não `ALERTA`. |
 
 ---
 
 ## 23. Arquivo de Documentação RAG
 
-O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém **21 CHUNKs**:
+O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém **21 CHUNKs** classificados em dois tipos:
 
-| CHUNK | Conteúdo |
-|-------|----------|
-| 01 | **FIXO** — Seleção de tool e resumo operacional (sempre injetado, excluído do Qdrant) |
-| 02 | Fluxo base: tag para WebId |
-| 03 | Valor atual de uma tag |
-| 04 | Metadados: unidade, descriptor, tipo, span, step |
-| 05 | Atributos: instrumenttag, location, atributos clássicos |
-| 06 | DigitalSetName e Digital States |
-| 07 | Histórico bruto: recorded values |
-| 08 | Valores interpolados |
-| 09 | Summary: média, mínimo, máximo, total, percent good |
-| 10 | Consumo de vazão em Nm3 usando médias horárias |
-| 11 | Múltiplas tags: streamsets e batch |
-| 12 | Buscar tag quando o nome não é exato |
-| 13 | Tratamento de erros e qualidade |
-| 14 | Strings de tempo e timezone |
-| 15 | Codificação de URL |
-| 16 | Decisão rápida de endpoint |
-| 17 | Exemplo Python: valor atual |
-| 18 | Exemplo Python: metadados e atributos |
-| 19 | Diretrizes de qualidade e anti-padrões |
-| 20 | Cálculos temporais: integral e derivada |
-| 21 | RAG e recuperação recomendada |
+| Tipo | Descrição |
+|------|-----------|
+| `routing_map` | CHUNK 01 — mapa de roteamento sempre injetado; orienta seleção de tool |
+| `conceptual` | CHUNKs 02–21 — documentação conceitual/complementar; não obrigatória para chamadas operacionais diretas |
+
+| CHUNK | Tipo | Conteúdo |
+|-------|------|----------|
+| 01 | `routing_map` | **FIXO** — Seleção de tool e resumo operacional (sempre injetado, excluído do Qdrant) |
+| 02 | `conceptual` | Fluxo base: tag para WebId |
+| 03 | `conceptual` | Valor atual de uma tag |
+| 04 | `conceptual` | Metadados: unidade, descriptor, tipo, span, step |
+| 05 | `conceptual` | Atributos: instrumenttag, location, atributos clássicos |
+| 06 | `conceptual` | DigitalSetName e Digital States |
+| 07 | `conceptual` | Histórico bruto: recorded values |
+| 08 | `conceptual` | Valores interpolados |
+| 09 | `conceptual` | Summary: média, mínimo, máximo, total, percent good |
+| 10 | `conceptual` | Consumo de vazão em Nm3 usando médias horárias |
+| 11 | `conceptual` | Múltiplas tags: streamsets e batch |
+| 12 | `conceptual` | Buscar tag quando o nome não é exato |
+| 13 | `conceptual` | Tratamento de erros e qualidade |
+| 14 | `conceptual` | Strings de tempo e timezone |
+| 15 | `conceptual` | Codificação de URL |
+| 16 | `conceptual` | Decisão rápida de endpoint |
+| 17 | `conceptual` | Exemplo Python: valor atual |
+| 18 | `conceptual` | Exemplo Python: metadados e atributos |
+| 19 | `conceptual` | Diretrizes de qualidade e anti-padrões |
+| 20 | `conceptual` | Cálculos temporais: integral e derivada |
+| 21 | `conceptual` | RAG e recuperação recomendada |
 
 ---
 
@@ -1401,6 +1548,29 @@ pytest -m integration
 # Rodar suite completa
 poetry run pytest tests/ -v
 ```
+
+### Etapa 9 — Hierarquia MCP / Services / RAG (julho 2026)
+
+O projeto consolidou a arquitetura em que a responsabilidade de seleção de tools
+é definida na seguinte hierarquia:
+
+1. **MCP descriptions** — descrições e schema das tools (6 seções obrigatórias:
+   Propósito, Quando usar, Quando NÃO usar, Anti-padrões, Parâmetros, Saída).
+   São a fonte primária de seleção.
+2. **Services** — retornam dado real + interpretação operacional mínima
+   (glosa de qualidade, unidade final inferida, período efetivo, veredito).
+3. **RAG** — documentação conceitual/complementar. O CHUNK 01 é o único elemento
+   do RAG sempre injetado e funciona como mapa de roteamento das 6 tools.
+   CHUNKs 02–24 são documentação conceitual não obrigatória para chamadas diretas.
+
+**Mudanças implementadas**:
+- 6 docstrings MCP reescritas com seções obrigatórias.
+- `FastMCP.instructions` enxuto (≤8 linhas, tabela + desambiguação).
+- `AGENT_SYSTEM_PROMPT` reduzido para ≤50 linhas, delegando seleção ao MCP.
+- `observacao_unidade` removido dos outputs (anti-padrão eliminado).
+- Services enriquecidos com glosas interpretativas (qualidade, veredito, unidade final, período efetivo).
+- Testes de roteamento com Qdrant vazio comprovam independência do RAG para chamadas operacionais.
+- CHUNK 01 corrigido para usar nomes reais das ferramentas.
 
 ---
 
@@ -1812,6 +1982,42 @@ O `_detect_repeated_tool_calls()` verifica se a mesma tool (mesma combinação `
 - Remove `***triple asterisks***`
 - Converte listas markdown para bullets
 - Limita tamanho de mensagens (4096 chars)
+
+### Classificação de Logs da status_pims_tool
+
+A classificação determinística de logs usa 5 categorias:
+
+| Categoria | Critérios |
+|---|---|
+| `erro_critico` | HTTP 5xx; `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused` |
+| `client_aborted` | HTTP 499; HTTP 4xx com `client aborted`, `client closed request`, `client canceled` |
+| `alerta_real` | HTTP 4xx (exceto 499); `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request` (exceto se também contém HTTP 2xx/304) |
+| `informativo` | HTTP 2xx, HTTP 304; `healthy`, `ok`, `started`, `ready`, `listening` |
+| `ignorado_benigno` | Linha com keyword de alerta mas que também contém HTTP 2xx/304 (ruído benigno de access log); linhas sem nenhum padrão reconhecido |
+
+**Veredito final (precedência decrescente, 11 regras, 6 níveis)**:
+
+| # | Condição | Veredito |
+|---|----------|----------|
+| 1 | DS `INDISPONÍVEL` + `total_logs == 0` | `OFFLINE` |
+| 2 | `erros_criticos >= 1` | `CRÍTICO` |
+| 3 | DS `DESCONECTADO` + `alertas_reais >= 1` | `CRÍTICO` |
+| 4 | `alertas_reais >= 50` | `ALERTA` |
+| 5 | `total > 0` + `alertas_reais / total >= 0.01` | `ALERTA` |
+| 6 | `client_aborted >= 1000` ou `client_aborted / total >= 0.20` | `ALERTA` |
+| 7 | DS `DESCONECTADO`/`INCONFIÁVEL`/`AUSENTE`/`INDISPONÍVEL` | `ALERTA` |
+| 8 | `client_aborted > 0` + erros==0 + alertas < limites | `OPERACIONAL` |
+| 9 | `total_logs == 0` + DS `CONECTADO` | `SAUDÁVEL` |
+| 10 | erros==0 + alertas==0 + client_aborted==0 + informativos>0 | `EXCELENTE` |
+| 11 | Fallback | `SAUDÁVEL` |
+
+**Campos no summary**: `total_logs`, `erros_criticos`, `alertas_reais`, `client_aborted`, `informativos`, `ignorados_benignos`. Aliases legados: `total_errors` (= `erros_criticos`), `total_warnings` (= `alertas_reais`).
+
+**Limites**:
+- `_LIMIT_ALERTA_ABSOLUTO = 50`
+- `_LIMIT_ALERTA_PERCENTUAL = 0.01`
+- `_LIMIT_CLIENT_ABORTED_ABSOLUTO_OPERACIONAL = 1000`
+- `_LIMIT_CLIENT_ABORTED_PERCENTUAL_OPERACIONAL = 0.20`
 
 ---
 

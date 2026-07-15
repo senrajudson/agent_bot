@@ -3,9 +3,14 @@ CHUNK-based ingestion script for PI_WEB_API_AGENT_GUIDE.md into Qdrant.
 
 Splits the document by CHUNK headers (# CHUNK 01, # CHUNK 02, etc.).
 CHUNK 01 is excluded (it's a fixed context chunk always injected at runtime).
-Uses Ollama nomic-embed-text-v2-moe for embeddings.
+Uses the configured embedding provider (EMBEDDING_PROVIDER) for embeddings.
+
+Usage:
+    poetry run python scripts/ingest_pi_guide.py          # abort if collection exists
+    poetry run python scripts/ingest_pi_guide.py --confirm  # allow deletion + recreate
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -16,17 +21,16 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.config import settings
+from app.embeddings.factory import get_embedding_provider
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-EMBEDDING_MODEL = settings.OLLAMA_EMBEDDING_MODEL
-OLLAMA_BASE_URL = settings.OLLAMA_BASE_URL
 QDRANT_URL = settings.QDRANT_URL
 COLLECTION = settings.QDRANT_COLLECTION
 MARKDOWN_PATH = Path(__file__).parent.parent / "PI_WEB_API_AGENT_GUIDE.md"
 
-VECTOR_SIZE = 768  # nomic-embed-text-v2-moe produces 768-dim vectors
+VECTOR_SIZE = settings.EMBEDDING_VECTOR_SIZE
 SKIP_CHUNK = 1  # CHUNK 01 is the fixed runtime context, not stored in Qdrant
 
 # Pattern: # CHUNK 01 - Title, # CHUNK 02 - Title, etc.
@@ -78,41 +82,40 @@ def parse_chunks(text: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 2. Embed texts via Ollama REST API
+# 2. Embed texts via configured provider
 # ---------------------------------------------------------------------------
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Batch embed texts using Ollama /api/embed endpoint."""
-    import httpx
-
-    url = f"{OLLAMA_BASE_URL}/api/embed"
-    all_embeddings: list[list[float]] = []
-
-    batch_size = 32
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        resp = httpx.post(
-            url,
-            json={"model": EMBEDDING_MODEL, "input": batch},
-            timeout=120.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        all_embeddings.extend(data["embeddings"])
-        print(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)} chunks")
-
-    return all_embeddings
+    provider = get_embedding_provider(settings)
+    print(f"  Embedding with provider={provider.name} model={provider.model} "
+          f"vector_size={provider.vector_size}")
+    embeddings = provider.embed_texts(texts)
+    print(f"  Generated {len(embeddings)} embeddings (dim={len(embeddings[0])})")
+    return embeddings
 
 
 # ---------------------------------------------------------------------------
 # 3. Upsert into Qdrant
 # ---------------------------------------------------------------------------
-def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
+def upsert_chunks(chunks: list[dict], embeddings: list[list[float]], confirm: bool = False):
     """Create collection (if needed) and upsert all chunks."""
     client = QdrantClient(url=QDRANT_URL, timeout=120)
+
+    # Validate vector dimension before upsert
+    for emb in embeddings:
+        if len(emb) != VECTOR_SIZE:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {VECTOR_SIZE}, "
+                f"got {len(emb)}. Check EMBEDDING_VECTOR_SIZE setting."
+            )
 
     # Delete collection if it exists
     collections = [c.name for c in client.get_collections().collections]
     if COLLECTION in collections:
+        if not confirm:
+            raise SystemExit(
+                f"Collection '{COLLECTION}' already exists. "
+                f"Use --confirm to allow deletion and re-ingestion."
+            )
         print(f"  Deleting existing collection '{COLLECTION}'")
         client.delete_collection(COLLECTION)
 
@@ -159,9 +162,22 @@ def upsert_chunks(chunks: list[dict], embeddings: list[list[float]]):
 # Main
 # ---------------------------------------------------------------------------
 def main():
+    parser = argparse.ArgumentParser(
+        description="Ingest PI_WEB_API_AGENT_GUIDE.md into Qdrant."
+    )
+    parser.add_argument(
+        "--confirm", action="store_true",
+        help="Confirm deletion of existing collection before re-ingestion."
+    )
+    args = parser.parse_args()
+
     print("=" * 60)
     print("PI Web API Guide — CHUNK-based Ingestion into Qdrant")
     print("=" * 60)
+
+    print(f"  Provider: {settings.EMBEDDING_PROVIDER}")
+    print(f"  Collection: {COLLECTION}")
+    print(f"  Vector size: {VECTOR_SIZE}")
 
     # 1. Read markdown
     print(f"\n[1/3] Reading {MARKDOWN_PATH.name} ...")
@@ -187,14 +203,13 @@ def main():
     print(f"\n  Ingesting {len(chunks_to_ingest)} chunks (skipping CHUNK {SKIP_CHUNK:02d} + intro)")
 
     # 3. Embed
-    print(f"\n[3/3] Embedding with {EMBEDDING_MODEL} ...")
+    print(f"\n[3/3] Embedding ...")
     texts = [c["content"] for c in chunks_to_ingest]
     embeddings = embed_texts(texts)
-    print(f"  Generated {len(embeddings)} embeddings (dim={len(embeddings[0])})")
 
     # 4. Upsert
     print("\nUpserting into Qdrant ...")
-    upsert_chunks(chunks_to_ingest, embeddings)
+    upsert_chunks(chunks_to_ingest, embeddings, confirm=args.confirm)
 
     print("\n" + "=" * 60)
     print("Done!")

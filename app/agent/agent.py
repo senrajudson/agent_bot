@@ -6,6 +6,7 @@ standalone MCP server (mcp_server/) and execute tag queries,
 historical statistics, calculus and status checks.
 """
 
+import json
 import logging
 from typing import Any
 
@@ -198,6 +199,263 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Search loop policy — max 2 calls of search_pi_points per turn
+#
+# Decision point analysis (T1):
+# _detect_repeated_tool_calls runs AFTER runner.run_async completes, so it
+# does NOT prevent tool calls from executing. The same applies here: we
+# post-process messages after the ADK loop, overriding the final output
+# when the policy is violated. This is consistent with the existing
+# architecture and sufficient because the MCP tool is lightweight and
+# stateless. The override ensures the user receives a clean answer.
+# ---------------------------------------------------------------------------
+
+_MAX_SEARCH_PI_POINTS_CALLS_PER_TURN = 2
+_SEARCH_TOOL_NAME = "search_pi_points"
+_JACCARD_THRESHOLD = 0.5
+
+_ACCENT_MAP = str.maketrans({
+    "á": "a", "à": "a", "ã": "a", "â": "a",
+    "é": "e", "ê": "e", "è": "e",
+    "í": "i", "ì": "i", "î": "i",
+    "ó": "o", "ò": "o", "õ": "o", "ô": "o",
+    "ú": "u", "ù": "u", "û": "u",
+    "ç": "c",
+    "ü": "u",
+})
+
+_STOPWORDS_SEARCH: set[str] = {
+    "a", "as", "o", "os", "um", "uma", "uns", "umas",
+    "de", "da", "do", "das", "dos", "em", "na", "no", "nas", "nos",
+    "por", "para", "pelo", "pela", "com", "sem", "sob", "sobre",
+    "e", "ou", "mas", "que", "se", "é", "foi", "ser", "estar",
+    "tem", "ter", "há", "haver", "existe", "existem",
+    "algum", "alguma", "alguns", "algumas", "todo", "toda", "todos", "todas",
+    "muito", "muita", "pouco", "pouca", "mais", "menos", "qual", "quais",
+    "como", "aqui", "ali", "lá", "onde", "quando", "porque",
+    "eu", "tu", "ele", "ela", "nós", "vós", "eles", "elas",
+    "meu", "minha", "teu", "tua", "seu", "sua", "nosso", "nossa",
+    "este", "esta", "isto", "esse", "essa", "isso", "aquele", "aquela", "aquilo",
+    "tal", "tais", "certo", "certa", "apenas", "só", "somente",
+    "tag", "tags",
+    "procure", "procura", "procurar", "buscar", "localizar", "encontrar",
+    "lista", "listar", "mostra", "mostrar", "retorna", "retornar",
+    "me", "te", "se", "lhe", "nos", "vos",
+    "pode", "poderia", "poder", "gostaria", "queria", "quero",
+    "sobre", "ainda", "já", "também", "bem", "sempre",
+    "relacionada", "relacionado", "referente",
+}
+
+_SEARCH_FINAL_RESPONSE_BLOCKED = (
+    "Você já atingiu o limite de 2 buscas de tags neste turno. "
+    "Pare de chamar ferramentas de busca e responda ao usuário com o "
+    "melhor resultado já obtido. Se não houver correspondência forte, "
+    "peça mais detalhes como área, equipamento ou parte do nome."
+)
+
+_SEARCH_FINAL_RESPONSE_NO_CANDIDATES = (
+    "Você já realizou 2 buscas de tags sem encontrar candidatos "
+    "adequados. Informe ao usuário que não foi possível localizar "
+    "a tag e peça mais detalhes como área, equipamento ou parte do nome."
+)
+
+
+# -- T3: Query normalization and Jaccard similarity
+
+
+def _normalize_query_tokens(query: str) -> set[str]:
+    if not query:
+        return set()
+    lower = query.lower().translate(_ACCENT_MAP)
+    tokens: set[str] = set()
+    for raw in lower.split():
+        t = raw.strip(".,;:!?\"'()[]{}")
+        if not t or len(t) < 2:
+            continue
+        if t in _STOPWORDS_SEARCH:
+            continue
+        tokens.add(t)
+    return tokens
+
+
+def _jaccard_similarity(a: set[str], b: set[str]) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+# -- T4: Materially different query check
+
+
+def _queries_materialmente_diferentes(q1: str, q2: str) -> bool:
+    t1 = _normalize_query_tokens(q1)
+    t2 = _normalize_query_tokens(q2)
+    similarity = _jaccard_similarity(t1, t2)
+    if similarity >= _JACCARD_THRESHOLD:
+        new_tokens = t2 - t1
+        for t in new_tokens:
+            if len(t) >= 3:
+                return True
+        return False
+    return True
+
+
+# -- T2: Parse tool response payload (various MCP wrapping formats)
+
+
+def _parse_tool_response_payload(response: Any) -> dict | None:
+    if response is None:
+        return None
+    if isinstance(response, dict):
+        inner = (
+            response.get("structuredContent")
+            or response.get("content")
+            or response.get("result")
+        )
+        if isinstance(inner, dict):
+            return inner
+        return response
+    if isinstance(response, str):
+        try:
+            parsed = json.loads(response)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+# -- T2: Extract search_pi_points calls from messages
+
+
+def _extract_search_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    for msg in messages:
+        for tc in msg.get("tool_calls") or []:
+            if tc.get("name") == _SEARCH_TOOL_NAME:
+                args = tc.get("args") or {}
+                calls.append({
+                    "name": _SEARCH_TOOL_NAME,
+                    "args": args,
+                    "query": args.get("query", ""),
+                    "response": None,
+                    "index": len(calls),
+                })
+        for tr in msg.get("tool_responses") or []:
+            if tr.get("name") == _SEARCH_TOOL_NAME and calls:
+                calls[-1]["response"] = tr.get("response")
+    return calls
+
+
+# -- T5: Weak result classifier and result ranker
+
+
+def _is_weak_search_result(payload: dict | None) -> bool:
+    if payload is None:
+        return False
+    if not payload.get("success", True):
+        return True
+    count = payload.get("count", 0)
+    if count == 0:
+        return True
+    max_count = payload.get("max_count", 0)
+    if max_count > 0 and count >= max_count:
+        items = payload.get("items") or []
+        if all(not item.get("description") for item in items):
+            return True
+    return False
+
+
+def _rank_search_result(payload: dict | None) -> int:
+    if payload is None:
+        return 0
+    if not payload.get("success", True):
+        return 0
+    count = payload.get("count", 0)
+    if count == 0:
+        return 1
+    items = payload.get("items") or []
+    if any(item.get("description") for item in items):
+        return 3
+    return 2
+
+
+def _best_search_result(calls: list[dict[str, Any]]) -> dict | None:
+    best: dict | None = None
+    best_rank = -1
+    for call in calls:
+        payload = _parse_tool_response_payload(call.get("response"))
+        call["response_payload"] = payload
+        rank = _rank_search_result(payload)
+        if rank > best_rank:
+            best_rank = rank
+            best = payload
+    return best
+
+
+# -- T6: Main enforcement function
+
+
+def _enforce_search_loop_policy(
+    messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    calls = _extract_search_calls(messages)
+    total = len(calls)
+    kept = total
+    blocked = 0
+    reason = "ok"
+    override: str | None = None
+
+    if total > _MAX_SEARCH_PI_POINTS_CALLS_PER_TURN:
+        kept = _MAX_SEARCH_PI_POINTS_CALLS_PER_TURN
+        blocked = total - kept
+        reason = "third_call_blocked"
+        best = _best_search_result(calls)
+        if best and best.get("count", 0) > 0:
+            items = best.get("items") or []
+            names = [i.get("name", "?") for i in items[:5]]
+            override = (
+                "Você já realizou 2 buscas de tags neste turno. "
+                "Com base nos resultados obtidos, "
+                f"os melhores candidatos encontrados são: {', '.join(names)}. "
+                "Responda ao usuário com essas informações."
+            )
+        else:
+            override = _SEARCH_FINAL_RESPONSE_NO_CANDIDATES
+    elif total == 2:
+        first_payload = _parse_tool_response_payload(calls[0].get("response"))
+        first_query = calls[0].get("query", "")
+        second_query = calls[1].get("query", "")
+
+        if not _is_weak_search_result(first_payload):
+            kept = 1
+            blocked = 1
+            reason = "first_call_strong"
+        elif not _queries_materialmente_diferentes(first_query, second_query):
+            kept = 1
+            blocked = 1
+            reason = "second_call_not_different"
+
+    logger.info(
+        "search_loop_policy: kept=%d blocked=%d reason=%s",
+        kept, blocked, reason,
+    )
+    logger.debug(
+        "search_loop_policy: total=%d queries=%r reason=%s",
+        total, [c.get("query", "") for c in calls], reason,
+    )
+
+    return {
+        "kept": kept,
+        "blocked": blocked,
+        "reason": reason,
+        "final_response_override": override,
+    }
+
+
 async def _run_agent_core(
     user_message: str,
     user_id: str,
@@ -249,6 +507,16 @@ async def _run_agent_core(
             elif getattr(event, "actions", None):
                 final_output = final_output or ""
 
+    # Enforce search loop policy (max 2 search_pi_points per turn)
+    search_decision = _enforce_search_loop_policy(messages)
+    if search_decision["final_response_override"] is not None:
+        return {
+            "messages": messages,
+            "output": search_decision["final_response_override"],
+            "error": "search_loop_blocked",
+        }
+
+    # Secondary safety net: exact repeat of same tool+args (3+ times)
     if _detect_repeated_tool_calls(messages):
         return {
             "messages": messages,

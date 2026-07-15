@@ -30,13 +30,16 @@ from core.config import settings
 mcp = FastMCP(
     "PI System Tools",
     instructions=(
-        "Tools for querying PI System tags via PI Web API. "
-        "Use consultar_tag for current values and metadata. "
-        "Use tag_statistics for historical aggregations (mean, max, min, sum, consumption). "
-        "Use tag_calculus for temporal math (integral, derivative). "
-        "Use status_pims_tool for PIMS operational status via Grafana/Loki logs. "
-        "Use search_pi_points to find/locate PI Points by name, description, "
-        "or text query when the user does not know the exact tag name."
+        "Roteamento: valor atual/metadados/timestamp → consultar_tag; "
+        "descoberta de tags por nome/descrição/área → search_pi_points; "
+        "atributos de configuração do PI Point (compressão/exceção/scan) "
+        "→ tag_attributes_tool; estatísticas históricas (média/máx/mín/soma) "
+        "→ tag_statistics_tool; cálculo temporal (integral/derivada/variação) "
+        "→ tag_calculus_tool; status operacional do PIMS → status_pims_tool. "
+        "Desambiguação: estatística simples → tag_statistics_tool; "
+        "integral/derivada explícita → tag_calculus_tool. "
+        "Valor atual → consultar_tag; atributos de configuração → tag_attributes_tool. "
+        "Política: search_pi_points no máximo 2 vezes por turno; 2ª só com query diferente e se 1ª foi fraca; 3ª bloqueada."
     ),
 )
 
@@ -50,19 +53,16 @@ async def consultar_tag(
     pergunta_usuario: str | None = None,
 ) -> str:
     """
-    Consulta valor atual, descrição, unidade de engenharia, tipo, digital set,
-    locations, estados digitais e metadados de tags do PI System.
+    Consulta valor atual, descrição, unidade, tipo, digital set, instrumenttag,
+    locations e metadados de tags do PI System.
 
-    Use quando o usuário pedir:
-    - valor atual de uma tag
-    - descrição, unidade, tipo da tag
-    - digital set, estados digitais
-    - instrumenttag, locations
-    - metadados cadastrais de tags
+    Use quando o usuário pedir valor atual, último valor, descrição, tipo,
+    digital set, instrumenttag, locations ou metadados cadastrais de uma tag
+    já conhecida.
 
     Args:
-        tags: Lista de nomes de tags do PI System (preservar nomes exatos)
-        pergunta_usuario: Pergunta original do usuário (para contexto)
+        tags: Lista de nomes de tags do PI System (preservar nomes exatos).
+        pergunta_usuario: Pergunta original (opcional, contexto).
     """
     from domain.pims.services.consultar_tag_service import consultar_tags_pi
 
@@ -90,29 +90,36 @@ async def tag_statistics(
     calculation_basis: str | None = None,
     context_text: str | None = None,
     max_count: int = 200000,
+    group_by: str | None = None,
+    return_series: bool = False,
 ) -> str:
     """
-    Executa estatísticas históricas de tags do PI System.
+    Executa estatísticas históricas (média, máximo, mínimo, soma, consumo, etc.)
+    de tags do PI System em um período.
 
-    Use quando o usuário pedir: média, máximo, mínimo, soma, contagem,
-    mediana, amplitude, variância, desvio padrão, consumo total ou volume acumulado.
+    Use quando o usuário pedir estatísticas históricas, consumo, soma, média,
+    máximo, mínimo, contagem, mediana, variância ou desvio padrão.
 
     Para consumo de vazão (Nm3/h): use data_method='summary',
-    summary_type='Average', summary_duration='1h', calculation_basis='TimeWeighted',
-    operation='sum'.
+    summary_type='Average', summary_duration='1h',
+    calculation_basis='TimeWeighted', operation='sum'.
+
+    Para consumo discriminado por hora/dia/mês, use group_by='1h'|'1d'|'1mo' e return_series=True.
 
     Args:
-        tags: Lista de tags do PI System
-        operation: Operação estatística (mean, max, min, sum, count, etc.)
-        start_time: Início do período (formato PI Web API: '*-7d', '2026-05-01T00:00:00')
-        end_time: Fim do período ('*' = agora)
-        data_method: Método temporal ('summary', 'recorded', 'interpolated')
-        interval: Intervalo de amostragem (somente para 'interpolated')
-        summary_type: Tipo de agregação (somente para 'summary'): Average, Maximum, Minimum, Total, Count, Range, StdDev
-        summary_duration: Janela de agregação (somente para 'summary'): '1h', '30m', '1d'
-        calculation_basis: Base de cálculo (somente para 'summary'): TimeWeighted, EventWeighted
-        context_text: Texto original da pergunta do usuário
-        max_count: Máximo de valores (somente para 'recorded')
+        tags: Lista de tags.
+        operation: Operação estatística (mean, max, min, sum, count, etc.).
+        start_time: Início do período (formato PI Web API).
+        end_time: Fim do período ('*' = agora).
+        data_method: 'summary', 'recorded', 'interpolated'.
+        interval: Intervalo (somente 'interpolated').
+        summary_type: 'Average', 'Maximum', 'Minimum', 'Total', 'Count', 'Range', 'StdDev'.
+        summary_duration: Janela ('1h', '30m', '1d').
+        calculation_basis: 'TimeWeighted' ou 'EventWeighted'.
+        context_text: Pergunta original (opcional).
+        max_count: Limite de valores (somente 'recorded').
+        group_by: Granularidade da série: '1h', '1d', '1w', '1mo'.
+        return_series: Se True, retorna lista de valores por período.
     """
     from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
 
@@ -132,6 +139,8 @@ async def tag_statistics(
         summary_type=summary_type,
         summary_duration=summary_duration,
         calculation_basis=calculation_basis,
+        group_by=group_by,
+        return_series=return_series,
     )
     return result["output"]
 
@@ -155,24 +164,25 @@ async def tag_calculus(
     max_count: int = 200000,
 ) -> str:
     """
-    Executa cálculos matemáticos temporais sobre curvas de tags do PI System.
+    Executa cálculos matemáticos temporais (integral, derivada, taxa de variação)
+    sobre curvas de tags do PI System.
 
-    Use quando o usuário pedir explicitamente: integral, derivada,
-    taxa de variação, variação por segundo/minuto/hora, área sob a curva.
+    Use quando o usuário pedir explicitamente: integral, derivada, taxa de
+    variação, variação por segundo/minuto/hora, área sob a curva.
 
     Args:
-        tags: Lista de tags do PI System
-        operation: 'integral' ou 'derivative'
-        start_time: Início do período (formato PI Web API)
-        end_time: Fim do período ('*' = agora)
-        data_method: Método temporal ('interpolated', 'recorded', 'summary')
-        interval: Intervalo de amostragem (somente para 'interpolated')
-        summary_type: Tipo de agregação (somente para 'summary')
-        summary_duration: Janela de agregação (somente para 'summary')
-        calculation_basis: Base de cálculo (somente para 'summary')
-        time_unit: Unidade temporal do cálculo: 'second', 'minute', 'hour', 'none'
-        context_text: Texto original da pergunta do usuário
-        max_count: Máximo de valores (somente para 'recorded')
+        tags: Lista de tags.
+        operation: 'integral' ou 'derivative'.
+        start_time: Início do período.
+        end_time: Fim do período ('*' = agora).
+        data_method: 'interpolated', 'recorded', 'summary'.
+        interval: Intervalo (somente 'interpolated').
+        summary_type: 'Average', etc. (somente 'summary').
+        summary_duration: Janela (somente 'summary').
+        calculation_basis: 'TimeWeighted' ou 'EventWeighted' (somente 'summary').
+        time_unit: 'second', 'minute', 'hour', 'none'.
+        context_text: Pergunta original (opcional).
+        max_count: Limite (somente 'recorded').
     """
     from domain.analytics.services.math_tool_service import executar_calculo_historico_service
 
@@ -202,16 +212,16 @@ async def status_pims_tool(
     lookback_minutes: int | None = None,
 ) -> str:
     """
-    Consulta logs do Grafana/Loki para avaliar status, saúde, erro, lentidão,
-    queda, indisponibilidade ou instabilidade do PIMS, PI Web API, servidores
-    e serviços monitorados.
+    Consulta logs do Grafana/Loki para avaliar status operacional do PIMS.
 
-    Use quando o usuário perguntar sobre: status do PIMS, erros, lentidão,
-    indisponibilidade, timeout, erro 500/503, saúde do ambiente.
+    Use quando o usuário perguntar sobre: status do PIMS, saúde do ambiente,
+    erros, lentidão, indisponibilidade, timeout, erro 500/503, instabilidade
+    em servidores. Também verifica conectividade do DataServer configurado
+    na PI Web API via /dataservers.
 
     Args:
-        pergunta_usuario: Texto original da pergunta do usuário
-        lookback_minutes: Minutos para consultar nos logs (60=status atual, 120=2h, 1440=hoje, null=sem período claro)
+        pergunta_usuario: Pergunta original do usuário (opcional).
+        lookback_minutes: Janela em minutos (60=atual, 120=2h, 1440=hoje).
     """
     from domain.pims_ops.services.status_pims_service import consultar_status_pims_service
 
@@ -224,6 +234,45 @@ async def status_pims_tool(
 
 
 # ---------------------------------------------------------------------------
+# Tool: tag_attributes_tool
+# ---------------------------------------------------------------------------
+@mcp.tool
+async def tag_attributes_tool(
+    tag: str,
+    attribute_group: str = "auto",
+    attributes: list[str] | None = None,
+) -> str:
+    """
+    Consulta atributos de configuração de uma tag PI via /points/{webId}/attributes.
+
+    Use quando o usuário perguntar sobre: compressão (compdev, compmin, compmax,
+    compressing), exceção (excdev, excmin, excmax), scan, archiving, pointsource,
+    instrumenttag, location ou outros atributos cadastrais do PI Point.
+
+    NÃO usar para valor atual da tag — para isso, use consultar_tag.
+
+    Args:
+        tag: Nome exato da tag (preservar underscores).
+        attribute_group: 'auto' | 'compression' | 'exception' | 'archive' |
+                         'identity' | 'scaling' | 'interface' | 'security' | 'all'.
+        attributes: Lista explícita de atributos (sobrepõe attribute_group).
+    """
+    try:
+        from domain.pims.services.tag_attributes_service import (
+            get_tag_attributes,
+        )
+
+        result = await get_tag_attributes(
+            tag=tag,
+            attribute_group=attribute_group,
+            attributes=attributes,
+        )
+        return result["output"]
+    except ValueError as e:
+        return f"Erro: {e}"
+
+
+# ---------------------------------------------------------------------------
 # Tool: search_pi_points
 # ---------------------------------------------------------------------------
 @mcp.tool
@@ -233,15 +282,15 @@ async def search_pi_points(
     search_mode: str = "auto",
 ) -> str:
     """
-    Buscar tags/PI Points no PI Server por nome, descrição ou query textual.
+    Busca tags/PI Points no PI Server por nome, descrição ou query textual.
 
     Use quando o usuário pedir para localizar, procurar, encontrar ou listar
     tags relacionadas a um termo, equipamento, área, variável ou descrição.
 
     Args:
-        query: Termo de busca (parte do nome, descrição, equipamento, etc.)
-        max_count: Máximo de resultados (default 20, máximo 100)
-        search_mode: Modo de busca: 'auto', 'name', 'description', 'query'
+        query: Termo de busca (parte do nome, descrição, equipamento, etc.).
+        max_count: Máximo de resultados (default 20, máximo 100).
+        search_mode: 'auto', 'name', 'description', 'query'.
     """
     from domain.pims.services.search_points_service import (
         search_pi_points as svc_search,

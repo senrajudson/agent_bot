@@ -1,23 +1,26 @@
 """
 Qdrant retrieval client for PI Web API documentation RAG.
 
-Embeds user queries via Ollama and searches the Qdrant vector store
-for relevant documentation chunks.
+Embeds user queries via the configured embedding provider and searches
+the Qdrant vector store for relevant documentation chunks.
 """
 
+import logging
 import re
 from pathlib import Path
 
-import httpx
 from qdrant_client import QdrantClient
 
 from app.core.config import settings
+from app.embeddings.base import EmbeddingProvider
+from app.embeddings.factory import get_embedding_provider
+from app.embeddings.exceptions import EmbeddingError
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-EMBEDDING_MODEL = settings.OLLAMA_EMBEDDING_MODEL
-OLLAMA_BASE_URL = settings.OLLAMA_BASE_URL
 QDRANT_URL = settings.QDRANT_URL
 COLLECTION = settings.QDRANT_COLLECTION
 
@@ -27,6 +30,7 @@ DOCUMENT_PATH = Path(__file__).parent.parent.parent / "PI_WEB_API_AGENT_GUIDE.md
 # Clients (lazy singletons)
 # ---------------------------------------------------------------------------
 _qdrant_client: QdrantClient | None = None
+_embedding_provider: EmbeddingProvider | None = None
 
 
 def _get_qdrant() -> QdrantClient:
@@ -38,18 +42,30 @@ def _get_qdrant() -> QdrantClient:
     return _qdrant_client
 
 
+def _get_provider() -> EmbeddingProvider:
+    global _embedding_provider
+    if _embedding_provider is None:
+        _embedding_provider = get_embedding_provider(settings)
+        logger.info(
+            "RAG embedding provider: %s (model=%s, vector_size=%d, collection=%s)",
+            _embedding_provider.name,
+            _embedding_provider.model,
+            _embedding_provider.vector_size,
+            COLLECTION,
+        )
+    return _embedding_provider
+
+
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
 def _embed_query(text: str) -> list[float]:
-    """Embed a single query text using Ollama."""
-    resp = httpx.post(
-        f"{OLLAMA_BASE_URL}/api/embed",
-        json={"model": EMBEDDING_MODEL, "input": [text]},
-        timeout=60.0,
-    )
-    resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+    try:
+        provider = _get_provider()
+        return provider.embed_query(text)
+    except EmbeddingError:
+        logger.exception("Embedding query failed, returning empty vector")
+        return []
 
 
 # ---------------------------------------------------------------------------

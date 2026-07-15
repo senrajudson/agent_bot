@@ -12,7 +12,7 @@ SAMPLE_MARKDOWN = textwrap.dedent("""\
 
     | Intencao                           | Tool sugerida        |
     | ---------------------------------- | -------------------- |
-    | Valor atual, metadados             | consultar_tag_tool   |
+    | Valor atual, metadados             | consultar_tag        |
     | Media, maximo, minimo, soma        | tag_statistics_tool  |
     | Integral, derivada                 | tag_calculus_tool    |
     | Status do PIMS                     | status_pims_tool     |

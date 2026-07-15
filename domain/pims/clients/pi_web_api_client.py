@@ -219,6 +219,50 @@ async def get_data_server() -> dict[str, Any]:
     raise RuntimeError(f"Data Server {settings.PI_SERVER_NAME} não encontrado.")
 
 
+async def get_dataservers() -> dict[str, Any]:
+    """GET /dataservers — checagem pontual de conectividade.
+
+    Diferente de get_data_server(), esta função:
+    - Não usa cache.
+    - Retorna a lista completa de Items.
+    - Captura erros de rede/HTTP em vez de lançar exceção.
+
+    Retorna dict com endpoint, status_code, items, error.
+    """
+    endpoint = f"{_base_url()}/dataservers"
+
+    try:
+        data = await _pi_get(endpoint)
+        items = data.get("Items") or []
+        return {
+            "endpoint": endpoint,
+            "status_code": 200,
+            "items": items,
+            "error": None,
+        }
+    except httpx.HTTPStatusError as e:
+        return {
+            "endpoint": endpoint,
+            "status_code": e.response.status_code,
+            "items": [],
+            "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
+        }
+    except httpx.RequestError as e:
+        return {
+            "endpoint": endpoint,
+            "status_code": None,
+            "items": [],
+            "error": f"Request failed: {e}",
+        }
+    except Exception as e:
+        return {
+            "endpoint": endpoint,
+            "status_code": None,
+            "items": [],
+            "error": f"Unexpected error: {e}",
+        }
+
+
 async def get_enumeration_sets_url() -> str:
     data_server = await get_data_server()
 
@@ -344,6 +388,12 @@ async def get_point_by_tag(tag: str) -> dict[str, Any]:
             "selectedFields": POINT_SELECTED_FIELDS,
         },
     )
+
+
+async def get_point_attributes(tag: str) -> dict[str, Any]:
+    """GET /points/{webId}/attributes — payload completo, sem filtro."""
+    _point, web_id = await _get_point_and_web_id(tag)
+    return await _pi_get(f"{_base_url()}/points/{web_id}/attributes")
 
 
 async def get_recorded_values_by_tag(

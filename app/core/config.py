@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     MATH_TOOL_BASE_URL: str = "http://math_tool:8001"
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
 
+    # Embedding provider: "nomic" (legado) or "gemini"
+    EMBEDDING_PROVIDER: str = "nomic"
+    EMBEDDING_MODEL: str | None = None
+    EMBEDDING_VECTOR_SIZE: int = 768
+    EMBEDDING_BATCH_SIZE: int = 32
+    EMBEDDING_TIMEOUT_SECONDS: float = 60.0
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-2"
+
     QDRANT_URL: str = "http://10.247.179.197:6333"
     QDRANT_COLLECTION: str = "pi_web_api_guide"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"

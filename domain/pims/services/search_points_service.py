@@ -445,10 +445,17 @@ def _build_output(
     for i, item in enumerate(items[:max_count], 1):
         name = item.get("name", "?")
         desc = item.get("description") or ""
+        point_type = item.get("point_type") or ""
+        eng_units = item.get("engineering_units") or ""
+        detalhes = ""
+        if point_type:
+            detalhes += f" [{point_type}]"
+        if eng_units:
+            detalhes += f" — {eng_units}"
         if desc:
-            lines.append(f"{i}. {name} — {desc}")
+            lines.append(f"{i}. {name} — {desc}{detalhes}")
         else:
-            lines.append(f"{i}. {name}")
+            lines.append(f"{i}. {name}{detalhes}")
     lines.append(
         "Para refinar, informe área, equipamento ou parte do nome da tag."
     )

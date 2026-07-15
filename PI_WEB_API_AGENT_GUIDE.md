@@ -8,17 +8,18 @@ Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
 | Intenção                                                                                                             | Interpretação              | Tool sugerida         |
 | -------------------------------------------------------------------------------------------------------------------- | -------------------------- | --------------------- |
-| Valor atual, unidade, descrição, tipo, digital set, instrumenttag                                                    | Consulta pontual/metadados | `consultar_tag_tool`  |
+| Valor atual, unidade, descrição, tipo, digital set, instrumenttag                                                    | Consulta pontual/metadados | `consultar_tag`       |
 | Descobrir, localizar, procurar, encontrar ou listar tags por nome, descrição, equipamento, área ou termo de processo | Descoberta de tags         | `search_pi_points`    |
 | Média, máximo, mínimo, soma, consumo, total por período                                                              | Agregação histórica        | `tag_statistics_tool` |
 | Integral, derivada, taxa de variação, área sob curva                                                                 | Cálculo temporal explícito | `tag_calculus_tool`   |
+| Compressão, exceção, compdev, excdev, archiving, scan, pointsource, location, atributos internos de uma tag PI       | Atributos de PI Point      | `tag_attributes_tool` |
 | Status do PIMS, servidores, logs                                                                                     | Consulta operacional       | `status_pims_tool`    |
 
 ## Descoberta de tags
 
 Use `search_pi_points` quando o usuário não souber o nome exato da tag e quiser encontrar tags relacionadas a uma descrição, equipamento, área, variável ou parte do nome.
 
-Use `consultar_tag_tool` quando o usuário já informou uma tag específica e quer valor atual, unidade, descrição, tipo, digital set, instrumenttag ou metadados.
+Use `consultar_tag` quando o usuário já informou uma tag específica e quer valor atual, unidade, descrição, tipo, digital set, instrumenttag ou metadados.
 
 ## Regra para perguntas naturais sobre tags
 
@@ -1309,5 +1310,77 @@ Encontrei até 5 tags candidatas:
 
 Para refinar, informe área, equipamento ou parte do nome da tag.
 ```
+
+---
+
+# CHUNK 24 - PI Web API: atributos de PI Point, compressão e exceção
+
+## Intenção
+
+Use para consultar atributos internos do PI Point relacionados a compressão,
+exceção, scan, archiving, pointsource, instrumenttag, scaling, interface e security.
+
+## Endpoint
+
+```http
+GET /points/{webId}/attributes
+```
+
+## Fluxo
+
+1. Buscar PI Point por path (`/points?path=\\PIMS\TAG`).
+2. Extrair WebId.
+3. Chamar `/points/{webId}/attributes` (sem `?name=` para obter todos os atributos).
+
+## Grupos de atributos
+
+| Grupo         | Atributos                                                                 |
+| ------------- | ------------------------------------------------------------------------- |
+| auto          | compressing, compdev, compdevpercent, compmin, compmax, excdev, excdevpercent, excmin, excmax, scan, pointsource, instrumenttag |
+| compression   | compressing, compdev, compdevpercent, compmin, compmax                   |
+| exception     | excdev, excdevpercent, excmin, excmax                                     |
+| archive       | archiving, scan, shutdown, step, future                                   |
+| identity      | tag, descriptor, engunits, pointtype, pointsource, instrumenttag, digitalset |
+| scaling       | zero, span, typicalvalue, displaydigits, squareroot, convers              |
+| interface     | location1..5, exdesc, sourcetag, srcptid                                  |
+| security      | ptsecurity, datasecurity, ptaccess, dataaccess, ptowner, ptgroup, dataowner, datagroup |
+| all           | Todos os atributos retornados pela API                                    |
+
+## Aliases aceitos
+
+| Alias comum          | Grupo canônico  |
+| -------------------- | ---------------- |
+| `metadata`, `identidade`, `descrição`, `unidade` | `identity` |
+| `compressão`, `compressao`, `compdev`, `compmax` | `compression` |
+| `exceção`, `excecao`, `excesso`, `excessao`, `execeção`, `exececao` | `exception` |
+| `arquivamento`, `archiving`, `scan` | `archive` |
+| `escala`, `zero`, `span`, `typicalvalue` | `scaling` |
+| `location`, `sourcetag` | `interface` |
+| `segurança`, `seguranca` | `security` |
+
+## Interpretação operacional
+
+| Atributo        | Significado                            | Valor típico         |
+| --------------- | -------------------------------------- | -------------------- |
+| compressing     | Compressão ativada?                    | 1=ativada / 0=desativada |
+| compdev         | Desvio de compressão (segundos)        | 0.05 segundos        |
+| compdevpercent  | Percentual do desvio de compressão     | 10                   |
+| compmin         | Mínimo para compressão (segundos)      | 0 segundos           |
+| compmax         | Máximo para compressão (segundos)      | 300 segundos         |
+| excdev          | Desvio de exceção (segundos)           | 0.1 segundos         |
+| excdevpercent   | Percentual do desvio de exceção        | 5                    |
+| excmin          | Mínimo para exceção (segundos)         | -10 segundos         |
+| excmax          | Máximo para exceção (segundos)         | 350 segundos         |
+| scan            | Escaneamento ativo?                    | 1=ligado / 0=desligado |
+| archiving       | Arquivamento ativo?                    | 1=ativado / 0=desativado |
+| pointsource     | Fonte do ponto                         | PIMS, OPC, etc.      |
+| instrumenttag   | Tag do instrumento de campo            | FT-101               |
+
+## Regras de resposta
+
+- A tool retorna apenas os atributos solicitados (texto curto, 1 linha por atributo).
+- Não retornar `Links`, `Self`, `Point` ou JSON bruto.
+- Se o usuário pedir valor atual da tag, usar `consultar_tag`, não esta tool.
+- Atributo não configurado: exibir `(não configurado)`.
 
 ---

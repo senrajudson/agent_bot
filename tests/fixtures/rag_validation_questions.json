@@ -1,0 +1,142 @@
+[
+  {
+    "id": "curated-01",
+    "query": "Como consultar o valor atual de uma tag?",
+    "expected_top1": 3,
+    "expected_top3_acceptable": [3, 2, 17],
+    "source": "curated"
+  },
+  {
+    "id": "curated-02",
+    "query": "Qual o fluxo para obter o WebId de uma tag?",
+    "expected_top1": 2,
+    "expected_top3_acceptable": [2, 3, 16],
+    "source": "curated"
+  },
+  {
+    "id": "curated-03",
+    "query": "Como consultar metadados como descriptor e unidade de uma tag?",
+    "expected_top1": 4,
+    "expected_top3_acceptable": [4, 5, 3],
+    "source": "curated"
+  },
+  {
+    "id": "curated-04",
+    "query": "Como consultar o DigitalSetName e os estados digitais de uma tag?",
+    "expected_top1": 6,
+    "expected_top3_acceptable": [6, 5, 16],
+    "source": "curated"
+  },
+  {
+    "id": "curated-05",
+    "query": "Qual endpoint usar para obter valores historicos brutos recorded de uma tag?",
+    "expected_top1": 7,
+    "expected_top3_acceptable": [7, 8, 9],
+    "source": "curated"
+  },
+  {
+    "id": "curated-06",
+    "query": "Como obter valores interpolados de uma tag em um intervalo?",
+    "expected_top1": 8,
+    "expected_top3_acceptable": [8, 7, 9],
+    "source": "curated"
+  },
+  {
+    "id": "curated-07",
+    "query": "Como calcular media, maximo e minimo de uma tag usando summary?",
+    "expected_top1": 9,
+    "expected_top3_acceptable": [9, 10, 20],
+    "source": "curated"
+  },
+  {
+    "id": "curated-08",
+    "query": "Como calcular consumo de vazao em Nm3 usando medias horarias?",
+    "expected_top1": 10,
+    "expected_top3_acceptable": [10, 9, 20],
+    "source": "curated"
+  },
+  {
+    "id": "curated-09",
+    "query": "Como consultar multiplas tags em uma unica chamada usando batch?",
+    "expected_top1": 11,
+    "expected_top3_acceptable": [11, 2, 16],
+    "source": "curated"
+  },
+  {
+    "id": "curated-10",
+    "query": "Qual ferramenta usar para integral e derivada temporal de tags?",
+    "expected_top1": 20,
+    "expected_top3_acceptable": [20, 9, 10],
+    "source": "curated"
+  },
+  {
+    "id": "production-01",
+    "query": "Qual o valor atual da tag LFI_RB3_VAZ_GN_TOTAL?",
+    "expected_top1": 3,
+    "expected_top3_acceptable": [3, 2, 17],
+    "source": "production"
+  },
+  {
+    "id": "production-02",
+    "query": "Me mostre o consumo total de gas natural do mes de junho",
+    "expected_top1": 10,
+    "expected_top3_acceptable": [10, 9, 20],
+    "source": "production"
+  },
+  {
+    "id": "production-03",
+    "query": "Qual a media de temperatura do reator ACI_001_TEMP nas ultimas 24h?",
+    "expected_top1": 9,
+    "expected_top3_acceptable": [9, 8, 20],
+    "source": "production"
+  },
+  {
+    "id": "production-04",
+    "query": "O que significa o estado digital da tag RED_001_ALARM?",
+    "expected_top1": 6,
+    "expected_top3_acceptable": [6, 4, 16],
+    "source": "production"
+  },
+  {
+    "id": "production-05",
+    "query": "Qual a descricao da tag UTI_001_PRESSAO?",
+    "expected_top1": 4,
+    "expected_top3_acceptable": [4, 5, 3],
+    "source": "production"
+  },
+  {
+    "id": "production-06",
+    "query": "Como consultar instrumenttag da tag LFS_TQ_001_NIVEL?",
+    "expected_top1": 5,
+    "expected_top3_acceptable": [5, 4, 16],
+    "source": "production"
+  },
+  {
+    "id": "production-07",
+    "query": "Qual o endpoint summary para calcular desvio padrao?",
+    "expected_top1": 9,
+    "expected_top3_acceptable": [9, 10, 20],
+    "source": "production"
+  },
+  {
+    "id": "production-08",
+    "query": "Como calcular a integral do sinal de vazao ao longo do tempo?",
+    "expected_top1": 20,
+    "expected_top3_acceptable": [20, 10, 9],
+    "source": "production"
+  },
+  {
+    "id": "production-09",
+    "query": "Como verificar o status operacional do PIMS?",
+    "expected_top1": 1,
+    "expected_top3_acceptable": [1, 16, 13],
+    "source": "production"
+  },
+  {
+    "id": "production-10",
+    "query": "A tag LFI_RB3_VAZ_GN_TOTAL esta com Good false, o que fazer?",
+    "expected_top1": 13,
+    "expected_top3_acceptable": [13, 19, 16],
+    "source": "production"
+  }
+]
