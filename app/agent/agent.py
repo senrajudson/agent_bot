@@ -30,7 +30,7 @@ from tenacity import (
 
 from app.clients.provider_client import get_llm, get_llm_for_model
 from app.core.config import settings
-from app.prompts.agent_prompt import AGENT_SYSTEM_PROMPT
+from app.prompts.agent_prompt import build_system_prompt
 from app.schemas.llm import LLMParams
 from app.agent.shared import RETRYABLE_ERRORS
 
@@ -66,7 +66,9 @@ def _build_agent(model_name: str | None = None) -> LlmAgent:
     return LlmAgent(
         name=AGENT_NAME,
         model=model,
-        instruction=AGENT_SYSTEM_PROMPT,
+        instruction=build_system_prompt(
+            enable_test_artifact_tool=settings.ENABLE_TEST_ARTIFACT_TOOL,
+        ),
         tools=[_mcp_toolset()],
     )
 
@@ -197,6 +199,151 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
             if counts[key] >= 3:
                 return True
     return False
+
+
+_ENVELOPE_TYPE = "agent_artifact_result"
+
+
+def _extract_attachments_from_agent_output(
+    output: str,
+    agent_messages: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Parse 'agent_artifact_result' envelope from MCP tool output.
+
+    Strategy:
+      1. Try ``json.loads(output)``.
+         If ``type == "agent_artifact_result"`` and ``attachments`` is a list,
+         validate each item has ``artifact_id``, ``download_url``, ``path``
+         as non-empty strings. Return ``(answer, valid_attachments)``.
+      2. If step 1 fails, scan ``agent_messages[*]["tool_responses"][*]``
+         for an envelope. ``response`` may be a dict (real ADK output) or
+         a JSON string (legacy). Covers the real ADK path where the LLM
+         emits a clean final text (per system prompt) and the envelope
+         lives in the tool response payload.
+      3. If step 2 fails, scan ``agent_messages`` for tool role messages
+         whose content matches the envelope (legacy format).
+      4. Fallback: ``(output, [])``.
+    """
+    import json as _json
+
+    def _is_valid_attachment(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        for key in ("artifact_id", "download_url", "path"):
+            val = item.get(key)
+            if not isinstance(val, str) or not val.strip():
+                return False
+        return True
+
+    def _envelope_from_payload(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
+        if isinstance(payload, str):
+            try:
+                payload = _json.loads(payload)
+            except (ValueError, TypeError):
+                return None
+        if (
+            isinstance(payload, dict)
+            and payload.get("type") == _ENVELOPE_TYPE
+            and isinstance(payload.get("attachments"), list)
+        ):
+            valid = [a for a in payload["attachments"] if _is_valid_attachment(a)]
+            return (payload.get("answer", output), valid)
+        return None
+
+    def _unpack_mcp_tool_response(payload: Any) -> Any:
+        """Unpack google-adk 2.2.0 MCP CallToolResult.model_dump() wrapper.
+
+        The ADK delivers tool responses as the model_dump of CallToolResult::
+
+            {
+              "content": [{"type": "text", "text": "<envelope_json_string>"}],
+              "structuredContent": <dict> | None
+            }
+
+        FastMCP, when a tool has a primitive return type (e.g. ``str``), wraps
+        the result via ``wrap_output=True`` and produces::
+
+            {"structuredContent": {"result": "<original_string>"}}
+
+        instead of the envelope dict directly. This helper unwraps that case
+        so ``_envelope_from_payload`` can parse the underlying string.
+
+        Returns the envelope payload (dict for structuredContent, str for
+        TextContent or unwrapped wrap_output), or None if the payload doesn't
+        match the wrapper.
+        """
+        if not isinstance(payload, dict):
+            return None
+        # Prefer structuredContent (declared output schema)
+        sc = payload.get("structuredContent")
+        if isinstance(sc, dict):
+            # FastMCP wrap_output=True for primitive return types: the dict is
+            # {"result": "<original_string>"} and the envelope lives inside.
+            # If sc is not itself the envelope, unwrap the "result" key.
+            if sc.get("type") != _ENVELOPE_TYPE:
+                inner = sc.get("result")
+                if isinstance(inner, str) and inner:
+                    return inner
+            return sc
+        # Fall back to content[0].text (TextContent)
+        content = payload.get("content")
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and first.get("type") == "text":
+                text = first.get("text")
+                if isinstance(text, str):
+                    return text
+        return None
+
+    # Step 1: try the final output string
+    if output:
+        result = _envelope_from_payload(output)
+        if result is not None:
+            return result
+
+    # Step 2: scan agent_messages[*]["tool_responses"][*]
+    for msg in agent_messages:
+        tool_responses = msg.get("tool_responses") or []
+        if not isinstance(tool_responses, list):
+            continue
+        for tr in tool_responses:
+            if not isinstance(tr, dict):
+                continue
+            response = tr.get("response")
+            # 2a: try direct dict/string (legacy synthetic tests)
+            result = _envelope_from_payload(response)
+            if result is not None:
+                return result
+            # 2b: try google-adk 2.2.0 MCP wrapper (real ADK path)
+            unpacked = _unpack_mcp_tool_response(response)
+            if unpacked is not None:
+                result = _envelope_from_payload(unpacked)
+                if result is not None:
+                    return result
+            # 2c: defense in depth — try content[0].text directly from
+            # the wrapper (covers cases where structuredContent is
+            # absent or unhelpful but the envelope lives in TextContent).
+            if isinstance(response, dict):
+                content = response.get("content")
+                if isinstance(content, list) and content:
+                    first = content[0]
+                    if isinstance(first, dict) and first.get("type") == "text":
+                        text = first.get("text")
+                        if isinstance(text, str):
+                            result = _envelope_from_payload(text)
+                            if result is not None:
+                                return result
+
+    # Step 3: scan agent_messages for tool role with content string (legacy)
+    for msg in agent_messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "tool" and isinstance(content, str):
+            result = _envelope_from_payload(content)
+            if result is not None:
+                return result
+
+    return (output, [])
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +642,7 @@ async def _run_agent_core(
                 "messages": messages,
                 "output": _classify_error(Exception(event.error_message)),
                 "error": event.error_message,
+                "attachments": [],
             }
 
         msg = _event_to_message(event)
@@ -514,6 +662,7 @@ async def _run_agent_core(
             "messages": messages,
             "output": search_decision["final_response_override"],
             "error": "search_loop_blocked",
+            "attachments": [],
         }
 
     # Secondary safety net: exact repeat of same tool+args (3+ times)
@@ -526,15 +675,21 @@ async def _run_agent_core(
                 "A execução foi encerrada para evitar repetição."
             ),
             "error": "tool_call_repeated",
+            "attachments": [],
         }
 
     if not final_output:
         final_output = "Não consegui gerar uma resposta final."
 
+    attachments_result = _extract_attachments_from_agent_output(final_output, messages)
+    clean_output = attachments_result[0]
+    attachments = attachments_result[1]
+
     return {
         "messages": messages,
-        "output": final_output,
+        "output": clean_output,
         "error": None,
+        "attachments": attachments,
     }
 
 
@@ -583,10 +738,12 @@ async def run_agent(
             "messages": [],
             "output": _classify_error(last_exc),
             "error": str(last_exc),
+            "attachments": [],
         }
     # Should not reach here, but just in case
     return {
         "messages": [],
         "output": "Erro desconhecido no agent.",
         "error": "unknown",
+        "attachments": [],
     }

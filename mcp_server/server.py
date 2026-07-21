@@ -24,6 +24,8 @@ from fastmcp import FastMCP
 
 from core.config import settings
 
+
+
 # ---------------------------------------------------------------------------
 # FastMCP server
 # ---------------------------------------------------------------------------
@@ -305,6 +307,44 @@ async def search_pi_points(
 
 
 # ---------------------------------------------------------------------------
+# Tool: generate_test_artifact_tool (referência / validação)
+# ---------------------------------------------------------------------------
+# A função é sempre definida (mantém importabilidade direta), mas o registro
+# no FastMCP é condicional à feature flag ENABLE_TEST_ARTIFACT_TOOL.
+# Default: false — tool omitida do catálogo em produção.
+async def generate_test_artifact_tool(
+    filename: str = "test_artifact.txt",
+    content: str | None = None,
+    mime_type: str = "text/plain",
+    caption: str | None = None,
+) -> str:
+    """
+    Gera um arquivo de teste, faz upload para a API do Agent Bot,
+    e devolve envelope JSON com ChatAttachment.
+
+    APENAS PARA VALIDAÇÃO — não usar em produção.
+    Use esta tool para validar o fluxo de upload de artefatos.
+
+    Args:
+        filename: Nome do arquivo (default: test_artifact.txt).
+        content: Conteúdo textual (opcional; padrão: timestamp).
+        mime_type: MIME type do arquivo (default: text/plain).
+        caption: Legenda para exibição no Google Chat (opcional).
+    """
+    from services.generate_test_artifact_service import generate_test_artifact
+
+    return await generate_test_artifact(
+        filename=filename,
+        content=content,
+        mime_type=mime_type,
+        caption=caption,
+    )
+
+if settings.ENABLE_TEST_ARTIFACT_TOOL:
+    mcp.tool(generate_test_artifact_tool)
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -317,6 +357,13 @@ if __name__ == "__main__":
         settings.MATH_TOOL_BASE_URL,
     )
 
+    if settings.ENABLE_TEST_ARTIFACT_TOOL:
+        logger.info("generate_test_artifact_tool: ENABLED (registrada no FastMCP)")
+    else:
+        logger.info(
+            "generate_test_artifact_tool: DISABLED (omitida do registro — "
+            "defina ENABLE_TEST_ARTIFACT_TOOL=true para habilitá-la)"
+        )
     asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))
 
     mcp.run(transport="http", host=settings.MCP_HOST, port=settings.MCP_PORT)

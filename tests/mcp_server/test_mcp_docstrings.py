@@ -56,6 +56,9 @@ async def test_all_6_tools_registered():
     assert expected.issubset(set(tools.keys())), (
         f"Missing tools: {expected - set(tools.keys())}"
     )
+    assert "create_csv_artifact_tool" not in tools, (
+        "Removed tool 'create_csv_artifact_tool' should not be registered"
+    )
 
 
 def test_all_tools_have_docstring():

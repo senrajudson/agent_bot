@@ -28,3 +28,13 @@ def test_prompt_contains_persona():
 
 def test_prompt_contains_time_reference():
     assert "Data/hora" in AGENT_SYSTEM_PROMPT
+
+
+def test_prompt_omits_csv_artifact_tool():
+    assert "create_csv_artifact_tool" not in AGENT_SYSTEM_PROMPT
+    assert "CSV não está disponível" in AGENT_SYSTEM_PROMPT
+    assert "arquivo CSV" not in AGENT_SYSTEM_PROMPT
+
+
+def test_prompt_negative_csv_rule_present():
+    assert "exportação em CSV não está disponível" in AGENT_SYSTEM_PROMPT

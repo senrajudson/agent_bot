@@ -28,5 +28,14 @@ class Settings(BaseSettings):
     MCP_HOST: str = "0.0.0.0"
     MCP_PORT: int = 8003
 
+    # Agent Bot API — artifact upload
+    AGENT_API_BASE_URL: str = "http://localhost:8002"
+    AGENT_ARTIFACTS_TOKEN: str | None = None
+    AGENT_ARTIFACT_UPLOAD_TIMEOUT_SECONDS: float = 60.0
+    AGENT_ARTIFACT_MAX_UPLOAD_BYTES: int = 104857600
+
+    # Feature flag — generate_test_artifact_tool (referência / validação)
+    ENABLE_TEST_ARTIFACT_TOOL: bool = False
+
 
 settings = Settings()

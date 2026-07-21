@@ -75,5 +75,17 @@ class Settings(BaseSettings):
     # Default False preserves current runtime behavior (InMemoryEventStore).
     EVENT_DRIVEN_ENABLED: bool = False
 
+    # Artifact layer
+    AGENT_ARTIFACT_TTL_SECONDS: int = 3600
+    AGENT_ARTIFACTS_BASE_DIR: str = "/tmp/agent_bot_artifacts"
+    AGENT_ARTIFACTS_PUBLIC_PATH_PREFIX: str = "/artifacts"
+    AGENT_ARTIFACTS_TOKEN: str | None = None
+    AGENT_ARTIFACT_MAX_UPLOAD_BYTES: int = 104857600
+    AGENT_ARTIFACT_ALLOWED_MIME_TYPES: str = "text/plain,text/csv,application/json,application/octet-stream"
+    AGENT_ARTIFACT_BLOCKED_EXTENSIONS: str = ".exe,.bat,.sh,.dll,.cmd,.com,.scr"
+
+    # Test artifact tool (feature flag for QA validation)
+    ENABLE_TEST_ARTIFACT_TOOL: bool = False
+
 
 settings = Settings()
