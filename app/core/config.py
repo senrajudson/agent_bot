@@ -87,5 +87,8 @@ class Settings(BaseSettings):
     # Test artifact tool (feature flag for QA validation)
     ENABLE_TEST_ARTIFACT_TOOL: bool = False
 
+    # Drive CSV export (opt-in, default false)
+    ENABLE_DRIVE_CSV_EXPORT_TOOL: bool = False
+
 
 settings = Settings()

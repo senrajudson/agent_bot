@@ -7,7 +7,7 @@ services:
     container_name: math_tool
     restart: always
     ports:
-      - "8001:8001"
+      - '8001:8001'
     environment:
       - PYTHONUNBUFFERED=1
 
@@ -19,13 +19,17 @@ services:
     container_name: mcp_server
     restart: always
     ports:
-      - "8005:8005"
+      - '8005:8005'
     env_file:
       - ./mcp_server/.env
     environment:
       - PYTHONUNBUFFERED=1
       - MCP_PORT=8005
       - MATH_TOOL_BASE_URL=http://math_tool:8001
+      - AGENT_API_BASE_URL=http://agent_bot:8002
+      - AGENT_ARTIFACTS_TOKEN=${AGENT_ARTIFACTS_TOKEN:?AGENT_ARTIFACTS_TOKEN is required}
+    volumes:
+      - ./secrets/pi_chat_drive_exporter:/run/secrets/pi_chat_drive_exporter:ro
 
   agent_bot:
     build:
@@ -35,7 +39,7 @@ services:
     container_name: agent_bot
     restart: always
     ports:
-      - "8002:8002"
+      - '8002:8002'
     env_file:
       - ./app/.env
     environment:
@@ -46,17 +50,17 @@ services:
       - OLLAMA_API_BASE=http://10.247.179.197:11434
       - MCP_SERVER_URL=http://mcp_server:8005/mcp
       - MATH_TOOL_BASE_URL=http://math_tool:8001
+      - AGENT_ARTIFACTS_TOKEN=${AGENT_ARTIFACTS_TOKEN:?AGENT_ARTIFACTS_TOKEN is required}
       - PHOENIX_ENABLED=true
       - PHOENIX_PROJECT_NAME=pi-chat-api
       - PHOENIX_COLLECTOR_ENDPOINT=http://10.247.179.197:6006/v1/traces
+    volumes:
+      - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
       - math_tool
       - mcp_server
 
   agent_bot_chat_bridge:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: agent_bot:0.2.0
     container_name: agent_bot_chat_bridge
     restart: always
@@ -69,6 +73,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./secrets:/app/secrets:ro
+      - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
       - agent_bot
 
@@ -85,12 +90,13 @@ services:
     volumes:
       - event_store_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 10s
       timeout: 5s
       retries: 5
     ports:
-      - "127.0.0.1:${EVENT_STORE_POSTGRES_HOST_PORT:-5433}:5432"
+      - '127.0.0.1:${EVENT_STORE_POSTGRES_HOST_PORT:-5433}:5432'
 
 volumes:
+  agent_artifacts:
   event_store_pgdata:

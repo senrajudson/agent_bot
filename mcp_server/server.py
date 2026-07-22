@@ -345,6 +345,95 @@ if settings.ENABLE_TEST_ARTIFACT_TOOL:
 
 
 # ---------------------------------------------------------------------------
+# Tool: export_csv_to_drive_tool
+# ---------------------------------------------------------------------------
+async def export_csv_to_drive_tool(
+    filename: str,
+    columns: list[str],
+    rows: list[list],
+) -> dict:
+    """
+    Cria um arquivo CSV e envia para o Google Shared Drive.
+
+    Use somente quando o usuário pedir explicitamente exportação CSV após
+    obter dados. Limite: 500 linhas e 50 colunas.
+
+    Args:
+        filename: Nome do arquivo (sem caminho).
+        columns: Lista de nomes de colunas.
+        rows: Lista de linhas; cada linha deve ter o mesmo número de colunas.
+    """
+    from clients.google_drive_client import GoogleDriveClient, DriveCsvError
+    from services.export_csv_to_drive_service import (
+        export_csv_to_drive,
+        DriveCsvValidationError,
+        DriveCsvSerializationError,
+    )
+
+    if not settings.ENABLE_DRIVE_CSV_EXPORT_TOOL:
+        return {
+            "success": False,
+            "answer": "Exportação CSV para Drive está desabilitada.",
+            "error_code": "config_missing",
+            "retryable": False,
+        }
+
+    try:
+        client = GoogleDriveClient(
+            credentials_path=settings.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE,
+            folder_id=settings.GOOGLE_DRIVE_EXPORT_FOLDER_ID,
+            timeout_seconds=settings.DRIVE_CSV_UPLOAD_TIMEOUT_SECONDS,
+        )
+        result = export_csv_to_drive(
+            filename=filename,
+            columns=columns,
+            rows=rows,
+            drive_client=client,
+            max_rows=settings.DRIVE_CSV_MAX_ROWS,
+            max_columns=settings.DRIVE_CSV_MAX_COLUMNS,
+            max_cell_bytes=settings.DRIVE_CSV_MAX_CELL_BYTES,
+            max_input_bytes=settings.DRIVE_CSV_MAX_INPUT_BYTES,
+            max_file_bytes=settings.DRIVE_CSV_MAX_FILE_BYTES,
+            max_filename_length=settings.DRIVE_CSV_MAX_FILENAME_LENGTH,
+            formula_protection=settings.DRIVE_CSV_FORMULA_PROTECTION,
+        )
+        logger.info(
+            "export_csv_to_drive_tool: success filename=%s",
+            result.get("filename"),
+        )
+        return result
+    except DriveCsvValidationError:
+        return {
+            "success": False,
+            "answer": "Os dados enviados não são válidos para exportação CSV.",
+            "error_code": "validation_error",
+            "retryable": False,
+        }
+    except DriveCsvSerializationError:
+        return {
+            "success": False,
+            "answer": "Erro ao serializar o arquivo CSV.",
+            "error_code": "serialization_error",
+            "retryable": False,
+        }
+    except DriveCsvError as e:
+        logger.warning(
+            "export_csv_to_drive_tool: error_code=%s retryable=%s",
+            e.error_code,
+            e.retryable,
+        )
+        return {
+            "success": False,
+            "answer": "Não foi possível criar o arquivo CSV no Google Drive.",
+            "error_code": e.error_code,
+            "retryable": e.retryable,
+        }
+
+if settings.ENABLE_DRIVE_CSV_EXPORT_TOOL:
+    mcp.tool(export_csv_to_drive_tool)
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -364,6 +453,15 @@ if __name__ == "__main__":
             "generate_test_artifact_tool: DISABLED (omitida do registro — "
             "defina ENABLE_TEST_ARTIFACT_TOOL=true para habilitá-la)"
         )
+
+    if settings.ENABLE_DRIVE_CSV_EXPORT_TOOL:
+        logger.info("export_csv_to_drive_tool: ENABLED")
+    else:
+        logger.info(
+            "export_csv_to_drive_tool: DISABLED — "
+            "defina ENABLE_DRIVE_CSV_EXPORT_TOOL=true para habilitá-la"
+        )
+
     asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))
 
     mcp.run(transport="http", host=settings.MCP_HOST, port=settings.MCP_PORT)

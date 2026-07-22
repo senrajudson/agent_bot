@@ -20,6 +20,8 @@ _TOOL_NAMES = [
     "status_pims_tool",
 ]
 
+_TOOL_NAMES_WITH_DRIVE = _TOOL_NAMES + ["export_csv_to_drive_tool"]
+
 
 def _import_mcp_server():
     if str(_MCP_ROOT) not in sys.path:
@@ -47,15 +49,19 @@ def _get_tool_fns():
 
 
 @pytest.mark.asyncio
-async def test_all_6_tools_registered():
+async def test_all_tools_registered():
     mcp = _import_mcp_server()
     import asyncio
 
     tools = await mcp.get_tools()
+    # Minimum required tools are always present
     expected = set(_TOOL_NAMES)
     assert expected.issubset(set(tools.keys())), (
         f"Missing tools: {expected - set(tools.keys())}"
     )
+    # Drive export tool may or may not be registered depending on flag
+    if "export_csv_to_drive_tool" in tools:
+        expected.add("export_csv_to_drive_tool")
     assert "create_csv_artifact_tool" not in tools, (
         "Removed tool 'create_csv_artifact_tool' should not be registered"
     )
