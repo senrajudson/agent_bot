@@ -1,3 +1,4 @@
+workflow opencode
 /constitution -> manter governança
 /analyze      -> entender o estado real
 /specify      -> definir o que será feito
