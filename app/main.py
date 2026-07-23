@@ -44,6 +44,18 @@ app = FastAPI(title=settings.API_NAME, lifespan=event_driven_lifespan)
 
 instrument_fastapi_app(app)
 
+if settings.ENABLE_ARTIFACTS:
+    from app.api.artifacts import router as artifacts_router
+    from app.api.artifacts_upload import router as artifacts_upload_router
+    app.include_router(
+        artifacts_router,
+        prefix=settings.AGENT_ARTIFACTS_PUBLIC_PATH_PREFIX,
+    )
+    app.include_router(
+        artifacts_upload_router,
+        prefix=settings.AGENT_ARTIFACTS_PUBLIC_PATH_PREFIX,
+    )
+
 
 @app.get("/health")
 async def health():
