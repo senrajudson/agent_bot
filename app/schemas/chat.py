@@ -1,6 +1,16 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ChatAttachment(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    artifact_id: str = Field(..., min_length=1)
+    filename: str = Field(..., min_length=1)
+    mime_type: str = Field(..., min_length=1)
+    size_bytes: int | None = Field(default=None, ge=0)
+    cleanup_after_send: bool = False
+    caption: str | None = None
 
 
 class ChatImage(BaseModel):
@@ -51,3 +61,4 @@ class ChatResponse(BaseModel):
 
     output: str | None = None
     answer_generation_error: str | None = None
+    attachments: list[ChatAttachment] = Field(default_factory=list)

@@ -1,7 +1,7 @@
 """Command: Run the agent or general agent for a user message."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine
 
 from app.application.commands.base import Command
@@ -27,6 +27,7 @@ class RunAgentForMessageResult:
     error: str | None
     messages: list[dict[str, Any]]
     tool_name: str
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 class RunAgentForMessageHandler:
@@ -64,9 +65,14 @@ class RunAgentForMessageHandler:
             )
             tool_name = "general_agent"
 
+        attachments = result.get("attachments") or []
+        if not isinstance(attachments, list):
+            attachments = []
+
         return RunAgentForMessageResult(
             output=result.get("output", ""),
             error=result.get("error"),
             messages=result.get("messages", []),
             tool_name=tool_name,
+            attachments=attachments,
         )

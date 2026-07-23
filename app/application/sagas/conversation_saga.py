@@ -83,6 +83,7 @@ class AgentExecutionContext:
     agent_error: str | None = None
     agent_messages: list[dict[str, Any]] = field(default_factory=list)
     tool_name: str | None = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,6 +115,7 @@ _FLAT_TO_SUBCONTEXT: dict[str, str] = {
     "agent_error": "agent",
     "agent_messages": "agent",
     "tool_name": "agent",
+    "attachments": "agent",
     "error": "response",
 }
 
@@ -252,6 +254,11 @@ class ConversationContext:
     def tool_name(self) -> str | None:
         """Compat: ``ctx.tool_name`` -> ``ctx.agent.tool_name``."""
         return self.agent.tool_name
+
+    @property
+    def attachments(self) -> list[dict[str, Any]]:
+        """Compat: ``ctx.attachments`` -> ``ctx.agent.attachments``."""
+        return self.agent.attachments
 
     @property
     def error(self) -> str | None:
@@ -528,12 +535,17 @@ class ConversationSaga:
                 memory_context=ctx.memory_context,
             )
         )
+        attachments = getattr(result, "attachments", []) or []
+        if not isinstance(attachments, list):
+            attachments = []
+
         new_ctx = replace(
             ctx,
             agent_output=result.output or "Não consegui gerar uma resposta.",
             agent_error=result.error,
             agent_messages=result.messages,
             tool_name=result.tool_name,
+            attachments=attachments,
         )
         from app.domain.events import AgentRunCompleted
         await self._publish(ctx, AgentRunCompleted(

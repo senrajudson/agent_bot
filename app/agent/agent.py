@@ -204,6 +204,79 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
 
 _ENVELOPE_TYPE = "agent_artifact_result"
 
+_ALLOWED_ATTACHMENT_MIMES = {
+    "text/plain",
+    "text/csv",
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+}
+
+
+def _dedupe_by_artifact_id(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for item in items:
+        aid = item.get("artifact_id")
+        if aid and aid not in seen:
+            seen.add(aid)
+            result.append(item)
+    return result
+
+
+def _enforce_attachment_limits(
+    items: list[dict[str, Any]],
+    max_count: int = 3,
+    max_total_bytes: int = 52428800,
+) -> list[dict[str, Any]]:
+    truncated = items[:max_count]
+    total = sum(
+        item.get("size_bytes") or 0 for item in truncated
+    )
+    if total > max_total_bytes:
+        logger.warning(
+            "attachment_limit: total_bytes=%d exceeds %d — discarding all",
+            total, max_total_bytes,
+        )
+        return []
+    return truncated
+
+
+def _is_valid_attachment(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    aid = item.get("artifact_id")
+    fn = item.get("filename")
+    mt = item.get("mime_type")
+    if not (isinstance(aid, str) and aid.strip()):
+        return False
+    if not (isinstance(fn, str) and fn.strip()):
+        return False
+    if not (isinstance(mt, str) and mt.strip()):
+        return False
+    cas = item.get("cleanup_after_send", False)
+    if not isinstance(cas, bool):
+        return False
+    cap = item.get("caption")
+    if cap is not None and not isinstance(cap, str):
+        return False
+    sb = item.get("size_bytes")
+    if sb is not None and not (isinstance(sb, int) and sb >= 0):
+        return False
+    if mt not in _ALLOWED_ATTACHMENT_MIMES:
+        logger.warning(
+            "attachment_invalid_mime: mime_type=%s artifact_id=%s",
+            mt, aid,
+        )
+        return False
+    if any(k in item for k in ("path", "download_url", "internal_url")):
+        logger.warning(
+            "attachment_rejected_path: artifact_id=%s keys=%s",
+            aid, [k for k in item if k in ("path", "download_url", "internal_url")],
+        )
+        return False
+    return True
+
 
 def _extract_attachments_from_agent_output(
     output: str,
@@ -214,8 +287,7 @@ def _extract_attachments_from_agent_output(
     Strategy:
       1. Try ``json.loads(output)``.
          If ``type == "agent_artifact_result"`` and ``attachments`` is a list,
-         validate each item has ``artifact_id``, ``download_url``, ``path``
-         as non-empty strings. Return ``(answer, valid_attachments)``.
+         validate each item, dedupe, enforce limits, and return.
       2. If step 1 fails, scan ``agent_messages[*]["tool_responses"][*]``
          for an envelope. ``response`` may be a dict (real ADK output) or
          a JSON string (legacy). Covers the real ADK path where the LLM
@@ -227,14 +299,11 @@ def _extract_attachments_from_agent_output(
     """
     import json as _json
 
-    def _is_valid_attachment(item: Any) -> bool:
-        if not isinstance(item, dict):
-            return False
-        for key in ("artifact_id", "download_url", "path"):
-            val = item.get(key)
-            if not isinstance(val, str) or not val.strip():
-                return False
-        return True
+    def _process_attachments(raw: list[Any]) -> list[dict[str, Any]]:
+        valid = [a for a in raw if _is_valid_attachment(a)]
+        valid = _dedupe_by_artifact_id(valid)
+        valid = _enforce_attachment_limits(valid)
+        return valid
 
     def _envelope_from_payload(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
         if isinstance(payload, str):
@@ -247,7 +316,7 @@ def _extract_attachments_from_agent_output(
             and payload.get("type") == _ENVELOPE_TYPE
             and isinstance(payload.get("attachments"), list)
         ):
-            valid = [a for a in payload["attachments"] if _is_valid_attachment(a)]
+            valid = _process_attachments(payload["attachments"])
             return (payload.get("answer", output), valid)
         return None
 

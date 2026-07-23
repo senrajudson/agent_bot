@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.application.sagas.conversation_saga import ConversationContext
-from app.schemas.chat import ChatResponse
+from app.schemas.chat import ChatAttachment, ChatResponse
 
 # ---------------------------------------------------------------------------
 # Helpers duplicated from app/agent/orchestrator.py
@@ -117,6 +117,29 @@ def build_chat_response(ctx: ConversationContext) -> ChatResponse:
             else None
         )
 
+    raw_attachments = ctx.attachments or []
+    valid_attachments: list[ChatAttachment] = []
+    seen: set[str] = set()
+    for item in raw_attachments:
+        if not isinstance(item, dict):
+            continue
+        aid = item.get("artifact_id")
+        if not isinstance(aid, str) or not aid.strip():
+            continue
+        if aid in seen:
+            continue
+        seen.add(aid)
+        try:
+            valid_attachments.append(ChatAttachment(**item))
+        except Exception:
+            logger = __import__("logging").getLogger(__name__)
+            logger.warning("attachment_invalid artifact_id=%s", aid)
+    if len(valid_attachments) > 3:
+        valid_attachments = valid_attachments[:3]
+    total_bytes = sum(a.size_bytes or 0 for a in valid_attachments)
+    if total_bytes > 52428800:
+        valid_attachments = []
+
     return ChatResponse(
         ok=ctx.error is None,
         user_id=ctx.user_id,
@@ -135,4 +158,5 @@ def build_chat_response(ctx: ConversationContext) -> ChatResponse:
         agent_trace=agent_trace,
         output=ctx.agent_output,
         answer_generation_error=ctx.error,
+        attachments=valid_attachments,
     )

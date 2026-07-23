@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -90,8 +91,19 @@ class Settings(BaseSettings):
     # Test artifact tool (feature flag for QA validation)
     ENABLE_TEST_ARTIFACT_TOOL: bool = False
 
+    # Chat attachments (bridge)
+    ENABLE_CHAT_ATTACHMENTS: bool = False
+
     # Drive CSV export (opt-in, default false)
     ENABLE_DRIVE_CSV_EXPORT_TOOL: bool = False
+
+    @model_validator(mode="after")
+    def _validate_artifact_flags(self) -> "Settings":
+        if self.ENABLE_CHAT_ATTACHMENTS and not self.ENABLE_ARTIFACTS:
+            raise ValueError(
+                "ENABLE_CHAT_ATTACHMENTS=true requires ENABLE_ARTIFACTS=true."
+            )
+        return self
 
 
 settings = Settings()
