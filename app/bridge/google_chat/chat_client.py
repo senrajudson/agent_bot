@@ -164,6 +164,58 @@ class GoogleChatClient:
                 f"Status: {status}. Detalhe: {content}"
             ) from exc
 
+    def send_attachment(
+        self,
+        space_name: str,
+        file_path: str,
+        mime_type: str,
+        filename: str,
+        caption: str | None = None,
+        thread_name: str | None = None,
+        sender_email: str | None = None,
+    ) -> dict[str, Any]:
+        from pathlib import Path
+
+        path = Path(file_path).resolve()
+        if not path.is_file():
+            raise ValueError(f"Arquivo não encontrado: {file_path}")
+
+        from googleapiclient.http import MediaFileUpload
+
+        media = MediaFileUpload(
+            filename=str(path),
+            mimetype=mime_type,
+            resumable=True,
+        )
+
+        body: dict[str, Any] = {
+            "text": caption or filename,
+        }
+        if thread_name:
+            body["thread"] = {"name": thread_name}
+
+        try:
+            upload_response = (
+                self.service.spaces()
+                .messages()
+                .create(
+                    parent=space_name,
+                    body=body,
+                    media_body=media,
+                )
+                .execute()
+            )
+            return upload_response
+        except Exception as exc:
+            logger.exception(
+                "Falha ao enviar attachment. path=%s mime=%s",
+                file_path,
+                mime_type,
+            )
+            raise RuntimeError(
+                f"Falha ao enviar attachment: {exc}" if not isinstance(exc, RuntimeError) else str(exc)
+            ) from exc
+
     def send_thinking(
         self,
         space_name: str,

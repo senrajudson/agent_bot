@@ -11,6 +11,7 @@ from app.bridge.google_chat.config import (
 )
 from app.bridge.google_chat.media_downloader import DownloadedGoogleChatImage
 from app.bridge.google_chat.models import GoogleChatIncomingMessage
+from app.schemas.chat import ChatAttachment
 
 logger = logging.getLogger(__name__)
 

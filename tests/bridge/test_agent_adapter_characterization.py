@@ -53,7 +53,8 @@ class TestAgentAdapterExtractOutput:
             adapter = AgentAdapter(settings=_fake_settings())
             result = adapter.ask(event=_fake_event())
 
-        assert result == "resposta do agente"
+        assert result[0] == "resposta do agente"
+        assert result[1] == []
 
 
 class TestAgentAdapterExtractResponse:

@@ -38,6 +38,7 @@ def _make_worker(send_to_chat=True):
             settings.google_chat_dedupe_ttl_seconds = 86400
             settings.redis_url = "redis://localhost:6379"
             settings.send_to_chat = send_to_chat
+            settings.enable_chat_attachments = False
             settings.validate_google_chat_config = MagicMock()
 
             from app.bridge.google_chat.worker import GoogleChatBridgeWorker

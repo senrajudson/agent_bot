@@ -12,12 +12,27 @@ from google.oauth2 import service_account
 from redis.asyncio import Redis as AsyncRedis
 
 from app.bridge.google_chat.agent_adapter import AgentAdapter
+from app.bridge.google_chat.bridge_internal_artifact_client import (
+    BridgeArtifactClient,
+    BridgeArtifactClientError,
+    BridgeArtifactExpired,
+    BridgeArtifactNotFound,
+)
 from app.bridge.google_chat.chat_client import GoogleChatClient
 from app.bridge.google_chat.config import (
     GoogleChatBridgeSettings,
     get_google_chat_bridge_settings,
 )
-from app.bridge.google_chat.dedupe_store import DedupeStore
+from app.bridge.google_chat.dedupe_store import (
+    AttachmentDedupeStore,
+    DedupeStore,
+)
+from app.infrastructure.artifacts.upload_service import (
+    ALLOWED_MIME_TYPES as BRIDGE_ALLOWED_MIME_TYPES,
+)
+from app.infrastructure.artifacts.upload_service import (
+    _basename_safe as _bridge_basename_safe,
+)
 from app.bridge.google_chat.media_downloader import GoogleChatMediaDownloader
 from app.bridge.google_chat.parser import parse_google_chat_event
 from app.bridge.google_chat.pubsub_subscriber import GoogleChatPubSubSubscriber
@@ -55,12 +70,22 @@ class GoogleChatBridgeWorker:
         self.agent_adapter = AgentAdapter(settings=self.settings)
         self.chat_client = GoogleChatClient(settings=self.settings)
 
+        self._artifact_client: BridgeArtifactClient | None = None
+        if self.settings.enable_chat_attachments and self.settings.agent_artifact_token:
+            self._artifact_client = BridgeArtifactClient(
+                base_url=self.settings.agent_artifact_base_url,
+                token=self.settings.agent_artifact_token,
+                timeout=self.settings.bridge_artifact_timeout_seconds,
+                max_bytes=self.settings.bridge_artifact_max_bytes,
+            )
+
         # Create async Redis client for deduplication lock
         redis_client = AsyncRedis.from_url(
             self.settings.redis_url, decode_responses=True
         )
         lock = RedisDistributedLock(redis_client, prefix="google_chat:dedupe_lock")
         self.dedupe_store = DedupeStore(settings=self.settings, lock=lock)
+        self._att_dedupe = AttachmentDedupeStore(redis_client) if self.settings.enable_chat_attachments else None
 
         self.media_downloader = GoogleChatMediaDownloader(settings=self.settings)
 
@@ -230,7 +255,7 @@ class GoogleChatBridgeWorker:
                     sum(image.size_bytes for image in downloaded_images),
                 )
 
-            answer = self.agent_adapter.ask(
+            answer, attachments = self.agent_adapter.ask(
                 event=event,
                 images=downloaded_images,
             )
