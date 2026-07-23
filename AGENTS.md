@@ -1896,9 +1896,18 @@ docker-compose up -d
 
 ### Notas sobre portas MCP
 
-- Em ambiente **Local QA**: `MCP_SERVER_URL=http://localhost:8015/mcp` (definido em `app/.env:62`); `MCP_PORT=8015` (definido em `mcp_server/.env:37`).
-- Em ambiente **PRD/Docker**: `MCP_PORT=8005` e `MCP_SERVER_URL=http://mcp_server:8005/mcp` (definidos em `docker-compose.yaml:27,47`).
-- Referências a `MCP_PORT=8003` em `mcp_server/.env.local.example:8` são **template legado** e devem ser tratadas como dívida de configuração, não como recomendação ativa.
+A porta do MCP Server tem três níveis de configuração (precedência crescente):
+
+| Nível | Fonte | Valor |
+|---|---|---|
+| Default Python | `mcp_server/core/config.py:30` | `8003` |
+| Override host | `mcp_server/.env` (local, não versionado) | `8015` |
+| Override Docker | `docker-compose.yaml` (environment) | `8005` |
+
+- Em ambiente **Local QA**: `MCP_PORT=8015` via `mcp_server/.env`; `MCP_SERVER_URL=http://localhost:8015/mcp` em `app/.env`.
+- Em ambiente **PRD/Docker**: `MCP_PORT=8005` via `docker-compose.yaml`; `MCP_SERVER_URL=http://mcp_server:8005/mcp`.
+- `mcp_server/.env.local.example` foi removido — o template oficial é `mcp_server/.env.example`.
+- O nome do token de autenticação de artifacts é **`AGENT_ARTIFACT_TOKEN`** (singular, uniforme em todos os processos).
 
 ### Configuração por Ambiente
 
@@ -2047,7 +2056,7 @@ Event Sourcing real não deve ser implementado sem pelo menos uma necessidade co
 ### Dívidas de configuração relacionadas
 
 - **4 Settings coexistentes** em módulos diferentes: `app/core/config.py`, `mcp_server/core/config.py`, `app/bridge/google_chat/config.py`, `domain/core/config.py`. Dívida de configuração/boundary a ser consolidada futuramente.
-- `mcp_server/.env.local.example:8` (`MCP_PORT=8003`) é template obsoleto; o `.env` real usa `8015`.
+- O template oficial é `mcp_server/.env.example` com `MCP_PORT=8015` e `AGENT_ARTIFACT_TOKEN` vazio.
 - Testes pré-existentes em `tests/unit/test_event_store_in_memory_v2.py` falham por usarem interface v2 (`append_to_stream`/`load_stream`/`load_by_*`) que não existe no `InMemoryEventStore` atual. Pré-existente, fora do escopo desta task.
 
 > **Não é Event Sourcing completo**: o Event Store ainda não é fonte da verdade do estado. Veja seção 24.

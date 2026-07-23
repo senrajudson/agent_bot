@@ -25,6 +25,22 @@ LLM → Agent → MCP → export_csv_to_drive_tool → CSV serializer → Drive 
 11. [ ] Testar acesso em non-prod
 12. [ ] Manter flag `false` em produção até aprovação
 
+## Ambiente: Host vs Docker
+
+Algumas variáveis divergem entre execução local (host) e Docker (produção).
+A tabela abaixo documenta a separação:
+
+| Variável | Host | Docker |
+|---|---|---|
+| `MCP_PORT` | `8015` | `8005` |
+| `AGENT_API_BASE_URL` | `http://localhost:8002` | `http://agent_bot:8002` |
+| `GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE` | path absoluto do host | `/run/secrets/pi_chat_drive_exporter/service-account.json` |
+| Fonte do template | `mcp_server/.env.example` | `docker-compose.yaml` (environment section) |
+
+- Em **host**: `mcp_server/.env` local define `MCP_PORT=8015` e `AGENT_API_BASE_URL=http://localhost:8002`.
+- Em **Docker**: `docker-compose.yaml` sobrescreve via `environment` com `MCP_PORT=8005` e `AGENT_API_BASE_URL=http://agent_bot:8002`.
+- A credencial Drive nunca é versionada; em host aponta para caminho absoluto local, em Docker via bind mount `read-only`.
+
 ## Configuração
 
 ### `mcp_server/.env`

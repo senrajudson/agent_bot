@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # Agent Bot API — artifact upload
     AGENT_API_BASE_URL: str = "http://localhost:8002"
-    AGENT_ARTIFACTS_TOKEN: str | None = None
+    AGENT_ARTIFACT_TOKEN: str | None = None
     AGENT_ARTIFACT_UPLOAD_TIMEOUT_SECONDS: float = 60.0
     AGENT_ARTIFACT_MAX_UPLOAD_BYTES: int = 104857600
 
