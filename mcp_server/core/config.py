@@ -89,5 +89,19 @@ class Settings(BaseSettings):
             raise ValueError("MAX_FILENAME_LENGTH deve ser positivo.")
         return self
 
+    @model_validator(mode="after")
+    def _validate_test_artifact_tool(self) -> "Settings":
+        if not self.ENABLE_TEST_ARTIFACT_TOOL:
+            return self
+        if not self.AGENT_ARTIFACT_TOKEN:
+            raise ValueError(
+                "ENABLE_TEST_ARTIFACT_TOOL=true requires AGENT_ARTIFACT_TOKEN."
+            )
+        if not self.AGENT_API_BASE_URL:
+            raise ValueError(
+                "ENABLE_TEST_ARTIFACT_TOOL=true requires AGENT_API_BASE_URL."
+            )
+        return self
+
 
 settings = Settings()

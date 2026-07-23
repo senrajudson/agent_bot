@@ -264,12 +264,87 @@ class GoogleChatBridgeWorker:
             logger.info("\n%s", answer)
 
             if self.send_to_chat:
+                if attachments and self._artifact_client and self._att_dedupe:
+                    uploaded_count = 0
+                    aggregate_bytes = 0
+                    total_attachments = min(
+                        len(attachments),
+                        self.settings.google_chat_max_attachments_per_message,
+                    )
+                    for att in attachments[:total_attachments]:
+                        dedupe_key = self._att_dedupe.make_key(
+                            event_id=event.message_name or event.pubsub_message_id,
+                            artifact_id=att.artifact_id,
+                            space=event.space_name,
+                            thread=None,
+                        )
+                        state = await self._att_dedupe.get_state(dedupe_key)
+                        if state == "SENT":
+                            uploaded_count += 1
+                            continue
+                        if state == "FAILED_PERMANENT":
+                            continue
+                        if not await self._att_dedupe.start(dedupe_key):
+                            continue
+
+                        safe_filename = _bridge_basename_safe(att.filename or "unnamed")
+                        if att.mime_type not in BRIDGE_ALLOWED_MIME_TYPES:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=True)
+                            continue
+                        if att.size_bytes and att.size_bytes > self.settings.bridge_artifact_max_bytes:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=True)
+                            continue
+                        if aggregate_bytes + (att.size_bytes or 0) > self.settings.bridge_artifact_max_total_bytes:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=True)
+                            continue
+
+                        try:
+                            tmp_path = self._artifact_client.download_to_temp(
+                                artifact_id=att.artifact_id,
+                                filename=safe_filename,
+                            )
+                            self.chat_client.send_attachment(
+                                space_name=event.space_name,
+                                file_path=str(tmp_path),
+                                mime_type=att.mime_type,
+                                filename=safe_filename,
+                                caption=att.caption,
+                                thread_name=None,
+                                sender_email=event.sender_email,
+                            )
+                            tmp_path.unlink(missing_ok=True)
+                            aggregate_bytes += att.size_bytes or 0
+                            uploaded_count += 1
+                            await self._att_dedupe.mark_sent(dedupe_key)
+                        except (BridgeArtifactNotFound, BridgeArtifactExpired) as exc:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=True)
+                            logger.warning(
+                                "Artifact não disponível. id=%s error=%s",
+                                att.artifact_id, exc,
+                            )
+                        except BridgeArtifactClientError as exc:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=False)
+                            logger.warning(
+                                "Artifact retryable error. id=%s error=%s",
+                                att.artifact_id, exc,
+                            )
+                        except Exception as exc:
+                            await self._att_dedupe.mark_failed(dedupe_key, permanent=True)
+                            logger.exception(
+                                "Falha ao enviar attachment. id=%s", att.artifact_id,
+                            )
+
+                    if uploaded_count == 0 and total_attachments > 0:
+                        answer = f"{answer}\n\nO arquivo foi gerado, mas não foi possível anexá-lo ao Google Chat."
+                    elif 0 < uploaded_count < total_attachments:
+                        answer = f"{answer}\n\nAlguns arquivos foram gerados, mas não puderam ser anexados."
+
+                # Send/update the text message
                 if thinking_message_name:
                     self.chat_client.update_text(
                         message_name=thinking_message_name,
                         text=answer,
                     )
-
                     logger.info(
                         "Mensagem de espera atualizada com resposta final. message_name=%s",
                         thinking_message_name,
@@ -280,7 +355,6 @@ class GoogleChatBridgeWorker:
                         thread_name=None,
                         text=answer,
                     )
-
                     logger.info("Resposta enviada como nova mensagem.")
 
                 await self.dedupe_store.mark_done(event)

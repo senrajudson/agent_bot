@@ -74,7 +74,8 @@ class TestAgentAdapterExtractResponse:
             adapter = AgentAdapter(settings=_fake_settings())
             result = adapter.ask(event=_fake_event())
 
-        assert result == "ok"
+        assert result[0] == "ok"
+        assert result[1] == []
 
 
 class TestAgentAdapterPlainText:
@@ -94,7 +95,8 @@ class TestAgentAdapterPlainText:
             adapter = AgentAdapter(settings=_fake_settings())
             result = adapter.ask(event=_fake_event())
 
-        assert result == "resposta em texto"
+        assert result[0] == "resposta em texto"
+        assert result[1] == []
 
 
 class TestAgentAdapterHTTPError:

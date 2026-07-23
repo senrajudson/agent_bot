@@ -30,7 +30,7 @@ class AgentAdapter:
         self,
         event: GoogleChatIncomingMessage,
         images: list[DownloadedGoogleChatImage] | None = None,
-    ) -> str:
+    ) -> tuple[str, list[ChatAttachment]]:
         if not event.can_process:
             raise ValueError(
                 "Evento não pode ser processado pelo agente. "
@@ -94,7 +94,9 @@ class AgentAdapter:
         if not answer:
             answer = "Não consegui gerar uma resposta para essa mensagem."
 
-        return answer.strip()
+        attachments = self._extract_attachments(response)
+
+        return answer.strip(), attachments
 
     def _build_agent_payload(
         self,
@@ -182,3 +184,26 @@ class AgentAdapter:
             return data_value.strip()
 
         return str(data).strip()
+
+    @staticmethod
+    def _extract_attachments(response: httpx.Response) -> list[ChatAttachment]:
+        content_type = response.headers.get("content-type", "")
+        if "application/json" not in content_type.lower():
+            return []
+        try:
+            data = response.json()
+        except ValueError:
+            return []
+        raw = data.get("attachments") if isinstance(data, dict) else None
+        if not isinstance(raw, list):
+            return []
+        result: list[ChatAttachment] = []
+        for item in raw:
+            if isinstance(item, dict) and isinstance(item.get("artifact_id"), str):
+                try:
+                    result.append(ChatAttachment(**item))
+                except Exception:
+                    logger.warning(
+                        "attachment_invalid artifact_id=%s", item.get("artifact_id")
+                    )
+        return result

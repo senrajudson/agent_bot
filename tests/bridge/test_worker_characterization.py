@@ -51,7 +51,7 @@ def _make_worker(send_to_chat=True):
             worker.chat_client.update_text = MagicMock()
 
             worker.agent_adapter = MagicMock()
-            worker.agent_adapter.ask = MagicMock(return_value="resposta do agente")
+            worker.agent_adapter.ask = MagicMock(return_value=("resposta do agente", []))
 
             worker.media_downloader = MagicMock()
             worker.media_downloader.download_images_from_event = MagicMock(return_value=[])
