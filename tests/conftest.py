@@ -1,8 +1,16 @@
 """Shared fixtures for agent_bot tests."""
 
+import os
+
 import textwrap
 
 import pytest
+
+
+os.environ.setdefault(
+    "GRAFANA_LOKI_QUERY_RANGE_URL",
+    "http://loki.test/loki/api/v1/query_range",
+)
 
 
 SAMPLE_MARKDOWN = textwrap.dedent("""\
