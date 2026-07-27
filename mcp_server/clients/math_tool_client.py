@@ -2,14 +2,14 @@ from typing import Any
 
 import httpx
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 
 async def _post_math_tool(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    base_url = settings.MATH_TOOL_BASE_URL.rstrip("/")
+    base_url = get_domain_settings().MATH_TOOL_BASE_URL.rstrip("/")
     url = f"{base_url}{path}"
 
-    async with httpx.AsyncClient(timeout=settings.MATH_TOOL_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=get_domain_settings().MATH_TOOL_TIMEOUT_SECONDS) as client:
         response = await client.post(url, json=payload)
         response.raise_for_status()
         return response.json()

@@ -3,7 +3,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 
 _DATASERVER_CACHE: dict[str, Any] = {}
@@ -21,14 +21,14 @@ SEARCH_SELECTED_FIELDS = (
 
 
 def _get_auth() -> tuple[str, str] | None:
-    if settings.PI_WEB_API_USERNAME and settings.PI_WEB_API_PASSWORD:
-        return settings.PI_WEB_API_USERNAME, settings.PI_WEB_API_PASSWORD
+    if get_domain_settings().PI_WEB_API_USERNAME and get_domain_settings().PI_WEB_API_PASSWORD:
+        return get_domain_settings().PI_WEB_API_USERNAME, get_domain_settings().PI_WEB_API_PASSWORD
 
     return None
 
 
 def _base_url() -> str:
-    return settings.PI_WEB_API_BASE_URL.rstrip("/")
+    return get_domain_settings().PI_WEB_API_BASE_URL.rstrip("/")
 
 
 def _normalize_pi_link(url: str) -> str:
@@ -63,7 +63,7 @@ async def _pi_get(
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(
         timeout=60,
-        verify=settings.PI_WEB_API_VERIFY_SSL,
+        verify=get_domain_settings().PI_WEB_API_VERIFY_SSL,
         auth=_get_auth(),
     ) as client:
         response = await client.get(
@@ -81,7 +81,7 @@ async def _pi_post(
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(
         timeout=60,
-        verify=settings.PI_WEB_API_VERIFY_SSL,
+        verify=get_domain_settings().PI_WEB_API_VERIFY_SSL,
         auth=_get_auth(),
     ) as client:
         response = await client.post(
@@ -99,7 +99,7 @@ def _pi_path(tag: str) -> str:
     if not tag_limpa:
         raise ValueError("Tag vazia ou inválida.")
 
-    return f"\\\\{settings.PI_SERVER_NAME}\\{tag_limpa}"
+    return f"\\\\{get_domain_settings().PI_SERVER_NAME}\\{tag_limpa}"
 
 
 def _get_web_id(point: dict[str, Any]) -> str:
@@ -196,7 +196,7 @@ async def get_tags_data(tags: list[str]) -> dict[str, Any]:
 
 
 async def get_data_server() -> dict[str, Any]:
-    cache_key = settings.PI_SERVER_NAME.upper()
+    cache_key = get_domain_settings().PI_SERVER_NAME.upper()
 
     if cache_key in _DATASERVER_CACHE:
         return _DATASERVER_CACHE[cache_key]
@@ -207,7 +207,7 @@ async def get_data_server() -> dict[str, Any]:
     if not items:
         raise RuntimeError("Nenhum Data Server foi retornado pela PI Web API.")
 
-    server_name = settings.PI_SERVER_NAME.lower()
+    server_name = get_domain_settings().PI_SERVER_NAME.lower()
 
     for item in items:
         name = str(item.get("Name") or "").lower()
@@ -216,7 +216,7 @@ async def get_data_server() -> dict[str, Any]:
             _DATASERVER_CACHE[cache_key] = item
             return item
 
-    raise RuntimeError(f"Data Server {settings.PI_SERVER_NAME} não encontrado.")
+    raise RuntimeError(f"Data Server {get_domain_settings().PI_SERVER_NAME} não encontrado.")
 
 
 async def get_dataservers() -> dict[str, Any]:

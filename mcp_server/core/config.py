@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
+from domain.core.integration_settings import DomainIntegrationSettings
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -22,6 +24,8 @@ class Settings(BaseSettings):
     PIMS_STATUS_LOKI_QUERY: str = '{job="zabbix_proxy"}'
     PIMS_STATUS_LOOKBACK_MINUTES: int = 20
     PIMS_STATUS_LIMIT: int = 5000
+
+    REDIS_URL: str = "redis://127.0.0.1:6379/2"
 
     MATH_TOOL_BASE_URL: str = "http://math_tool:8001"
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
@@ -51,6 +55,23 @@ class Settings(BaseSettings):
     DRIVE_CSV_UPLOAD_TIMEOUT_SECONDS: float = 60.0
     DRIVE_CSV_MAX_FILENAME_LENGTH: int = 180
     DRIVE_CSV_FORMULA_PROTECTION: bool = True
+
+    def to_domain_integration_settings(self) -> DomainIntegrationSettings:
+        return DomainIntegrationSettings(
+            PI_WEB_API_BASE_URL=self.PI_WEB_API_BASE_URL,
+            PI_SERVER_NAME=self.PI_SERVER_NAME,
+            PI_WEB_API_USERNAME=self.PI_WEB_API_USERNAME,
+            PI_WEB_API_PASSWORD=self.PI_WEB_API_PASSWORD or "",
+            PI_WEB_API_VERIFY_SSL=self.PI_WEB_API_VERIFY_SSL,
+            MATH_TOOL_BASE_URL=self.MATH_TOOL_BASE_URL,
+            MATH_TOOL_TIMEOUT_SECONDS=self.MATH_TOOL_TIMEOUT_SECONDS,
+            GRAFANA_LOKI_QUERY_RANGE_URL=self.GRAFANA_LOKI_QUERY_RANGE_URL,
+            GRAFANA_BEARER_TOKEN=self.GRAFANA_BEARER_TOKEN,
+            PIMS_STATUS_LOKI_QUERY=self.PIMS_STATUS_LOKI_QUERY,
+            PIMS_STATUS_LOOKBACK_MINUTES=self.PIMS_STATUS_LOOKBACK_MINUTES,
+            PIMS_STATUS_LIMIT=self.PIMS_STATUS_LIMIT,
+            REDIS_URL=self.REDIS_URL,
+        )
 
     @model_validator(mode="after")
     def _validate_drive_csv(self) -> "Settings":

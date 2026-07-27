@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 _LIMIT_ALERTA_ABSOLUTO = 50
 _LIMIT_ALERTA_PERCENTUAL = 0.01
@@ -360,7 +360,7 @@ async def _fetch_dataserver_info() -> dict[str, Any]:
     try:
         raw = await get_dataservers()
         normalized = _normalize_dataserver_response(raw)
-        expected_name = settings.PI_SERVER_NAME
+        expected_name = get_domain_settings().PI_SERVER_NAME
         matched, item, available = _select_expected_dataserver(
             normalized["items"], expected_name
         )
@@ -413,7 +413,7 @@ async def _fetch_dataserver_info() -> dict[str, Any]:
         return dataserver_info
 
     except Exception as e:
-        base_url = settings.PI_WEB_API_BASE_URL.rstrip("/")
+        base_url = get_domain_settings().PI_WEB_API_BASE_URL.rstrip("/")
         endpoint = f"{base_url}/dataservers"
         output_text = (
             f"\n\nPI Web API / DataServer\n"
@@ -426,7 +426,7 @@ async def _fetch_dataserver_info() -> dict[str, Any]:
             "ok": False,
             "veredito": "INDISPONÍVEL",
             "items_count": 0,
-            "expected_name": settings.PI_SERVER_NAME,
+            "expected_name": get_domain_settings().PI_SERVER_NAME,
             "matched": False,
             "web_id": None,
             "name": None,
@@ -449,9 +449,9 @@ async def consultar_status_pims_service(
 ) -> dict[str, Any]:
     from domain.pims_ops.clients.grafana_loki_client import query_loki_range
 
-    query_final = query or settings.PIMS_STATUS_LOKI_QUERY
-    lookback_final = lookback_minutes or settings.PIMS_STATUS_LOOKBACK_MINUTES
-    limit_final = limit or settings.PIMS_STATUS_LIMIT
+    query_final = query or get_domain_settings().PIMS_STATUS_LOKI_QUERY
+    lookback_final = lookback_minutes or get_domain_settings().PIMS_STATUS_LOOKBACK_MINUTES
+    limit_final = limit or get_domain_settings().PIMS_STATUS_LIMIT
 
     try:
         loki_response = await query_loki_range(

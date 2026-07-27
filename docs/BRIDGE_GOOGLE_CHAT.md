@@ -160,7 +160,7 @@ Inherits from `pydantic_settings.BaseSettings`. Loads environment variables with
 |-------|---------|------|---------|-------------|
 | `google_cloud_project` | `GOOGLE_CLOUD_PROJECT` | `str` | `""` | GCP project ID |
 | `google_chat_subscription` | `GOOGLE_CHAT_SUBSCRIPTION` | `str` | `""` | Full Pub/Sub subscription path (`projects/.../subscriptions/...`) |
-| `google_application_credentials` | `GOOGLE_APPLICATION_CREDENTIALS` | `str` | `./secrets/chat-bot-secret.json` | Path to service account JSON |
+| `google_application_credentials` | `GOOGLE_APPLICATION_CREDENTIALS` | `str` | `./secrets/google_chat/service-account.json` | Path to service account JSON |
 | `google_chat_scopes_raw` | `GOOGLE_CHAT_SCOPES` | `str` | Space-separated OAuth scopes | Raw scopes string, parsed by `google_chat_scopes` property |
 | `agent_internal_url` | `AGENT_INTERNAL_URL` | `str` | `http://localhost:8002/chat` | Agent Bot endpoint URL |
 | `google_chat_send_thinking_message` | `GOOGLE_CHAT_SEND_THINKING_MESSAGE` | `bool` | `True` | Whether to send "thinking" placeholder |
@@ -743,10 +743,10 @@ agent_bot_chat_bridge:
     - ./app/.env
   environment:
     - AGENT_INTERNAL_URL=http://agent_bot:8002/chat
-    - GOOGLE_APPLICATION_CREDENTIALS=./secrets/chat_secret.json
+    - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google_chat/service-account.json
     - PYTHONUNBUFFERED=1
   volumes:
-    - ./secrets:/app/secrets:ro
+    - ./secrets/google_chat:/run/secrets/google_chat:ro
   depends_on:
     - agent_bot
 ```
@@ -793,7 +793,7 @@ All variables are set in `app/.env` (or overridden in `docker-compose.yaml`).
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GOOGLE_CLOUD_PROJECT` | Yes | — | Google Cloud project ID |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Yes | `./secrets/chat-bot-secret.json` | Path to service account JSON file |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Yes | `./secrets/google_chat/service-account.json` | Path to service account JSON file |
 | `GOOGLE_CHAT_SUBSCRIPTION` | Yes | — | Full Pub/Sub subscription resource name (`projects/{project}/subscriptions/{sub}`) |
 | `GOOGLE_CHAT_SCOPES` | No | `https://www.googleapis.com/auth/chat.bot https://www.googleapis.com/auth/chat.messages.readonly` | Space-separated OAuth scopes |
 | `AGENT_INTERNAL_URL` | No | `http://localhost:8002/chat` | Agent Bot chat endpoint URL |

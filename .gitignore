@@ -24,9 +24,12 @@ auth*
 phoenix_data/
 
 *secret*
+secrets/
 
 scrap/*
 
 .opencode/*
 
 *last_answer*
+
+*scrap*

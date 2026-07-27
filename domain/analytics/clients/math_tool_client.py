@@ -13,7 +13,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def _log_retry(retry_state: RetryCallState) -> None:
 
 _TIMEOUT = httpx.Timeout(
     connect=5.0,
-    read=float(settings.MATH_TOOL_TIMEOUT_SECONDS),
+    read=float(get_domain_settings().MATH_TOOL_TIMEOUT_SECONDS),
     write=10.0,
     pool=5.0,
 )
@@ -64,7 +64,7 @@ _TIMEOUT = httpx.Timeout(
     reraise=True,
 )
 async def _post_math_tool(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    base_url = settings.MATH_TOOL_BASE_URL.rstrip("/")
+    base_url = get_domain_settings().MATH_TOOL_BASE_URL.rstrip("/")
     url = f"{base_url}{path}"
 
     async with httpx.AsyncClient(

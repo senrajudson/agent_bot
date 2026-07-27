@@ -525,7 +525,7 @@ Google Chat (usuário envia mensagem)
 | Variável | Descrição |
 |---|---|
 | `GOOGLE_CLOUD_PROJECT` | ID do projeto GCP |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Caminho para `chat_secret.json` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Caminho para `service-account.json` em `secrets/google_chat/` |
 | `GOOGLE_CHAT_SUBSCRIPTION` | Caminho completo da subscription Pub/Sub |
 | `GOOGLE_CHAT_SCOPES` | Escopos OAuth (`chat.bot`, `chat.messages.readonly`) |
 | `AGENT_INTERNAL_URL` | URL interna do `/chat` (ex: `http://localhost:8002/chat`) |
@@ -1038,7 +1038,7 @@ class LLMParams(BaseModel):
 | Variável | Descrição |
 |----------|-----------|
 | `GOOGLE_CLOUD_PROJECT` | ID do projeto GCP |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Caminho para `chat_secret.json` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Caminho para `service-account.json` em `secrets/google_chat/` |
 | `GOOGLE_CHAT_SUBSCRIPTION` | Caminho completo da subscription Pub/Sub |
 | `GOOGLE_CHAT_SCOPES` | Escopos OAuth |
 | `AGENT_INTERNAL_URL` | URL interna do `/chat` |
@@ -1309,7 +1309,7 @@ pytest -m integration                                 # Integração (requer Doc
 | Math Tool timeout | Verificar `MATH_TOOL_BASE_URL` e `MATH_TOOL_TIMEOUT_SECONDS` (default 120s) |
 | MCP server inacessível | Verificar `MCP_SERVER_URL` (porta 8005 Docker / 8015 local default) e se `mcp_server` está rodando |
 | Tokens inflados no Phoenix | Confirmar que `phoenix.py` tem `_TokenDedupSpanExporter` + `replace_default_processor=False` |
-| Bridge não recebe mensagens | Verificar credenciais GCP, `GOOGLE_CHAT_SUBSCRIPTION`, `secrets/chat_secret.json` |
+| Bridge não recebe mensagens | Verificar credenciais GCP, `GOOGLE_CHAT_SUBSCRIPTION`, `secrets/google_chat/service-account.json` |
 | `MAX_AGENT_STEPS=8` atingido | Reformular pergunta; pode indicar prompt vago ou tool com erro |
 | Loop de tool calls | Sistema aborta após 3 repetições da mesma chamada (`_detect_repeated_tool_calls`) |
 | Erro "ClosedResourceError" | Conexão MCP fechada; reiniciar mcp_server ou retry |

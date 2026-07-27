@@ -1,7 +1,7 @@
 from typing import Any
 
 from domain.pims_ops.clients.grafana_loki_client import query_loki_range
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 
 def _extract_loki_lines(loki_response: dict[str, Any]) -> list[str]:
@@ -97,9 +97,9 @@ async def consultar_status_pims_service(
     limit: int | None = None,
     include_raw_response: bool = False,
 ) -> dict[str, Any]:
-    query_final = query or settings.PIMS_STATUS_LOKI_QUERY
-    lookback_final = lookback_minutes or settings.PIMS_STATUS_LOOKBACK_MINUTES
-    limit_final = limit or settings.PIMS_STATUS_LIMIT
+    query_final = query or get_domain_settings().PIMS_STATUS_LOKI_QUERY
+    lookback_final = lookback_minutes or get_domain_settings().PIMS_STATUS_LOOKBACK_MINUTES
+    limit_final = limit or get_domain_settings().PIMS_STATUS_LIMIT
 
     try:
         loki_response = await query_loki_range(

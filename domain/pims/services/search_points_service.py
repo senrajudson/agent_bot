@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 from domain.pims.clients.pi_web_api_client import (
     POINT_SELECTED_FIELDS,
     SEARCH_SELECTED_FIELDS,
@@ -422,7 +422,7 @@ def _format_items(raw_data: dict[str, Any]) -> list[dict[str, Any]]:
                 "name": name,
                 "description": item.get("Descriptor"),
                 "web_id": item.get("WebId"),
-                "path": f"\\\\{settings.PI_SERVER_NAME}\\{name}",
+                "path": f"\\\\{get_domain_settings().PI_SERVER_NAME}\\{name}",
                 "point_type": item.get("PointType"),
                 "engineering_units": item.get("EngineeringUnits"),
             }

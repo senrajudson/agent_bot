@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from domain.core.config import settings
+from domain.core.config import get_domain_settings
 
 
 def _datetime_to_loki_ns(value: datetime) -> str:
@@ -13,8 +13,8 @@ def _datetime_to_loki_ns(value: datetime) -> str:
 def _build_auth_headers() -> dict[str, str]:
     headers: dict[str, str] = {}
 
-    if settings.GRAFANA_BEARER_TOKEN:
-        headers["Authorization"] = f"Bearer {settings.GRAFANA_BEARER_TOKEN}"
+    if get_domain_settings().GRAFANA_BEARER_TOKEN:
+        headers["Authorization"] = f"Bearer {get_domain_settings().GRAFANA_BEARER_TOKEN}"
 
     return headers
 
@@ -24,7 +24,7 @@ async def query_loki_range(
     lookback_minutes: int,
     limit: int,
 ) -> dict[str, Any]:
-    if not settings.GRAFANA_LOKI_QUERY_RANGE_URL:
+    if not get_domain_settings().GRAFANA_LOKI_QUERY_RANGE_URL:
         raise ValueError("GRAFANA_LOKI_QUERY_RANGE_URL não configurada no .env.")
 
     now = datetime.now(timezone.utc)
@@ -39,7 +39,7 @@ async def query_loki_range(
 
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(
-            settings.GRAFANA_LOKI_QUERY_RANGE_URL,
+            get_domain_settings().GRAFANA_LOKI_QUERY_RANGE_URL,
             params=params,
             headers=_build_auth_headers(),
         )

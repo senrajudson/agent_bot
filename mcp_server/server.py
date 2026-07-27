@@ -24,7 +24,9 @@ from fastmcp import FastMCP
 
 from core.config import settings
 
+from domain.core.config import configure_domain_settings
 
+configure_domain_settings(settings.to_domain_integration_settings())
 
 # ---------------------------------------------------------------------------
 # FastMCP server

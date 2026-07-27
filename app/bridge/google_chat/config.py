@@ -7,7 +7,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class GoogleChatBridgeSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "app/.env"),
+        env_file=(
+            str(Path(__file__).parent / ".env"),
+            ".env",
+            "app/.env",
+        ),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -21,7 +25,7 @@ class GoogleChatBridgeSettings(BaseSettings):
     )
 
     google_application_credentials: str = Field(
-        default="./secrets/chat-bot-secret.json",
+        default="./secrets/google_chat/service-account.json",
         alias="GOOGLE_APPLICATION_CREDENTIALS",
     )
 

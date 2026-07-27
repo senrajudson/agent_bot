@@ -36,6 +36,10 @@ _inject_llm_env()
 
 setup_phoenix_tracing()
 
+from domain.core.config import configure_domain_settings
+
+configure_domain_settings(settings.to_domain_integration_settings())
+
 from app.agent.orchestrator import process_message
 from app.schemas.chat import ChatRequest, ChatResponse
 
