@@ -622,7 +622,7 @@ As 4 tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O a
 - `summary_type`, `summary_duration`, `calculation_basis`: Para `summary`
 - `context_text`: Pergunta original
 - `max_count`: Limite de valores (recorded)
-- `group_by`: Granularidade da série: `1h`, `1d`, `1w`, `1mo` (opcional)
+- `group_by`: Granularidade da série: `1m`, `1h`, `1d`, `1w`, `1mo` (opcional). Default: `1h`.
 - `return_series`: Se `True`, retorna breakdown por período (opcional)
 
 **Modo escalar** (padrão): retorna um único valor estatístico sobre o período inteiro.

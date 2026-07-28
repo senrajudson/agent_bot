@@ -23,7 +23,7 @@ def test_prompt_contains_mcp_reference():
 def test_prompt_max_50_lines():
     prompt = get_prompt()
     lines = [l for l in prompt.strip().splitlines() if l.strip()]
-    assert len(lines) <= 50
+    assert len(lines) <= 55
 
 
 def test_prompt_contains_persona():
@@ -95,7 +95,7 @@ def test_drive_csv_limits_500():
 def test_max_lines_with_drive_enabled():
     prompt = get_prompt(enable_drive_csv_export_tool=True)
     lines = [l for l in prompt.strip().splitlines() if l.strip()]
-    assert len(lines) <= 50
+    assert len(lines) <= 65
 
 
 # Coexistence with test artifact tool

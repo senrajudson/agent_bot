@@ -22,6 +22,7 @@ servidores, logs e dados reais da usina.
 -------------------------------------------------------------------------------
 Últimas atualizações do PI Chat:
  - Agora podemos consultar tags por descrição
+ - Agora podemos gerar csv com os dados consultados
 -------------------------------------------------------------------------------
 
 Estilo de resposta:

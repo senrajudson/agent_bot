@@ -6,6 +6,7 @@ historical statistics, temporal calculus, and PIMS operational status.
 """
 
 import asyncio
+import json
 import logging
 import sys
 from pathlib import Path
@@ -21,10 +22,12 @@ logging.basicConfig(
 logger = logging.getLogger("mcp_server")
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from core.config import settings
 
 from domain.core.config import configure_domain_settings
+from domain.shared.schemas.math_tool import GroupBy
 
 configure_domain_settings(settings.to_domain_integration_settings())
 
@@ -94,7 +97,7 @@ async def tag_statistics(
     calculation_basis: str | None = None,
     context_text: str | None = None,
     max_count: int = 200000,
-    group_by: str | None = None,
+    group_by: GroupBy | None = "1h",
     return_series: bool = False,
 ) -> str:
     """
@@ -108,7 +111,7 @@ async def tag_statistics(
     summary_type='Average', summary_duration='1h',
     calculation_basis='TimeWeighted', operation='sum'.
 
-    Para consumo discriminado por hora/dia/mês, use group_by='1h'|'1d'|'1mo' e return_series=True.
+    Para consumo discriminado, use group_by='1m','1h','1d','1w','1mo' e return_series=True.
 
     Args:
         tags: Lista de tags.
@@ -116,13 +119,13 @@ async def tag_statistics(
         start_time: Início do período (formato PI Web API).
         end_time: Fim do período ('*' = agora).
         data_method: 'summary', 'recorded', 'interpolated'.
-        interval: Intervalo (somente 'interpolated').
+        interval: Resolução da consulta interpolada (ex: '1m', '5m'). `interval` e `group_by` são parâmetros distintos: `interval` controla a coleta; `group_by` controla a agregação. Ambos podem receber '1m' com semânticas diferentes.
         summary_type: 'Average', 'Maximum', 'Minimum', 'Total', 'Count', 'Range', 'StdDev'.
         summary_duration: Janela ('1h', '30m', '1d').
         calculation_basis: 'TimeWeighted' ou 'EventWeighted'.
         context_text: Pergunta original (opcional).
         max_count: Limite de valores (somente 'recorded').
-        group_by: Granularidade da série: '1h', '1d', '1w', '1mo'.
+        group_by: Granularidade dos buckets estatísticos. Aceita '1m','1h','1d','1w','1mo'. Default='1h'. A inferência a partir da linguagem natural é responsabilidade do agente.
         return_series: Se True, retorna lista de valores por período.
     """
     from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
@@ -143,9 +146,20 @@ async def tag_statistics(
         summary_type=summary_type,
         summary_duration=summary_duration,
         calculation_basis=calculation_basis,
-        group_by=group_by,
+        group_by=group_by or "1h",
         return_series=return_series,
     )
+
+    if result.get("status") in ("invalid_argument", "internal_error"):
+        error_code = result.get("error_code", "UNKNOWN")
+        message = result.get("output", "Erro interno inesperado.")
+        if result.get("status") == "internal_error":
+            message = "Erro interno inesperado. Tente novamente."
+        raise ToolError(f"[{error_code}] {message}")
+
+    if result.get("status") in ("no_data", "insufficient_data"):
+        return json.dumps(result.get("tool_result", {}), ensure_ascii=False)
+
     return result["output"]
 
 

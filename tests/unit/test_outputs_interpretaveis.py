@@ -1116,13 +1116,40 @@ class TestTagStatisticsHelpers:
         assert _normalizar_group_by("semanal") == "1w"
         assert _normalizar_group_by("1w") == "1w"
 
-    def test_normalizar_group_by_invalido(self):
+    def test_normalizar_group_by_minuto(self):
         from domain.analytics.services.math_tool_service import _normalizar_group_by
 
-        with pytest.raises(ValueError, match="group_by inválido"):
+        assert _normalizar_group_by("1m") == "1m"
+        assert _normalizar_group_by("minuto") == "1m"
+        assert _normalizar_group_by("minute") == "1m"
+        assert _normalizar_group_by("minuto a minuto") == "1m"
+        assert _normalizar_group_by("por minuto") == "1m"
+        assert _normalizar_group_by("minuto em minuto") == "1m"
+
+    def test_normalizar_group_by_invalido(self):
+        from domain.analytics.services.math_tool_service import _normalizar_group_by
+        from domain.shared.errors import DomainValidationError, ValidationErrorCode
+
+        with pytest.raises(DomainValidationError, match="group_by inválido") as exc:
             _normalizar_group_by("xyz")
-        with pytest.raises(ValueError, match="group_by inválido"):
+        assert exc.value.code == ValidationErrorCode.INVALID_GROUP_BY
+
+        with pytest.raises(DomainValidationError, match="group_by inválido") as exc:
             _normalizar_group_by("2d")
+        assert exc.value.code == ValidationErrorCode.INVALID_GROUP_BY
+
+        with pytest.raises(DomainValidationError, match="group_by inválido") as exc:
+            _normalizar_group_by("5m")
+        assert exc.value.code == ValidationErrorCode.INVALID_GROUP_BY
+
+        with pytest.raises(DomainValidationError, match="group_by inválido") as exc:
+            _normalizar_group_by("2h")
+        assert exc.value.code == ValidationErrorCode.INVALID_GROUP_BY
+
+    def test_group_by_nominal_seconds_1m(self):
+        from domain.analytics.services.math_tool_service import _group_by_nominal_seconds
+
+        assert _group_by_nominal_seconds("1m") == 60.0
 
     def test_unit_to_seconds_factor_nm3_h(self):
         from domain.analytics.services.math_tool_service import _unit_to_seconds_factor
@@ -1219,6 +1246,64 @@ class TestGroupPointsByPeriod:
         assert len(buckets) == 7
         empty_buckets = [b for b in buckets if not b["points"]]
         assert len(empty_buckets) == 4  # 7 - 3 with data
+
+
+    def test_1m_60_segundos_bucket(self):
+        from domain.analytics.services.math_tool_service import _group_points_by_period
+
+        points = [
+            {"timestamp": "2026-07-06T08:00:10-03:00", "value": 100.0},
+            {"timestamp": "2026-07-06T08:00:40-03:00", "value": 110.0},
+        ]
+        buckets = _group_points_by_period(
+            points, group_by="1m",
+            start_time="2026-07-06T08:00:00-03:00",
+            end_time="2026-07-06T08:02:00-03:00",
+        )
+        assert len(buckets) == 2
+        assert len(buckets[0]["points"]) == 2
+        assert len(buckets[1]["points"]) == 0
+
+    def test_1m_fronteira_exata(self):
+        from domain.analytics.services.math_tool_service import _group_points_by_period
+
+        points = [{"timestamp": "2026-07-06T08:01:00-03:00", "value": 100.0}]
+        buckets = _group_points_by_period(
+            points, group_by="1m",
+            start_time="2026-07-06T08:00:00-03:00",
+            end_time="2026-07-06T08:02:00-03:00",
+        )
+        assert len(buckets) == 2
+        assert len(buckets[0]["points"]) == 0
+        assert len(buckets[1]["points"]) == 1
+
+    def test_1m_start_with_seconds(self):
+        from domain.analytics.services.math_tool_service import _group_points_by_period
+
+        points = [
+            {"timestamp": "2026-07-06T08:00:30-03:00", "value": 100.0},
+            {"timestamp": "2026-07-06T08:01:30-03:00", "value": 110.0},
+        ]
+        buckets = _group_points_by_period(
+            points, group_by="1m",
+            start_time="2026-07-06T08:00:30-03:00",
+            end_time="2026-07-06T08:02:30-03:00",
+        )
+        assert len(buckets) == 2
+        assert buckets[0]["period_start"] == "2026-07-06T08:00:30-03:00"
+        assert buckets[0]["period_end"] == "2026-07-06T08:01:30-03:00"
+        assert buckets[1]["period_start"] == "2026-07-06T08:01:30-03:00"
+
+    def test_1m_1440_buckets_dia(self):
+        from domain.analytics.services.math_tool_service import _group_points_by_period
+
+        buckets = _group_points_by_period(
+            [], group_by="1m",
+            start_time="2026-07-06T00:00:00-03:00",
+            end_time="2026-07-07T00:00:00-03:00",
+        )
+        assert len(buckets) == 1440
+        assert all(b["duration_seconds"] == 60.0 for b in buckets)
 
 
 class TestCalcularConsumoPorPeriodo:
@@ -1499,3 +1584,140 @@ class TestExecutarEstatisticaSeries:
         assert result["ok"] is False
         assert result["answer_generation_error"] is not None
         assert "group_by inválido" in result["output"] or "group_by inválido" in result["answer_generation_error"]
+
+
+class TestExecutarEstatisticaStatus:
+    """Test status codes returned by executar_estatistica_tags_service."""
+
+    @pytest.mark.asyncio
+    async def test_group_by_invalido_status(self):
+        from domain.analytics.services.math_tool_service import (
+            executar_estatistica_tags_service,
+        )
+
+        with patch(
+            "domain.analytics.utils.math_pi_series.buscar_dados_temporais_tag",
+            AsyncMock(return_value={}),
+        ):
+            result = await executar_estatistica_tags_service(
+                tags=["LFI_RB3_VAZ_GN_TOTAL"],
+                operation="sum",
+                start_time="2026-07-06T00:00:00-03:00",
+                end_time="2026-07-07T00:00:00-03:00",
+                data_method="summary",
+                group_by="invalid_value",
+                return_series=True,
+            )
+
+        assert result["ok"] is False
+        assert result["status"] == "invalid_argument"
+        assert result["error_code"] == "INVALID_GROUP_BY"
+        assert "group_by inválido" in result["output"]
+
+    @pytest.mark.asyncio
+    async def test_data_method_invalido_status(self):
+        from domain.analytics.services.math_tool_service import (
+            executar_estatistica_tags_service,
+        )
+
+        with patch(
+            "domain.analytics.utils.math_pi_series.buscar_dados_temporais_tag",
+            AsyncMock(return_value={}),
+        ):
+            result = await executar_estatistica_tags_service(
+                tags=["LFI_RB3_VAZ_GN_TOTAL"],
+                operation="mean",
+                start_time="2026-07-06T00:00:00-03:00",
+                end_time="2026-07-07T00:00:00-03:00",
+                data_method="xyz_invalido",
+            )
+
+        assert result["ok"] is False
+        assert result["status"] == "invalid_argument"
+        assert result["error_code"] == "INVALID_DATA_METHOD"
+
+    @pytest.mark.asyncio
+    async def test_sucesso_status(self):
+        from domain.analytics.services.math_tool_service import (
+            executar_estatistica_tags_service,
+        )
+        from domain.analytics.clients.math_tool_client import call_stats
+
+        pi_response = {
+            "point_metadata": {"EngineeringUnits": "Nm3/h"},
+            "raw_data": {
+                "Items": [
+                    {"Value": {"Value": 100.0}, "Timestamp": "2026-07-06T01:00:00-03:00"},
+                    {"Value": {"Value": 110.0}, "Timestamp": "2026-07-06T02:00:00-03:00"},
+                ]
+            },
+        }
+
+        with (
+            patch(
+                "domain.analytics.utils.math_pi_series.buscar_dados_temporais_tag",
+                AsyncMock(return_value=pi_response),
+            ),
+            patch(
+                "domain.analytics.services.math_tool_service.call_stats",
+                AsyncMock(return_value={"mean": 105.0}),
+            ),
+        ):
+            result = await executar_estatistica_tags_service(
+                tags=["LFI_RB3_VAZ_GN_TOTAL"],
+                operation="mean",
+                start_time="2026-07-06T00:00:00-03:00",
+                end_time="2026-07-07T00:00:00-03:00",
+                data_method="summary",
+                summary_type="Average",
+            )
+
+        assert result["ok"] is True
+        assert result["status"] == "success"
+        assert result["error_code"] is None
+        assert isinstance(result["output"], str)
+
+    @pytest.mark.asyncio
+    async def test_backward_compatibility_output(self):
+        from domain.analytics.services.math_tool_service import (
+            executar_estatistica_tags_service,
+        )
+
+        with patch(
+            "domain.analytics.utils.math_pi_series.buscar_dados_temporais_tag",
+            AsyncMock(return_value={}),
+        ):
+            result = await executar_estatistica_tags_service(
+                tags=["LFI_RB3_VAZ_GN_TOTAL"],
+                operation="sum",
+                start_time="2026-07-06T00:00:00-03:00",
+                end_time="2026-07-07T00:00:00-03:00",
+                data_method="summary",
+                group_by="invalid_value",
+                return_series=True,
+            )
+
+        assert isinstance(result["output"], str)
+        assert "answer_generation_error" in result
+
+
+class TestDocumentacao:
+    """Testes de verificação textual da documentação."""
+
+    def test_prompt_nao_proibe_1m(self):
+        content = open("app/prompts/agent_prompt.py").read()
+        assert "1m não é válido" not in content, (
+            "Prompt não deve afirmar que 1m é inválido"
+        )
+
+    def test_rag_nao_exclui_1m(self):
+        content = open("PI_WEB_API_AGENT_GUIDE.md").read()
+        assert "Não utilizar" not in content or "1m" not in content, (
+            "RAG não deve afirmar que 1m não deve ser utilizado"
+        )
+
+    def test_agents_md_lista_1m(self):
+        content = open("AGENTS.md").read()
+        assert "1m" in content, (
+            "AGENTS.md deve listar 1m como valor válido de group_by"
+        )

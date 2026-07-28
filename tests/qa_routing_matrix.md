@@ -25,3 +25,8 @@
 | 17 | 3 chamadas consecutivas de search_pi_points | 2 search_pi_points, resposta com melhor resultado da 1ª ou 2ª, 3ª suprimida | Política |
 | 18 | consumo de cada dia da semana passada da tag X | `tag_statistics_tool` com `group_by="1d"`, `return_series=True` | Operacional |
 | 19 | consumo mês a mês da tag X neste ano | `tag_statistics_tool` com `group_by="1mo"`, `return_series=True` | Operacional |
+| 20 | consumo minuto a minuto da tag X | `tag_statistics_tool` com `group_by="1m"`, `return_series=True` | Operacional |
+| 21 | média da tag X por minuto | `tag_statistics_tool` com `group_by="1m"`, `return_series=True` | Operacional |
+| 22 | consumo da tag X sem granularidade | `tag_statistics_tool` com `return_series=True` (group_by default 1h) | Operacional |
+| 23 | média da tag X com group_by='5m' | Erro `INVALID_GROUP_BY` | Erro contratual |
+| 24 | consumo da tag X com group_by='2h' | Erro `INVALID_GROUP_BY` | Erro contratual |

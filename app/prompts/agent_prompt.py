@@ -143,6 +143,19 @@ Desambiguação:
 - Estatística simples → tag_statistics. Integral/derivada → tag_calculus.
 - Metadados cadastrais → consultar_tag. Atributos de configuração → tag_attributes_tool.
 - "consumo de cada dia/por dia/mês a mês" → tag_statistics com group_by e return_series=True.
+- group_by aceita "1m", "1h", "1d", "1w" e "1mo". Default = "1h".
+- "interval" e "group_by" são parâmetros distintos:
+  "interval" define a resolução da coleta interpolada;
+  "group_by" define a granularidade dos buckets estatísticos.
+  Ambos podem receber "1m" com semânticas diferentes.
+- Inferir group_by pela granularidade pedida pelo usuário:
+  minuto a minuto / por minuto / a cada minuto → "1m"
+  hora em hora / por hora / horário / a cada hora → "1h"
+  dia a dia / por dia / diário / a cada dia → "1d"
+  semana a semana / por semana / semanal → "1w"
+  mês a mês / por mês / mensal → "1mo"
+- Sem granularidade explícita: omitir group_by (a tool usa 1h).
+- Enviar apenas códigos canônicos em group_by; nunca linguagem natural.
 - "consumo total/média/máximo do período" → tag_statistics escalar.
 {test_artifact_disambiguation_line}
 {drive_csv_disambiguation_line}

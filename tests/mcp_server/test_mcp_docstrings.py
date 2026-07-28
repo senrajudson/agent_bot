@@ -95,7 +95,7 @@ def test_public_signatures_unchanged():
             "calculation_basis: str | None = None, "
             "context_text: str | None = None, "
             "max_count: int = 200000, "
-            "group_by: str | None = None, "
+            "group_by: Optional[Literal['1m', '1h', '1d', '1w', '1mo']] = '1h', "
             "return_series: bool = False) -> str"
         ),
         "tag_calculus": (

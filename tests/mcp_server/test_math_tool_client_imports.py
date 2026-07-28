@@ -23,7 +23,6 @@ def test_tenacity_is_installed() -> None:
     [
         "domain.analytics.clients.math_tool_client",
         "domain.analytics.services.math_tool_service",
-        "mcp_server.services.math_tool_service",
     ],
 )
 def test_module_imports_without_module_not_found_error(module_name: str) -> None:

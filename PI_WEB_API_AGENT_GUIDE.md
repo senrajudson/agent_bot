@@ -110,6 +110,14 @@ tag_calculus_tool:
   time_unit = "hour", "minute", "second" ou "none"
 ```
 
+interval e group_by são parâmetros distintos:
+- interval controla a resolução da coleta interpolada (ex: "1m" = 1 minuto entre amostras).
+- group_by controla a granularidade dos buckets estatísticos da série retornada.
+Ambos podem receber o valor "1m" com semânticas diferentes.
+Exemplo: interval="1m" + group_by="1h" = coletar a cada minuto, consolidado em buckets horários.
+Exemplo: group_by="1m" = buckets estatísticos de 1 minuto.
+group_by aceita "1m", "1h", "1d", "1w", "1mo". Quando não especificado, usa "1h" (default).
+
 ## Períodos fechados
 
 Para cálculos de dia, mês ou ano completos, use início inclusivo e fim exclusivo. Antes da execução, converta expressões como `mês passado`, `ontem`, `dia anterior`, `mês atual` e `ano passado` para `start_time` e `end_time` em ISO 8601 explícito com offset local.

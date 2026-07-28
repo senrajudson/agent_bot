@@ -68,7 +68,7 @@ def _parametros_temporais(
     }
 
 
-GROUP_BY_VALIDOS = {"1h", "1d", "1w", "1mo"}
+GROUP_BY_VALIDOS = {"1m", "1h", "1d", "1w", "1mo"}
 
 
 def _normalizar_group_by(value: str | None) -> str | None:
@@ -77,6 +77,9 @@ def _normalizar_group_by(value: str | None) -> str | None:
     v = str(value).strip().lower()
 
     mapping: dict[str, str] = {
+        "1m": "1m", "1 minuto": "1m", "minuto": "1m", "minute": "1m",
+        "minutely": "1m", "por minuto": "1m", "minuto a minuto": "1m",
+        "minuto em minuto": "1m",
         "1h": "1h", "1 hora": "1h", "hora": "1h", "hour": "1h",
         "hourly": "1h", "por hora": "1h",
         "1d": "1d", "1 dia": "1d", "dia": "1d", "day": "1d",
@@ -91,7 +94,7 @@ def _normalizar_group_by(value: str | None) -> str | None:
         return mapping[v]
 
     raise ValueError(
-        f"group_by inválido: '{value}'. Valores aceitos: 1h, 1d, 1w, 1mo."
+        f"group_by inválido: '{value}'. Valores aceitos: 1m, 1h, 1d, 1w, 1mo."
     )
 
 
@@ -175,7 +178,7 @@ def _arredondar_resultado_stats(result: dict[str, Any], operation: str, casas: i
 
 
 def _group_by_nominal_seconds(group_by: str) -> float:
-    nom = {"1h": 3600.0, "1d": 86400.0, "1w": 604800.0, "1mo": 2592000.0}
+    nom = {"1m": 60.0, "1h": 3600.0, "1d": 86400.0, "1w": 604800.0, "1mo": 2592000.0}
     return nom.get(group_by, 3600.0)
 
 
@@ -203,7 +206,7 @@ def _group_points_by_period(
     t_start = _parse_ts(start_time)
     t_end = _parse_ts(end_time) if end_time != "*" else datetime.now(timezone.utc)
 
-    step_map = {"1h": timedelta(hours=1), "1d": timedelta(days=1),
+    step_map = {"1m": timedelta(minutes=1), "1h": timedelta(hours=1), "1d": timedelta(days=1),
                 "1w": timedelta(weeks=1), "1mo": timedelta(days=30)}
     step = step_map.get(group_by, timedelta(hours=1))
 
