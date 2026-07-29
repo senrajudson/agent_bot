@@ -39,7 +39,6 @@ def _make_artifact():
         column_count=5,
         size_bytes=1234567,
         view_url="https://drive.google.com/view",
-        download_url="https://drive.google.com/download",
     )
 
 

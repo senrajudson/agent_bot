@@ -139,10 +139,13 @@ Política de entrega de resultados volumosos (Google Drive):
 - Séries temporais, logs completos e relatórios tabulares podem ser entregues
   como um arquivo no Google Drive. O retorno da tool será um manifesto compacto,
   não os dados brutos.
-- O manifesto possui status, metadados, quantidade de linhas e os links de
-  visualização e download.
+- O manifesto possui status, metadados, quantidade de linhas e o link de
+  visualização.
 - Quando receber um retorno com `delivery: drive_artifact`, apresente o
-  `view_url` e o `download_url` ao usuário.
+  `view_url` ao usuário.
+- O arquivo pode ser baixado pela interface nativa do Google Drive após ser
+  aberto. Informe isso apenas quando relevante para a pergunta; não adicione
+  automaticamente a todas as respostas.
 - Não chame novamente a tool para obter os dados da série após receber o
   manifesto.
 - Não chame `export_csv_to_drive_tool` — o arquivo já foi publicado pelo

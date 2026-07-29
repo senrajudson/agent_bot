@@ -100,7 +100,6 @@ class TestExecutarEstatisticaServiceArtifact:
                     "column_count": 5,
                     "size_bytes": 5000,
                     "view_url": "https://drive.google.com/view",
-                    "download_url": "https://drive.google.com/download",
                 },
                 "warnings": [],
                 "errors_summary": [],
@@ -131,6 +130,7 @@ class TestExecutarEstatisticaServiceArtifact:
         assert "series" not in str(result.get("tool_result", {}).get("results", []))
         assert "drive.google.com" in result["output"]
         assert "Visualizar" in result["output"]
+        assert "Baixar" not in result["output"]
 
     @pytest.mark.asyncio
     async def test_scalar_unaffected(self):

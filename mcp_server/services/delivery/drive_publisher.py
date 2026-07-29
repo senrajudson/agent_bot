@@ -18,13 +18,10 @@ logger = logging.getLogger("mcp_server.drive_publisher")
 
 @dataclass(frozen=True)
 class PublishedArtifact:
-    file_id: str
     name: str
     mime_type: str
     size_bytes: int
     view_url: str
-    download_url: str | None
-    created_time: str
 
 
 class DrivePublisher(Protocol):
@@ -64,19 +61,14 @@ class DefaultDrivePublisher:
             raise ArtifactDeliveryError(str(exc)) from exc
 
         logger.info(
-            "publish: filename=%s size=%d file_id=%s has_download=%s",
+            "publish: filename=%s size=%d",
             uploaded.name,
             uploaded.size,
-            uploaded.file_id[:8] + "..." if len(uploaded.file_id) > 8 else uploaded.file_id,
-            "yes" if uploaded.web_content_link else "no",
         )
 
         return PublishedArtifact(
-            file_id=uploaded.file_id,
             name=uploaded.name,
             mime_type=uploaded.mime_type,
             size_bytes=uploaded.size,
             view_url=uploaded.web_view_link,
-            download_url=uploaded.web_content_link,
-            created_time=uploaded.created_time,
         )

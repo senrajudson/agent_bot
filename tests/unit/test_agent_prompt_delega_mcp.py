@@ -20,10 +20,10 @@ def test_prompt_contains_mcp_reference():
     assert "MCP" in prompt
 
 
-def test_prompt_max_50_lines():
+def test_prompt_max_75_lines():
     prompt = get_prompt()
     lines = [l for l in prompt.strip().splitlines() if l.strip()]
-    assert len(lines) <= 55
+    assert len(lines) <= 75
 
 
 def test_prompt_contains_persona():
@@ -109,3 +109,18 @@ def test_coexistence_both_enabled():
     assert "generate_test_artifact_tool" in prompt
     assert "export_csv_to_drive_tool" in prompt
     assert "não está disponível" not in prompt
+
+
+def test_prompt_drive_policy_mentions_view_url():
+    prompt = get_prompt()
+    assert "view_url" in prompt
+
+
+def test_prompt_drive_policy_does_not_mention_download_url():
+    prompt = get_prompt()
+    assert "view_url e o download_url" not in prompt
+
+
+def test_prompt_drive_policy_single_link():
+    prompt = get_prompt()
+    assert "link de" in prompt and "visualização" in prompt

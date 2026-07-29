@@ -38,9 +38,7 @@ class TestDefaultDrivePublisher:
             filename="test.csv",
             mime_type="text/csv",
         )
-        assert result.file_id == "abc123"
         assert result.view_url == "https://drive.google.com/view"
-        assert result.download_url == "https://drive.google.com/download"
         assert result.size_bytes == 5000
 
     def test_auth_error(self):

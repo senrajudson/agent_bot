@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-_MCP_ROOT = Path(__file__).parent.parent / "mcp_server"
+_MCP_ROOT = Path(__file__).parent.parent.parent / "mcp_server"
 if str(_MCP_ROOT) not in sys.path:
     sys.path.insert(0, str(_MCP_ROOT))
 if str(_MCP_ROOT.parent) not in sys.path:
@@ -54,7 +54,6 @@ def _build_manifest_for(series_items: list[dict]) -> dict:
         column_count=5,
         size_bytes=len(series_items) * 50,
         view_url="https://drive.google.com/file/d/abc123/view",
-        download_url="https://drive.google.com/uc?export=download&id=abc123",
     )
     manifest = build_artifact_manifest(
         status="success",

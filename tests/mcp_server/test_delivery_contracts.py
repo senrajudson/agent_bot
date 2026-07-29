@@ -61,7 +61,6 @@ class TestArtifactManifest:
             column_count=5,
             size_bytes=5000,
             view_url="https://drive.google.com/view",
-            download_url="https://drive.google.com/download",
         )
         m = ArtifactManifest(
             status="success",

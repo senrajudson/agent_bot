@@ -241,7 +241,6 @@ async def consultar_tag(
                 column_count=len(columns),
                 size_bytes=uploaded.size_bytes,
                 view_url=uploaded.view_url,
-                download_url=uploaded.download_url,
             )
             req_summary = RequestSummary(
                 tool_name="consultar_tag",
@@ -404,7 +403,6 @@ async def tag_statistics(
                     column_count=len(total_columns),
                     size_bytes=uploaded.size_bytes,
                     view_url=uploaded.view_url,
-                    download_url=uploaded.download_url,
                 )
 
                 req_summary = RequestSummary(

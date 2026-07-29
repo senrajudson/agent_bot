@@ -569,8 +569,7 @@ async def executar_estatistica_tags_service(
                 "output": (
                     f"Arquivo gerado com dados de {len(artifact_data_list)} tag(s) "
                     f"e {total_rows} linha(s) no total. "
-                    f"Visualizar: {manifest.get('artifact', {}).get('view_url', '')} "
-                    f"Baixar: {manifest.get('artifact', {}).get('download_url', '')}"
+                    f"Visualizar arquivo: {manifest.get('artifact', {}).get('view_url', '')}"
                 ),
                 "answer_generation_error": None,
             }

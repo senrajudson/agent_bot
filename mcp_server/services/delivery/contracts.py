@@ -44,7 +44,6 @@ class ArtifactMetadata:
     column_count: int
     size_bytes: int
     view_url: str
-    download_url: str | None = None
 
 
 @dataclass(frozen=True)

@@ -8,12 +8,12 @@ Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
 Séries temporais, logs completos, timelines e relatórios multi-tag podem ser
 entregues como um arquivo no Google Drive. Nesses casos, o retorno da tool MCP
-será um manifesto compacto (`ArtifactManifest`) contendo status, metadados e
-links de visualização/download. Os dados brutos (linhas, buckets, pontos) não
+será um manifesto compacto (`ArtifactManifest`) contendo status, metadados e o
+link de visualização. Os dados brutos (linhas, buckets, pontos) não
 são retornados ao modelo.
 
 Quando receber `delivery: drive_artifact`:
-- apresente `view_url` e `download_url` ao usuário;
+- apresente `view_url` ao usuário;
 - não chame a tool novamente para obter a série;
 - não afirme que leu ou analisou os dados do arquivo.
 
@@ -1442,8 +1442,7 @@ Quando uma tool retorna `delivery: drive_artifact`, o conteúdo é um manifesto:
     "row_count": 44640,
     "column_count": 5,
     "size_bytes": 1234567,
-    "view_url": "https://drive.google.com/file/d/.../view",
-    "download_url": "https://drive.google.com/uc?export=download&id=..."
+    "view_url": "https://drive.google.com/file/d/.../view"
   },
   "warnings": [],
   "errors_summary": []
@@ -1460,7 +1459,8 @@ Quando uma tool retorna `delivery: drive_artifact`, o conteúdo é um manifesto:
 
 ## Regras de resposta para o agente
 
-- Apresente `view_url` e `download_url` ao usuário.
+- Apresente `view_url` ao usuário.
 - Não chame a tool novamente para obter a série.
 - Não chame `export_csv_to_drive_tool` — o arquivo já foi gerado.
 - Não afirme que leu ou analisou dados que não recebeu.
+- O download pode ser realizado pela interface nativa do Google Drive após o arquivo ser aberto.
