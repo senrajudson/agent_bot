@@ -26,6 +26,7 @@ Quando receber `delivery: drive_artifact`:
 | Média, máximo, mínimo, soma, consumo, total por período                                                              | Agregação histórica        | `tag_statistics_tool` |
 | Integral, derivada, taxa de variação, área sob curva                                                                 | Cálculo temporal explícito | `tag_calculus_tool`   |
 | Compressão, exceção, compdev, excdev, archiving, scan, pointsource, location, atributos internos de uma tag PI       | Atributos de PI Point      | `tag_attributes_tool` |
+| Valores minuto a minuto, série interpolada, valores brutos recorded, CSV com valores                                | Série temporal sem agregação | `generate_pi_tags_series_csv` |
 | Status do PIMS, servidores, logs                                                                                     | Consulta operacional       | `status_pims_tool`    |
 
 ## Descoberta de tags
@@ -1464,3 +1465,73 @@ Quando uma tool retorna `delivery: drive_artifact`, o conteúdo é um manifesto:
 - Não chame `export_csv_to_drive_tool` — o arquivo já foi gerado.
 - Não afirme que leu ou analisou dados que não recebeu.
 - O download pode ser realizado pela interface nativa do Google Drive após o arquivo ser aberto.
+
+---
+
+# CHUNK 26 - generate_pi_tags_series_csv: séries temporais sem agregação
+
+## Intenção
+
+Tool dedicada a consultar valores temporais de tags PI sem aplicar operação
+estatística, gerar CSV completo, publicar no Google Drive e retornar apenas
+um ArtifactManifest compacto.
+
+NÃO usar para operações estatísticas (média, máximo, mínimo, soma, consumo).
+Para esses, use `tag_statistics`.
+
+## Contrato
+
+| Parâmetro | Tipo | Default | Restrições |
+|---|---|---|---|
+| `tags` | `list[str]` | obrigatório | 1 a 10 tags, sem duplicatas |
+| `start_time` | `str` | obrigatório | PI tokens (`*`, `*-1h`, `T`, `Y`) ou ISO 8601 |
+| `end_time` | `str` | `"*"` | Janela `[start, end)` |
+| `data_method` | `str` | `"interpolated"` | `"interpolated"` ou `"recorded"` |
+| `interval` | `str \| None` | `None` | `"1m"`, `"5m"`, `"1h"`, etc. Obrigatório para interpolated. Proibido para recorded. |
+
+Não possui parâmetro `operation`.
+
+## Roteamento
+
+| Pedido do usuário | Configuração |
+|---|---|
+| "valores minuto a minuto" | data_method=interpolated, interval=1m |
+| "valores a cada 5 minutos" | data_method=interpolated, interval=5m |
+| "valores brutos", "eventos gravados" | data_method=recorded |
+| "série interpolada" | data_method=interpolated |
+| "CSV com valores" | data_method=interpolated ou recorded conforme contexto |
+
+## Exemplo de chamada
+
+```json
+{
+  "tags": ["LFS_RB2_VELOPROC"],
+  "start_time": "*-1h",
+  "end_time": "*",
+  "data_method": "interpolated",
+  "interval": "1m"
+}
+```
+
+## Saída
+
+A tool sempre retorna um ArtifactManifest compacto (em caso de sucesso) ou
+um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
+
+## Diferença para tag_statistics
+
+| Característica | generate_pi_tags_series_csv | tag_statistics |
+|---|---|---|
+| Propósito | Valores temporais brutos/interpolados | Agregados estatísticos |
+| Parâmetro operation | Não possui | Obrigatório |
+| data_method | interpolated ou recorded | summary (para série estatística) |
+| Saída | CSV completo no Drive | Manifesto compacto |
+| Agregação | Nenhuma | Média, máximo, mínimo, soma, etc. |
+
+## Limites
+
+- Máximo de 10 tags por chamada.
+- Período máximo de 31 dias.
+- Máximo de 1.000.000 de linhas por CSV.
+- Máximo de 100 MiB por arquivo.
+- Times mínimos suportados: 1s, 1m, 5m, 15m, 1h, 1d, etc.

@@ -30,3 +30,8 @@
 | 22 | consumo da tag X sem granularidade | `tag_statistics_tool` com `return_series=True` (group_by default 1h) | Operacional |
 | 23 | média da tag X com group_by='5m' | Erro `INVALID_GROUP_BY` | Erro contratual |
 | 24 | consumo da tag X com group_by='2h' | Erro `INVALID_GROUP_BY` | Erro contratual |
+| 25 | gere um CSV com os valores da TAG minuto a minuto da hora anterior | `generate_pi_tags_series_csv` com `data_method=interpolated`, `interval=1m`, sem `operation` | Operacional |
+| 26 | gere um CSV com os valores brutos da TAG na última hora | `generate_pi_tags_series_csv` com `data_method=recorded`, sem `interval` | Operacional |
+| 27 | qual foi a média por minuto da TAG na última hora? | `tag_statistics_tool` com `operation=mean`, `data_method=summary`, `group_by=1m`, `summary_duration=1m` | Operacional |
+| 28 | qual foi o máximo a cada cinco minutos? | `tag_statistics_tool` com `operation=max`, `data_method=summary`, `group_by=5m`, `summary_duration=5m` | Operacional |
+| 29 | valores minuto a minuto | NÃO usar `operation=mean`, NÃO usar `tag_statistics_tool` | Regra negativa |

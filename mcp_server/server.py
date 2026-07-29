@@ -29,6 +29,7 @@ from core.config import settings
 from domain.core.config import configure_domain_settings
 from domain.shared.errors import DomainValidationError
 from domain.shared.schemas.math_tool import GroupBy
+from domain.shared.time import resolve_pi_time_range
 from mcp_server.services.delivery.output_delivery_policy import DefaultOutputDeliveryPolicy
 from mcp_server.services.delivery.contracts import DeliveryMode
 from mcp_server.services.delivery.exceptions import ArtifactDeliveryError
@@ -318,6 +319,47 @@ async def tag_statistics(
         resolved_calculation_basis = None
 
     async def _inner():
+        _output_mode = "series" if (group_by or return_series) else "scalar"
+
+        if _output_mode == "series":
+            norm_data_method = (data_method or "summary").strip().lower()
+            if norm_data_method != "summary":
+                raise ToolError(
+                    f"[INVALID_DATA_METHOD_FOR_AGGREGATED_SERIES] "
+                    f"Série estatística exige data_method='summary'. "
+                    f"Recebido: '{data_method}'. "
+                    f"Use generate_pi_tags_series_csv para séries interpoladas ou recorded."
+                )
+            _resolved_summary_duration = (
+                summary_duration or group_by or "1h"
+            )
+            if summary_duration is not None and group_by is not None:
+                norm_sd = summary_duration.strip().lower()
+                norm_gb = group_by.strip().lower()
+                if norm_sd != norm_gb:
+                    raise ToolError(
+                        f"[SUMMARY_DURATION_GROUP_BY_MISMATCH] "
+                        f"summary_duration='{summary_duration}' difere de "
+                        f"group_by='{group_by}'. Ambos devem ser iguais para "
+                        f"série estatística."
+                    )
+        else:
+            _resolved_summary_duration = summary_duration
+
+        # Resolve tempos relativos da PI Web API uma vez por chamada
+        _time_resolved = resolve_pi_time_range(start_time, end_time)
+        _start_abs = _time_resolved.start_iso
+        _end_abs = _time_resolved.end_iso
+        logger.info(
+            "tag_statistics: time_resolved input_kind=%s start_iso=%s end_iso=%s "
+            "window_s=%s timezone=%s",
+            _time_resolved.input_kind,
+            _time_resolved.start_iso,
+            _time_resolved.end_iso,
+            _time_resolved.window_seconds,
+            _time_resolved.timezone,
+        )
+
         from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
 
         from core.config import settings as mcp_settings
@@ -325,8 +367,7 @@ async def tag_statistics(
         is_delivery_on = mcp_settings.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY
 
         # T013: fail-closed — série com flag false não retorna inline
-        output_mode = "series" if (group_by or return_series) else "scalar"
-        if output_mode == "series" and not is_delivery_on:
+        if _output_mode == "series" and not is_delivery_on:
             raise ToolError(
                 "[ARTIFACT_DELIVERY_DISABLED] "
                 "A entrega automática de artefatos está desabilitada. "
@@ -409,8 +450,8 @@ async def tag_statistics(
                     tool_name="tag_statistics",
                     tags_requested=len(tags),
                     tags_processed=len(artifact_data_list),
-                    start_time=start_time,
-                    end_time=end_time,
+                    start_time=_start_abs,
+                    end_time=_end_abs,
                     operation=operation,
                     group_by=str(group_by or ""),
                     output_mode="series",
@@ -426,16 +467,21 @@ async def tag_statistics(
                 return manifest.to_dict()
             artifact_publisher = _artifact_publisher
 
+        _effective_summary_duration = (
+            _resolved_summary_duration if _output_mode == "series"
+            else resolved_summary_duration
+        )
+
         result = await executar_estatistica_tags_service(
             tags=tags,
             operation=operation,
-            start_time=start_time,
-            end_time=end_time,
+            start_time=_start_abs,
+            end_time=_end_abs,
             interval=interval,
             max_count=max_count,
             data_method=data_method,
             summary_type=resolved_summary_type,
-            summary_duration=resolved_summary_duration,
+            summary_duration=_effective_summary_duration,
             calculation_basis=resolved_calculation_basis,
             group_by=group_by or "1h",
             return_series=return_series,
@@ -591,6 +637,200 @@ async def tag_attributes_tool(
             return result["output"]
         except ValueError as e:
             return f"Erro: {e}"
+    return await _mcp_safe_tool(_inner)
+
+
+# ---------------------------------------------------------------------------
+# Tool: generate_pi_tags_series_csv
+# ---------------------------------------------------------------------------
+@mcp.tool
+async def generate_pi_tags_series_csv(
+    tags: list[str],
+    start_time: str,
+    end_time: str = "*",
+    data_method: str = "interpolated",
+    interval: str | None = None,
+) -> str:
+    """
+    Consulta valores temporais de tags PI sem agregação estatística, gera CSV
+    completo e publica no Google Drive.
+
+    Use quando o usuário pedir: valores minuto a minuto, série de valores,
+    histórico de valores, valores interpolados, pontos registrados, valores
+    brutos, exporte os valores em CSV, gere um CSV com os valores.
+
+    NÃO use para: média, máximo, mínimo, soma, consumo, desvio padrão,
+    mediana ou qualquer operação estatística. Para esses, use tag_statistics.
+
+    Args:
+        tags: Lista de tags (1 a 10).
+        start_time: Início do período (PI token ou ISO 8601).
+        end_time: Fim do período ('*' = agora). Janela [start, end).
+        data_method: 'interpolated' (frequência definida) ou 'recorded' (eventos brutos).
+        interval: Frequência para interpolated (ex: '1m', '5m', '1h', '1d').
+                  Não usar para recorded. Default para interpolated: '1m'.
+    """
+    async def _inner():
+        from domain.pims.services.generate_pi_tags_series_csv_service import (
+            generate_pi_tags_series_csv_service,
+        )
+        from core.config import settings as mcp_settings
+
+        if not mcp_settings.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV:
+            raise ToolError(
+                "[DISABLED] generate_pi_tags_series_csv está desabilitada."
+            )
+
+        from mcp_server.services.delivery.drive_publisher import DefaultDrivePublisher
+        from mcp_server.services.delivery.report_builder import CsvReportBuilder
+        from mcp_server.services.delivery.manifest_builder import build_artifact_manifest
+        from mcp_server.services.delivery.contracts import (
+            ArtifactMetadata,
+            RequestSummary,
+            ErrorsSummaryItem,
+            WarningsItem,
+        )
+        from mcp_server.services.delivery._filename import build_filename
+        from mcp_server.clients.google_drive_client import GoogleDriveClient
+
+        service_result = await generate_pi_tags_series_csv_service(
+            tags=tags,
+            start_time=start_time,
+            end_time=end_time,
+            data_method=data_method,
+            interval=interval,
+        )
+
+        status = service_result.get("status", "no_data")
+
+        if status == "no_data":
+            tr = service_result.get("tool_result", {})
+            return json.dumps({
+                "schema_version": "1.0",
+                "status": "no_data",
+                "delivery": "inline",
+                "tool_name": "generate_pi_tags_series_csv",
+                "request_summary": {
+                    "tags_requested": tr.get("tags_requested", len(tags)),
+                    "tags_processed": 0,
+                    "start_time": tr.get("start_time", start_time),
+                    "end_time": tr.get("end_time", end_time),
+                    "data_method": tr.get("data_method", data_method),
+                    "interval": tr.get("interval", interval),
+                },
+                "message": "Nenhum dado encontrado para as tags e período informados.",
+                "warnings": [],
+                "errors_summary": [],
+            }, ensure_ascii=False)
+
+        if status == "all_failed":
+            errors = service_result.get("errors_summary", [])
+            raise ToolError(
+                f"[PI_SERIES_QUERY_ERROR] Nenhuma tag pôde ser consultada. "
+                f"Erros: {[e.get('tag', '?') + ': ' + e.get('error', '?') for e in errors]}"
+            )
+
+        rows = service_result.get("rows", [])
+        tool_result = service_result.get("tool_result", {})
+        column_headers = service_result.get("column_headers", [])
+        errors_summary = service_result.get("errors_summary", [])
+
+        builder = CsvReportBuilder(
+            temp_dir=mcp_settings.MCP_SERIES_CSV_PUBLISH_TEMP_DIR,
+            encoding=mcp_settings.MCP_ARTIFACT_CSV_ENCODING,
+            delimiter=mcp_settings.MCP_ARTIFACT_CSV_DELIMITER,
+        )
+
+        csv_rows = []
+        for r in rows:
+            csv_rows.append([
+                r.get("tag", ""),
+                r.get("timestamp", ""),
+                r.get("value") if r.get("value") is not None else "",
+                r.get("eng_unit", ""),
+                "true" if r.get("good") else "false",
+                "true" if r.get("questionable") else "false",
+                "true" if r.get("substituted") else "false",
+                "true" if r.get("annotated") else "false",
+                r.get("error", ""),
+                r.get("value_type", ""),
+                r.get("digital_state_code") if r.get("digital_state_code") is not None else "",
+                r.get("digital_state_name") or "",
+            ])
+
+        path = builder.build_csv(
+            columns=column_headers,
+            rows=csv_rows,
+            max_rows=mcp_settings.MCP_ARTIFACT_MAX_ROWS,
+            max_bytes=mcp_settings.MCP_ARTIFACT_MAX_BYTES,
+            max_cell_bytes=32768,
+        )
+
+        file_bytes = path.read_bytes()
+        filename = build_filename(
+            environment=mcp_settings.MCP_ARTIFACT_FILENAME_ENVIRONMENT,
+            tool="pi_tags_series",
+            extension="csv",
+        )
+
+        client = GoogleDriveClient(
+            credentials_path=mcp_settings.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE,
+            folder_id=mcp_settings.GOOGLE_DRIVE_EXPORT_FOLDER_ID,
+            timeout_seconds=mcp_settings.MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS,
+        )
+        publisher = DefaultDrivePublisher(client)
+
+        try:
+            uploaded = publisher.publish(
+                file_bytes=file_bytes,
+                filename=filename,
+                mime_type="text/csv",
+                app_properties={"source": "pi-chat", "tool": "generate_pi_tags_series_csv"},
+            )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        finally:
+            path.unlink(missing_ok=True)
+
+        artifact_meta = ArtifactMetadata(
+            format="csv",
+            filename=uploaded.name,
+            mime_type=uploaded.mime_type,
+            row_count=len(csv_rows),
+            column_count=len(column_headers),
+            size_bytes=uploaded.size_bytes,
+            view_url=uploaded.view_url,
+        )
+
+        req_summary = RequestSummary(
+            tool_name="generate_pi_tags_series_csv",
+            tags_requested=tool_result.get("tags_requested", len(tags)),
+            tags_processed=tool_result.get("tags_processed", 0),
+            start_time=tool_result.get("start_time", start_time),
+            end_time=tool_result.get("end_time", end_time),
+            data_method=tool_result.get("data_method", data_method),
+        )
+
+        manifest_errors = [
+            ErrorsSummaryItem(tag=e.get("tag"), code="PI_SERIES_QUERY_ERROR", message=str(e.get("error", ""))[:300])
+            for e in errors_summary
+        ]
+
+        manifest_errors_list = manifest_errors[:10]
+
+        manifest = build_artifact_manifest(
+            status=status,
+            tool_name="generate_pi_tags_series_csv",
+            request_summary=req_summary,
+            artifact_metadata=artifact_meta,
+            warnings=[],
+            errors_summary=manifest_errors_list,
+            max_manifest_bytes=mcp_settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES,
+        )
+
+        return json.dumps(manifest.to_dict(), ensure_ascii=False)
+
     return await _mcp_safe_tool(_inner)
 
 
@@ -791,6 +1031,14 @@ if __name__ == "__main__":
         logger.info(
             "export_csv_to_drive_tool: DISABLED — "
             "defina ENABLE_DRIVE_CSV_EXPORT_TOOL=true para habilitá-la"
+        )
+
+    if settings.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV:
+        logger.info("generate_pi_tags_series_csv: ENABLED")
+    else:
+        logger.info(
+            "generate_pi_tags_series_csv: DISABLED — "
+            "defina ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true para habilitá-la"
         )
 
     asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))

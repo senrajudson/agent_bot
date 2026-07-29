@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     MCP_INLINE_MAX_ITEMS: int = 100
     MCP_INLINE_MAX_BYTES: int = 65_536
 
+    # generate_pi_tags_series_csv (feature flag, default false)
+    ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV: bool = False
+    MCP_SERIES_CSV_MAX_TAGS: int = 10
+    MCP_SERIES_CSV_MAX_DAYS: int = 31
+    MCP_SERIES_CSV_MIN_INTERVAL_SECONDS: int = 1
+    MCP_SERIES_CSV_ERROR_MESSAGE_MAX_CHARS: int = 512
+    MCP_SERIES_CSV_PUBLISH_TEMP_DIR: str = "/tmp/agent_bot_mcp_series_csv"
+
     def to_domain_integration_settings(self) -> DomainIntegrationSettings:
         return DomainIntegrationSettings(
             PI_WEB_API_BASE_URL=self.PI_WEB_API_BASE_URL,
@@ -174,6 +182,37 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_generate_pi_tags_series_csv(self) -> "Settings":
+        if not self.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV:
+            return self
+        if not self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE:
+            raise ValueError(
+                "GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE obrigatório quando "
+                "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true."
+            )
+        if not Path(self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE).is_file():
+            raise ValueError(
+                f"Credencial não encontrada: {self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE}"
+            )
+        if not self.GOOGLE_DRIVE_EXPORT_FOLDER_ID:
+            raise ValueError(
+                "GOOGLE_DRIVE_EXPORT_FOLDER_ID obrigatório quando "
+                "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true."
+            )
+        if self.MCP_SERIES_CSV_MAX_TAGS <= 0:
+            raise ValueError("MCP_SERIES_CSV_MAX_TAGS deve ser positivo.")
+        if self.MCP_SERIES_CSV_MAX_DAYS <= 0:
+            raise ValueError("MCP_SERIES_CSV_MAX_DAYS deve ser positivo.")
+        if self.MCP_SERIES_CSV_MIN_INTERVAL_SECONDS <= 0:
+            raise ValueError("MCP_SERIES_CSV_MIN_INTERVAL_SECONDS deve ser positivo.")
+        if not Path(self.MCP_SERIES_CSV_PUBLISH_TEMP_DIR).parent.is_dir() and \
+           not Path(self.MCP_SERIES_CSV_PUBLISH_TEMP_DIR).is_dir():
+            raise ValueError(
+                f"MCP_SERIES_CSV_PUBLISH_TEMP_DIR não acessível: {self.MCP_SERIES_CSV_PUBLISH_TEMP_DIR}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_test_artifact_tool(self) -> "Settings":
         if not self.ENABLE_TEST_ARTIFACT_TOOL:
             return self
@@ -193,10 +232,12 @@ class Settings(BaseSettings):
             "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=%s "
             "ENABLE_DRIVE_CSV_EXPORT_TOOL=%s "
             "ENABLE_TEST_ARTIFACT_TOOL=%s "
+            "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=%s "
             "MCP_PORT=%s",
             self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY,
             self.ENABLE_DRIVE_CSV_EXPORT_TOOL,
             self.ENABLE_TEST_ARTIFACT_TOOL,
+            self.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV,
             self.MCP_PORT,
         )
 

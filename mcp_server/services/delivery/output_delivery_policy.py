@@ -99,6 +99,15 @@ class DefaultOutputDeliveryPolicy:
                     suggested_format="csv",
                 )
 
+        # ──generate_pi_tags_series_csv: sempre DRIVE_ARTIFACT ──
+        if tool == "generate_pi_tags_series_csv":
+            return DeliveryDecision(
+                mode=DeliveryMode.DRIVE_ARTIFACT,
+                reason="series_csv_output",
+                reason_code="SERIES_CSV_OUTPUT",
+                suggested_format="csv",
+            )
+
         # ──search_pi_points: sempre INLINE (cap 5 no service) ──
         if tool == "search_pi_points":
             return DeliveryDecision(

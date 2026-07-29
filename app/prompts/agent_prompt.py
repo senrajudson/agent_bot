@@ -72,10 +72,11 @@ Tool de teste de artefatos QA:
 """.strip()
 
     default_csv_rule = (
-        "- Quando o usuário solicitar exportação em CSV, não prometa arquivo, "
-        "download, attachment ou link. Apresente os dados textualmente quando "
-        "possível e informe que a exportação em CSV não está disponível no "
-        "momento."
+        "- O agente pode confirmar a geração de CSV somente quando usar uma tool "
+        "que consulta, materializa e publica o arquivo diretamente "
+        "(generate_pi_tags_series_csv). Não prometa CSV por conta própria, "
+        "não copie linhas, não monte CSV no contexto e não chame "
+        "export_csv_to_drive_tool."
     )
 
     return f"""
@@ -92,17 +93,28 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 - consultar_tag: valor atual, metadados, digital states.
 - search_pi_points: descobrir tags por nome/descrição/área.
 - tag_attributes_tool: compressão, exceção, scan, archiving, pointsource.
-- tag_statistics: média, máximo, mínimo, soma, estatística histórica.
+- tag_statistics: SOMENTE operações estatísticas (média, máximo, mínimo, soma, desvio padrão, consumo). NÃO usar para valores brutos.
 - tag_calculus: integral, derivada, taxa de variação.
+- generate_pi_tags_series_csv: valores minuto a minuto, série interpolada, valores brutos recorded, CSV com valores.
 - status_pims_tool: status do PIMS, logs, saúde do ambiente.
 {test_artifact_tool_map_line}
 
 {test_artifact_section}
 
-Desambiguação:
+Desambiguação de roteamento:
+- "valores minuto a minuto", "valores a cada minuto", "série de valores",
+  "histórico de valores", "valores interpolados", "CSV com os valores",
+  "exporte os valores" → generate_pi_tags_series_csv com data_method=interpolated.
+- "valores brutos", "pontos registrados", "eventos gravados", "histórico recorded",
+  "valores recorded" → generate_pi_tags_series_csv com data_method=recorded.
+- "média por minuto", "média a cada minuto" → tag_statistics com operation=mean,
+  return_series=true, data_method=summary, group_by=1m.
+- "máximo a cada 5 minutos", "mínimo a cada hora", "soma diária" → tag_statistics
+  com operation correspondente, return_series=true, data_method=summary.
+- "consumo de cada dia/por dia/mês a mês" → tag_statistics com group_by e return_series=True.
+- "consumo total/média/máximo do período" → tag_statistics escalar.
 - Estatística simples → tag_statistics. Integral/derivada → tag_calculus.
 - Metadados cadastrais → consultar_tag. Atributos de configuração → tag_attributes_tool.
-- "consumo de cada dia/por dia/mês a mês" → tag_statistics com group_by e return_series=True.
 - group_by aceita "1m", "1h", "1d", "1w" e "1mo". Default = "1h".
 - "interval" e "group_by" são parâmetros distintos:
   "interval" define a resolução da coleta interpolada;
@@ -116,12 +128,14 @@ Desambiguação:
   mês a mês / por mês / mensal → "1mo"
 - Sem granularidade explícita: omitir group_by (a tool usa 1h).
 - Enviar apenas códigos canônicos em group_by; nunca linguagem natural.
-- "consumo total/média/máximo do período" → tag_statistics escalar.
 {test_artifact_disambiguation_line}
 
 Use esta referência temporal para resolver expressões como hoje, ontem, mês passado,
 últimas 2 horas, semana atual e agora.
 Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = primeiro dia do mês atual às 00:00.
+- Tempos relativos da PI Web API (`*`, `*-1h`, `T`, `Y`) são aceitos pela tool
+  `tag_statistics` e resolvidos deterministicamente. Não repita a chamada
+  convertendo-os para ISO após erro.
 
 Regras para chamadas de tools:
 - Preserve exatamente os nomes das tags.

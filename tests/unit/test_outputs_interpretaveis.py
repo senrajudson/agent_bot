@@ -1218,10 +1218,11 @@ class TestGroupPointsByPeriod:
             ts = f"2026-07-{6+i:02d}T12:00:00-03:00"
             points.append({"timestamp": ts, "value": 100.0})
 
+        from datetime import datetime
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-13T00:00:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-13T00:00:00-03:00",
+            points, start=start, end=end, group_by="1d",
         )
 
         assert len(buckets) == 7
@@ -1229,6 +1230,7 @@ class TestGroupPointsByPeriod:
 
     def test_buckets_vazios_incluidos(self):
         from domain.analytics.services.math_tool_service import _group_points_by_period
+        from datetime import datetime
 
         # Only 3 points for 7 days
         points = [
@@ -1236,11 +1238,10 @@ class TestGroupPointsByPeriod:
             {"timestamp": "2026-07-08T12:00:00-03:00", "value": 110.0},
             {"timestamp": "2026-07-10T12:00:00-03:00", "value": 90.0},
         ]
-
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-13T00:00:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-13T00:00:00-03:00",
+            points, start=start, end=end, group_by="1d",
         )
 
         assert len(buckets) == 7
@@ -1250,15 +1251,16 @@ class TestGroupPointsByPeriod:
 
     def test_1m_60_segundos_bucket(self):
         from domain.analytics.services.math_tool_service import _group_points_by_period
+        from datetime import datetime
 
         points = [
             {"timestamp": "2026-07-06T08:00:10-03:00", "value": 100.0},
             {"timestamp": "2026-07-06T08:00:40-03:00", "value": 110.0},
         ]
+        start = datetime.fromisoformat("2026-07-06T08:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-06T08:02:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1m",
-            start_time="2026-07-06T08:00:00-03:00",
-            end_time="2026-07-06T08:02:00-03:00",
+            points, start=start, end=end, group_by="1m",
         )
         assert len(buckets) == 2
         assert len(buckets[0]["points"]) == 2
@@ -1266,12 +1268,13 @@ class TestGroupPointsByPeriod:
 
     def test_1m_fronteira_exata(self):
         from domain.analytics.services.math_tool_service import _group_points_by_period
+        from datetime import datetime
 
         points = [{"timestamp": "2026-07-06T08:01:00-03:00", "value": 100.0}]
+        start = datetime.fromisoformat("2026-07-06T08:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-06T08:02:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1m",
-            start_time="2026-07-06T08:00:00-03:00",
-            end_time="2026-07-06T08:02:00-03:00",
+            points, start=start, end=end, group_by="1m",
         )
         assert len(buckets) == 2
         assert len(buckets[0]["points"]) == 0
@@ -1279,15 +1282,16 @@ class TestGroupPointsByPeriod:
 
     def test_1m_start_with_seconds(self):
         from domain.analytics.services.math_tool_service import _group_points_by_period
+        from datetime import datetime
 
         points = [
             {"timestamp": "2026-07-06T08:00:30-03:00", "value": 100.0},
             {"timestamp": "2026-07-06T08:01:30-03:00", "value": 110.0},
         ]
+        start = datetime.fromisoformat("2026-07-06T08:00:30-03:00")
+        end = datetime.fromisoformat("2026-07-06T08:02:30-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1m",
-            start_time="2026-07-06T08:00:30-03:00",
-            end_time="2026-07-06T08:02:30-03:00",
+            points, start=start, end=end, group_by="1m",
         )
         assert len(buckets) == 2
         assert buckets[0]["period_start"] == "2026-07-06T08:00:30-03:00"
@@ -1296,11 +1300,12 @@ class TestGroupPointsByPeriod:
 
     def test_1m_1440_buckets_dia(self):
         from domain.analytics.services.math_tool_service import _group_points_by_period
+        from datetime import datetime
 
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-07T00:00:00-03:00")
         buckets = _group_points_by_period(
-            [], group_by="1m",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-07T00:00:00-03:00",
+            [], start=start, end=end, group_by="1m",
         )
         assert len(buckets) == 1440
         assert all(b["duration_seconds"] == 60.0 for b in buckets)
@@ -1314,13 +1319,14 @@ class TestCalcularConsumoPorPeriodo:
             _calcular_consumo_por_periodo,
             _group_points_by_period,
         )
+        from datetime import datetime
 
         # 1 day, 1 point with avg=100 Nm3/h, bucket=86400s
         points = [{"timestamp": "2026-07-06T12:00:00-03:00", "value": 100.0}]
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-07T00:00:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-07T00:00:00-03:00",
+            points, start=start, end=end, group_by="1d",
         )
 
         items, total = _calcular_consumo_por_periodo(buckets, "Nm3/h", "sum")
@@ -1335,12 +1341,13 @@ class TestCalcularConsumoPorPeriodo:
             _calcular_consumo_por_periodo,
             _group_points_by_period,
         )
+        from datetime import datetime
 
         # Empty points
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-07T00:00:00-03:00")
         buckets = _group_points_by_period(
-            [], group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-07T00:00:00-03:00",
+            [], start=start, end=end, group_by="1d",
         )
 
         items, total = _calcular_consumo_por_periodo(buckets, "Nm3/h", "sum")
@@ -1354,15 +1361,16 @@ class TestCalcularConsumoPorPeriodo:
             _calcular_consumo_por_periodo,
             _group_points_by_period,
         )
+        from datetime import datetime
 
         points = [
             {"timestamp": "2026-07-06T06:00:00-03:00", "value": 90.0},
             {"timestamp": "2026-07-06T12:00:00-03:00", "value": 110.0},
         ]
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-07T00:00:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-07T00:00:00-03:00",
+            points, start=start, end=end, group_by="1d",
         )
 
         items, total = _calcular_consumo_por_periodo(buckets, "Nm3/h", "mean")
@@ -1375,16 +1383,17 @@ class TestCalcularConsumoPorPeriodo:
             _calcular_consumo_por_periodo,
             _group_points_by_period,
         )
+        from datetime import datetime
 
         # Tag without flow unit (e.g. temperature)
         points = [
             {"timestamp": "2026-07-06T06:00:00-03:00", "value": 30.0},
             {"timestamp": "2026-07-06T12:00:00-03:00", "value": 50.0},
         ]
+        start = datetime.fromisoformat("2026-07-06T00:00:00-03:00")
+        end = datetime.fromisoformat("2026-07-07T00:00:00-03:00")
         buckets = _group_points_by_period(
-            points, group_by="1d",
-            start_time="2026-07-06T00:00:00-03:00",
-            end_time="2026-07-07T00:00:00-03:00",
+            points, start=start, end=end, group_by="1d",
         )
 
         items, total = _calcular_consumo_por_periodo(buckets, "°C", "sum")

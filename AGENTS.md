@@ -406,7 +406,7 @@ Regex de chunks no script: `^#\s+CHUNK\s+(\d+)\s*-\s*(.+)$`
 
 ## 7. Subsistema MCP Server
 
-O **MCP Server** (`mcp_server/`) é um servidor FastMCP standalone que expõe as 4 tools do agente PI via protocolo **Model Context Protocol** (Streamable HTTP).
+O **MCP Server** (`mcp_server/`) é um servidor FastMCP standalone que expõe tools do agente PI via protocolo **Model Context Protocol** (Streamable HTTP).
 
 ### Por que existe
 
@@ -421,6 +421,7 @@ Agent (app/agent/agent.py)
               ├─→ consultar_tag()      → services/consultar_tag_service.py
               ├─→ tag_statistics()     → services/math_tool_service.py
               ├─→ tag_calculus()       → services/math_tool_service.py
+              ├─→ generate_pi_tags_series_csv() → services/generate_pi_tags_series_csv_service.py
               └─→ status_pims_tool()  → services/status_pims_service.py
 ```
 
@@ -429,8 +430,9 @@ Agent (app/agent/agent.py)
 | Tool | Parâmetros | Descrição |
 |------|-----------|-----------|
 | `consultar_tag` | `tags: list[str]`, `pergunta_usuario: str \| None` | Valor atual e metadados de tags |
-| `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período) |
+| `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período). SOMENTE para operações estatísticas |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
+| `generate_pi_tags_series_csv` | `tags, start_time, end_time, data_method, interval` | Séries temporais sem agregação estatística. CSV no Drive. Sem `operation` |
 | `status_pims_tool` | `pergunta_usuario: str \| None`, `lookback_minutes: int \| None` | Status via Grafana/Loki |
 
 ### Configuração
@@ -1356,6 +1358,8 @@ pytest -m integration                                 # Integração (requer Doc
 | MCP artifact `Drive desconfigurado` com `ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=true` | Verificar `GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE` e `GOOGLE_DRIVE_EXPORT_FOLDER_ID` no `.env` do mcp_server. O startup falha com `ValueError` se a configuração estiver inválida. |
 | MCP artifact `Arquivo acima do limite` | O retorno MCP contém erro explícito indicando qual limite (`MCP_ARTIFACT_MAX_ROWS`, `MCP_ARTIFACT_MAX_BYTES` ou `MCP_ARTIFACT_MAX_COLUMNS`) foi excedido. Reduza o período, tags ou granularidade (`group_by`). |
 | MCP artifact `Tag não encontrada em tag_statistics` (falha parcial) | O artefato contém dados das tags processadas; a falha é registrada em `errors_summary` no manifesto. Não gera arquivo vazio. |
+| "Valores minuto a minuto" retorna média (`operation=mean`) em vez de valores interpolados | O agente usou `tag_statistics` em vez de `generate_pi_tags_series_csv`. Verificar se `ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true` e se o prompt/RAG foram atualizados. A nova tool é a correta para séries sem agregação. |
+| `generate_pi_tags_series_csv` retorna `no_data` com frequência | A PI Web API pode não ter dados interpolados no período e interval solicitados. Testar com `recorded` ou verificar a disponibilidade de dados da tag. |
 
 ---
 

@@ -241,16 +241,15 @@ def _duracao_bloco_segundos(points: list[dict], group_by: str) -> float:
 
 
 def _group_points_by_period(
-    points: list[dict], group_by: str, start_time: str, end_time: str
+    points: list[dict], *, start: datetime, end: datetime, group_by: str
 ) -> list[dict]:
-    t_start = _parse_ts(start_time)
-    t_end = _parse_ts(end_time) if end_time != "*" else datetime.now(timezone.utc)
-
     step_map = {"1m": timedelta(minutes=1), "1h": timedelta(hours=1), "1d": timedelta(days=1),
                 "1w": timedelta(weeks=1), "1mo": timedelta(days=30)}
     step = step_map.get(group_by, timedelta(hours=1))
 
-    tz = t_start.tzinfo
+    tz = start.tzinfo
+    t_start = start
+    t_end = end
 
     buckets = []
     current = t_start
@@ -399,10 +398,11 @@ async def executar_estatistica_tags_service(
         group_by_normalizado = _normalizar_group_by(group_by)
         output_mode = "series" if (group_by_normalizado is not None or return_series) else "scalar"
         if output_mode == "series" and method != "summary":
-            method = "summary"
-            summary_type = summary_type or "Average"
-            summary_duration = summary_duration or "1h"
-            calculation_basis = calculation_basis or "TimeWeighted"
+            raise DomainValidationError(
+                ValidationErrorCode.INVALID_DATA_METHOD_FOR_AGGREGATED_SERIES,
+                f"Série estatística exige data_method='summary'. Recebido: '{method}'. "
+                f"Use generate_pi_tags_series_csv para séries interpoladas ou recorded.",
+            )
 
         for tag in tags:
             pi_response = await buscar_serie_pi(
@@ -423,9 +423,10 @@ async def executar_estatistica_tags_service(
                 unidade_da_tag = _extrair_eng_unit(point_metadata) or "sem unidade cadastrada"
 
                 gb = group_by_normalizado or summary_duration or "1d"
+                start_dt = datetime.fromisoformat(start_time)
+                end_dt = datetime.fromisoformat(end_time) if end_time != "*" else datetime.now(timezone.utc)
                 buckets = _group_points_by_period(
-                    points=points, group_by=gb,
-                    start_time=start_time, end_time=end_time,
+                    points=points, start=start_dt, end=end_dt, group_by=gb,
                 )
 
                 series_items, total_geral = _calcular_consumo_por_periodo(
