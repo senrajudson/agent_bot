@@ -4,6 +4,19 @@
 
 Use como contexto base para orientar seleção de ferramenta e parâmetros.
 
+## Política de entrega de resultados
+
+Séries temporais, logs completos, timelines e relatórios multi-tag podem ser
+entregues como um arquivo no Google Drive. Nesses casos, o retorno da tool MCP
+será um manifesto compacto (`ArtifactManifest`) contendo status, metadados e
+links de visualização/download. Os dados brutos (linhas, buckets, pontos) não
+são retornados ao modelo.
+
+Quando receber `delivery: drive_artifact`:
+- apresente `view_url` e `download_url` ao usuário;
+- não chame a tool novamente para obter a série;
+- não afirme que leu ou analisou os dados do arquivo.
+
 ## Mapa de tools
 
 | Intenção                                                                                                             | Interpretação              | Tool sugerida         |
@@ -1392,3 +1405,62 @@ GET /points/{webId}/attributes
 - Atributo não configurado: exibir `(não configurado)`.
 
 ---
+
+# CHUNK 25 - Política de entrega de artefatos (Google Drive)
+
+## Quando usar
+
+Resultados tabulares, séries temporais, logs completos, timelines e
+relatórios multi-tag podem ser entregues como arquivo CSV no Google Drive.
+
+O agente não precisa chamar tools de exportação — o arquivo é gerado
+automaticamente pelo próprio service antes do retorno MCP.
+
+## Manifesto compacto (ArtifactManifest)
+
+Quando uma tool retorna `delivery: drive_artifact`, o conteúdo é um manifesto:
+
+```json
+{
+  "schema_version": "1.0",
+  "status": "success | partial_success | no_data | error",
+  "delivery": "drive_artifact",
+  "tool_name": "tag_statistics",
+  "request_summary": {
+    "tags_requested": 1,
+    "tags_processed": 1,
+    "start_time": "...",
+    "end_time": "...",
+    "operation": "mean",
+    "group_by": "1m",
+    "output_mode": "series"
+  },
+  "artifact": {
+    "format": "csv",
+    "filename": "pi_chat_dev_tag_statistics_20260728T145300Z_a1b2c3.csv",
+    "mime_type": "text/csv",
+    "row_count": 44640,
+    "column_count": 5,
+    "size_bytes": 1234567,
+    "view_url": "https://drive.google.com/file/d/.../view",
+    "download_url": "https://drive.google.com/uc?export=download&id=..."
+  },
+  "warnings": [],
+  "errors_summary": []
+}
+```
+
+## Limites
+
+- Máximo de 1.000.000 linhas por arquivo.
+- Máximo de 100 MB por arquivo.
+- Máximo de 50 colunas.
+- Manifesto serializado < 8 KB.
+- Resultados escalares continuam inline (sem mudança).
+
+## Regras de resposta para o agente
+
+- Apresente `view_url` e `download_url` ao usuário.
+- Não chame a tool novamente para obter a série.
+- Não chame `export_csv_to_drive_tool` — o arquivo já foi gerado.
+- Não afirme que leu ou analisou dados que não recebeu.

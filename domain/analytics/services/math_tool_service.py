@@ -4,7 +4,7 @@ import json
 import logging
 import socket
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -386,9 +386,12 @@ async def executar_estatistica_tags_service(
     calculation_basis: str = "TimeWeighted",
     group_by: str | None = None,
     return_series: bool = False,
+    drive_artifact_delivery: bool = False,
+    artifact_publisher: Callable[[list[dict], dict], Awaitable[dict]] | None = None,
 ) -> dict[str, Any]:
     outputs = []
     results = []
+    artifact_data_list: list[tuple[list[dict], dict]] = []
 
     try:
         method = _normalizar_data_method(data_method)
@@ -438,6 +441,24 @@ async def executar_estatistica_tags_service(
                     summary_type=summary_type, summary_duration=summary_duration,
                     calculation_basis=calculation_basis, max_count=max_count,
                 )
+
+                if drive_artifact_delivery:
+                    artifact_meta = {
+                        "tool_name": "tag_statistics",
+                        "tag": tag,
+                        "operation": operation,
+                        "group_by": gb,
+                        "unidade_da_tag": unidade_da_tag,
+                        "unidade_final_inferida": unidade_final,
+                        "periodo_efetivo": periodo_efetivo,
+                        "glosa_interpretativa": glosa,
+                        "quantidade_amostras": len(points),
+                        "total": total_geral,
+                        "data_method": method,
+                        **params_temporais,
+                    }
+                    artifact_data_list.append((series_items, artifact_meta))
+                    continue
 
                 result_item = {
                     "tag": tag, "endpoint": "/stats",
@@ -525,6 +546,34 @@ async def executar_estatistica_tags_service(
 
             results.append(result_item)
             outputs.append(output_item)
+
+        if drive_artifact_delivery and artifact_data_list and artifact_publisher is not None:
+            total_rows = sum(len(items) for items, _ in artifact_data_list)
+            manifest = await artifact_publisher(artifact_data_list, {
+                "tool_name": "tag_statistics",
+                "tags_count": len(artifact_data_list),
+                "total_rows": total_rows,
+                "operation": operation,
+                "group_by": group_by_normalizado,
+                "start_time": start_time,
+                "end_time": end_time,
+            })
+            return {
+                "ok": True,
+                "status": "success",
+                "error_code": None,
+                "message": None,
+                "delivery": "drive_artifact",
+                "tool_name": "tag_statistics_tool",
+                "tool_result": manifest,
+                "output": (
+                    f"Arquivo gerado com dados de {len(artifact_data_list)} tag(s) "
+                    f"e {total_rows} linha(s) no total. "
+                    f"Visualizar: {manifest.get('artifact', {}).get('view_url', '')} "
+                    f"Baixar: {manifest.get('artifact', {}).get('download_url', '')}"
+                ),
+                "answer_generation_error": None,
+            }
 
         return {
             "ok": True,

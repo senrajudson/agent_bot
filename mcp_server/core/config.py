@@ -1,9 +1,12 @@
+import logging
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
 from domain.core.integration_settings import DomainIntegrationSettings
+
+logger = logging.getLogger("mcp_server.config")
 
 
 class Settings(BaseSettings):
@@ -55,6 +58,25 @@ class Settings(BaseSettings):
     DRIVE_CSV_UPLOAD_TIMEOUT_SECONDS: float = 60.0
     DRIVE_CSV_MAX_FILENAME_LENGTH: int = 180
     DRIVE_CSV_FORMULA_PROTECTION: bool = True
+
+    # MCP Drive Artifact Delivery (feature flag, default false)
+    ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY: bool = False
+
+    MCP_ARTIFACT_MAX_ROWS: int = 1_000_000
+    MCP_ARTIFACT_MAX_BYTES: int = 104_857_600
+    MCP_ARTIFACT_MAX_COLUMNS: int = 50
+    MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS: float = 120.0
+    MCP_ARTIFACT_TEMP_DIR: str = "/tmp/agent_bot_mcp_artifacts"
+    MCP_ARTIFACT_MANIFEST_MAX_BYTES: int = 8_192
+
+    MCP_ARTIFACT_CSV_DELIMITER: str = ";"
+    MCP_ARTIFACT_CSV_ENCODING: str = "utf-8-sig"
+
+    MCP_ARTIFACT_FILENAME_ENVIRONMENT: str = "dev"
+
+    MCP_INLINE_MAX_ROWS: int = 100
+    MCP_INLINE_MAX_ITEMS: int = 100
+    MCP_INLINE_MAX_BYTES: int = 65_536
 
     def to_domain_integration_settings(self) -> DomainIntegrationSettings:
         return DomainIntegrationSettings(
@@ -111,6 +133,47 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_drive_artifact_delivery(self) -> "Settings":
+        if not self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY:
+            return self
+        if not self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE:
+            raise ValueError(
+                "GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE obrigatório quando "
+                "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=true."
+            )
+        if not Path(self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE).is_file():
+            raise ValueError(
+                f"Credencial não encontrada: "
+                f"{self.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE}"
+            )
+        if not self.GOOGLE_DRIVE_EXPORT_FOLDER_ID:
+            raise ValueError(
+                "GOOGLE_DRIVE_EXPORT_FOLDER_ID obrigatório quando "
+                "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=true."
+            )
+        if not Path(self.MCP_ARTIFACT_TEMP_DIR).is_dir() and not Path(self.MCP_ARTIFACT_TEMP_DIR).parent.is_dir():
+            raise ValueError(
+                f"MCP_ARTIFACT_TEMP_DIR não acessível: {self.MCP_ARTIFACT_TEMP_DIR}"
+            )
+        if self.MCP_ARTIFACT_MAX_ROWS <= 0:
+            raise ValueError("MCP_ARTIFACT_MAX_ROWS deve ser positivo.")
+        if self.MCP_ARTIFACT_MAX_BYTES <= 0:
+            raise ValueError("MCP_ARTIFACT_MAX_BYTES deve ser positivo.")
+        if self.MCP_ARTIFACT_MAX_COLUMNS <= 0:
+            raise ValueError("MCP_ARTIFACT_MAX_COLUMNS deve ser positivo.")
+        if self.MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS <= 0:
+            raise ValueError("MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS deve ser positivo.")
+        if self.MCP_ARTIFACT_MANIFEST_MAX_BYTES <= 0:
+            raise ValueError("MCP_ARTIFACT_MANIFEST_MAX_BYTES deve ser positivo.")
+        if self.MCP_INLINE_MAX_BYTES <= 0:
+            raise ValueError("MCP_INLINE_MAX_BYTES deve ser positivo.")
+        if self.MCP_INLINE_MAX_BYTES > self.MCP_ARTIFACT_MAX_BYTES:
+            raise ValueError(
+                "MCP_INLINE_MAX_BYTES não pode exceder MCP_ARTIFACT_MAX_BYTES."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_test_artifact_tool(self) -> "Settings":
         if not self.ENABLE_TEST_ARTIFACT_TOOL:
             return self
@@ -123,6 +186,19 @@ class Settings(BaseSettings):
                 "ENABLE_TEST_ARTIFACT_TOOL=true requires AGENT_API_BASE_URL."
             )
         return self
+
+    def log_effective_config(self) -> None:
+        logger.info(
+            "Effective config: "
+            "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=%s "
+            "ENABLE_DRIVE_CSV_EXPORT_TOOL=%s "
+            "ENABLE_TEST_ARTIFACT_TOOL=%s "
+            "MCP_PORT=%s",
+            self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY,
+            self.ENABLE_DRIVE_CSV_EXPORT_TOOL,
+            self.ENABLE_TEST_ARTIFACT_TOOL,
+            self.MCP_PORT,
+        )
 
 
 settings = Settings()

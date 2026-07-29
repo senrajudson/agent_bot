@@ -449,6 +449,19 @@ O MCP server **duplica** intentionalmente os clients e services do `app/`:
 
 Isso permite deploy e restart independentes.
 
+### Política de entrega de artefatos (Drive)
+
+Desde **jul/2026**, o MCP Server implementa `OutputDeliveryPolicy` para impedir
+que séries, tabelas e logs volumosos retornem inline ao contexto do LLM.
+
+- **Modo INLINE**: valor escalar, metadados, status, contagens (sem mudança).
+- **Modo DRIVE_ARTIFACT**: séries temporais, timelines, logs completos (publicados
+  como CSV no Google Drive; LLM recebe apenas `ArtifactManifest` compacto).
+
+Migração inicial: `tag_statistics` em modo série. Controlado por feature flag
+`ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY` (default `false` para preservar legado).
+Ver `mcp_server/services/delivery/` para a implementação.
+
 ---
 
 ## 8. Math Tool Service
@@ -1059,6 +1072,24 @@ class LLMParams(BaseModel):
 | `MCP_HOST` | `0.0.0.0` | Host do MCP server |
 | `MCP_PORT` | `8003` | Porta do MCP server |
 
+#### MCP Artifact Delivery
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY` | `false` | Habilitar entrega automática de artefatos por séries |
+| `MCP_ARTIFACT_MAX_ROWS` | `1000000` | Máximo de linhas por arquivo |
+| `MCP_ARTIFACT_MAX_BYTES` | `104857600` | Máximo de bytes por arquivo (100 MiB) |
+| `MCP_ARTIFACT_MAX_COLUMNS` | `50` | Máximo de colunas |
+| `MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS` | `120` | Timeout de upload para o Drive |
+| `MCP_ARTIFACT_TEMP_DIR` | `/tmp/agent_bot_mcp_artifacts` | Diretório temporário para arquivos |
+| `MCP_ARTIFACT_MANIFEST_MAX_BYTES` | `8192` | Tamanho máximo do manifesto serializado |
+| `MCP_ARTIFACT_CSV_DELIMITER` | `;` | Separador CSV |
+| `MCP_ARTIFACT_CSV_ENCODING` | `utf-8-sig` | Encoding do CSV (BOM) |
+| `MCP_ARTIFACT_FILENAME_ENVIRONMENT` | `dev` | Identificador do ambiente no nome do arquivo |
+| `MCP_INLINE_MAX_ROWS` | `100` | Limite secundário: linhas inline |
+| `MCP_INLINE_MAX_ITEMS` | `100` | Limite secundário: itens inline |
+| `MCP_INLINE_MAX_BYTES` | `65536` | Limite secundário: bytes inline (64 KiB) |
+
 ---
 
 ## 17. Comandos
@@ -1322,6 +1353,9 @@ pytest -m integration                                 # Integração (requer Doc
 | `get_embedding_provider()` levanta `EmbeddingConfigError` | Verificar se `EMBEDDING_PROVIDER` está definido como `nomic` ou `gemini`. Se for `gemini`, verificar se `GEMINI_API_KEY` está presente. |
 | Phoenix exibe span órfão `GET` para `http://10.247.179.197:6333` | **Causa**: o `QdrantClient` faz health check no root durante init, e o `HTTPXClientInstrumentor` auto-instrumenta a chamada. **Correção**: `_configure_excluded_urls()` em `app/observability/phoenix.py` define `OTEL_PYTHON_HTTPX_EXCLUDED_URLS` com regex `^<QDRANT_URL>/?$` antes do `register()`. Spans de busca vetorial (`/collections/.../points/search`) permanecem rastreados. |
 | `status_pims_tool` retornava `ALERTA` para registros HTTP 200 | **Causa raiz**: a heurística antiga contava qualquer linha com palavra de alerta (`slow`, `warning`, `retry`) como `alerta_real`, mesmo sendo HTTP 200. **Correção 1 (jul/2026)**: classificador substituído por 4 categorias determinísticas; HTTP 2xx/304 com palavra de alerta viram `ignorado_benigno`. **Correção 2 (jul/2026)**: régua expandida para 6 níveis (`EXCELENTE`/`SAUDÁVEL`/`OPERACIONAL`/`ALERTA`/`CRÍTICO`/`OFFLINE`); HTTP 499 classificado como `client_aborted` (categoria separada de `alerta_real`); 233 HTTP 499 em 5000 logs com DataServer `CONECTADO` agora gera `OPERACIONAL`, não `ALERTA`. |
+| MCP artifact `Drive desconfigurado` com `ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=true` | Verificar `GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE` e `GOOGLE_DRIVE_EXPORT_FOLDER_ID` no `.env` do mcp_server. O startup falha com `ValueError` se a configuração estiver inválida. |
+| MCP artifact `Arquivo acima do limite` | O retorno MCP contém erro explícito indicando qual limite (`MCP_ARTIFACT_MAX_ROWS`, `MCP_ARTIFACT_MAX_BYTES` ou `MCP_ARTIFACT_MAX_COLUMNS`) foi excedido. Reduza o período, tags ou granularidade (`group_by`). |
+| MCP artifact `Tag não encontrada em tag_statistics` (falha parcial) | O artefato contém dados das tags processadas; a falha é registrada em `errors_summary` no manifesto. Não gera arquivo vazio. |
 
 ---
 
@@ -1357,10 +1391,14 @@ O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém 
 | 19 | `conceptual` | Diretrizes de qualidade e anti-padrões |
 | 20 | `conceptual` | Cálculos temporais: integral e derivada |
 | 21 | `conceptual` | RAG e recuperação recomendada |
+| 22 | `conceptual` | PI Web API: descoberta de PI Points |
+| 23 | `conceptual` | PI Web API Search Query Syntax |
+| 24 | `conceptual` | PI Web API: atributos de PI Point |
+| 25 | `conceptual` | Política de entrega de artefatos (Google Drive) |
 
 ---
 
-## 24. Refatoração Arquitetural (Etapas 0-8)
+## 24. Refatoração Arquitetural (Etapas 0-9)
 
 O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Publishing** (com Event Log / Event Store preparation em andamento), implementada em 8 etapas incrementais. Cada etapa foi precedida de testes de caracterização e validada com suite completa.
 
@@ -1379,6 +1417,7 @@ O projeto passou por uma refatoração gradual para **DDD + CQRS + Event Publish
 | 6 | ChatMemoryTurn → Event Sourcing (ConversationMemoryProjection) | 33 testes |
 | 7 | Distributed Lock no DedupeStore (resolução P1 #11) | 35 testes |
 | 8 | Polimento: consolidação `_build_completion_kwargs`, testes tag_extractor, AGENTS.md | 10 testes |
+| 9 | OutputDeliveryPolicy: artefatos no Drive para séries volumosas | 22 tasks (T001-T022) |
 
 ### Resultado
 

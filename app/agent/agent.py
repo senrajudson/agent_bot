@@ -68,7 +68,6 @@ def _build_agent(model_name: str | None = None) -> LlmAgent:
         model=model,
         instruction=build_system_prompt(
             enable_test_artifact_tool=settings.ENABLE_TEST_ARTIFACT_TOOL,
-            enable_drive_csv_export_tool=settings.ENABLE_DRIVE_CSV_EXPORT_TOOL,
         ),
         tools=[_mcp_toolset()],
     )

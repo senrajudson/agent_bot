@@ -27,9 +27,21 @@ from fastmcp.exceptions import ToolError
 from core.config import settings
 
 from domain.core.config import configure_domain_settings
+from domain.shared.errors import DomainValidationError
 from domain.shared.schemas.math_tool import GroupBy
+from mcp_server.services.delivery.output_delivery_policy import DefaultOutputDeliveryPolicy
+from mcp_server.services.delivery.contracts import DeliveryMode
+from mcp_server.services.delivery.exceptions import ArtifactDeliveryError
 
 configure_domain_settings(settings.to_domain_integration_settings())
+
+delivery_policy = DefaultOutputDeliveryPolicy(
+    inline_max_rows=settings.MCP_INLINE_MAX_ROWS,
+    inline_max_items=settings.MCP_INLINE_MAX_ITEMS,
+    inline_max_bytes=settings.MCP_INLINE_MAX_BYTES,
+    consultar_tag_artifact_max=20,
+    consultar_tag_hard_cap=50,
+)
 
 # ---------------------------------------------------------------------------
 # FastMCP server
@@ -52,6 +64,84 @@ mcp = FastMCP(
 
 
 # ---------------------------------------------------------------------------
+# Barreira universal de tamanho (mcp_safe_tool)
+# ---------------------------------------------------------------------------
+
+_MANIFEST_CONTRACT_KEYS = {"schema_version", "delivery", "tool_name"}
+
+
+def _is_artifact_manifest(result: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if not _MANIFEST_CONTRACT_KEYS.issubset(result.keys()):
+        return False
+    if result.get("delivery") != "drive_artifact":
+        return False
+    if not isinstance(result.get("artifact"), dict):
+        return False
+    if not result["artifact"].get("view_url"):
+        return False
+    return True
+
+
+async def _mcp_safe_tool(tool_fn, *args, **kwargs):
+    tool_name = getattr(tool_fn, "__name__", "unknown")
+    try:
+        result = await tool_fn(*args, **kwargs)
+    except ToolError:
+        raise
+    except DomainValidationError as exc:
+        code = getattr(exc, "code", None) or getattr(exc, "error_code", "VALIDATION_ERROR")
+        raise ToolError(f"[{code}] {exc}") from exc
+    except ArtifactDeliveryError as exc:
+        public_code = getattr(exc, "public_code", "ARTIFACT_DELIVERY_ERROR")
+        raise ToolError(f"[{public_code}] {exc}") from exc
+    except Exception:
+        logger.exception("Unexpected MCP tool failure", extra={"tool_name": tool_name})
+        raise ToolError(
+            f"[INTERNAL_TOOL_ERROR] Falha interna ao executar {tool_name}."
+        )
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except (json.JSONDecodeError, ValueError):
+            return result
+        result = parsed
+
+    serialized = json.dumps(result, ensure_ascii=False, default=str)
+    size_bytes = len(serialized.encode("utf-8"))
+
+    is_manifest = isinstance(result, dict) and _is_artifact_manifest(result)
+
+    if is_manifest:
+        if size_bytes > settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES:
+            raise ToolError(
+                f"[MANIFEST_TOO_LARGE] "
+                f"tool={tool_name} size_bytes={size_bytes} "
+                f"max_bytes={settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES}"
+            )
+        logger.info(
+            "mcp_safe: tool=%s mode=DRIVE_ARTIFACT size=%d row_count=%s",
+            tool_name, size_bytes,
+            result.get("artifact", {}).get("row_count", "?"),
+        )
+        return result
+
+    if size_bytes > settings.MCP_INLINE_MAX_BYTES:
+        raise ToolError(
+            f"[INLINE_PAYLOAD_TOO_LARGE] "
+            f"tool={tool_name} size_bytes={size_bytes} "
+            f"max_bytes={settings.MCP_INLINE_MAX_BYTES}"
+        )
+
+    logger.info(
+        "mcp_safe: tool=%s mode=INLINE size=%d",
+        tool_name, size_bytes,
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Tool: consultar_tag
 # ---------------------------------------------------------------------------
 @mcp.tool
@@ -71,14 +161,104 @@ async def consultar_tag(
         tags: Lista de nomes de tags do PI System (preservar nomes exatos).
         pergunta_usuario: Pergunta original (opcional, contexto).
     """
-    from domain.pims.services.consultar_tag_service import consultar_tags_pi
+    async def _inner():
+        decision = delivery_policy.decide(
+            tool_name="consultar_tag",
+            tags_count=len(tags),
+        )
+        if decision.mode == DeliveryMode.REJECT:
+            raise ToolError(
+                f"[TAG_COUNT_EXCEEDED] "
+                f"Número de tags ({len(tags)}) excede o limite máximo permitido."
+            )
 
-    result = await consultar_tags_pi(
-        tags=tags,
-        pergunta_usuario=pergunta_usuario or "",
-        include_raw_response=False,
-    )
-    return result["output"]
+        from domain.pims.services.consultar_tag_service import consultar_tags_pi
+
+        result = await consultar_tags_pi(
+            tags=tags,
+            pergunta_usuario=pergunta_usuario or "",
+            include_raw_response=False,
+        )
+
+        if decision.mode == DeliveryMode.DRIVE_ARTIFACT:
+            from mcp_server.services.delivery.drive_publisher import DefaultDrivePublisher
+            from mcp_server.services.delivery.report_builder import CsvReportBuilder
+            from mcp_server.services.delivery.manifest_builder import build_artifact_manifest
+            from mcp_server.services.delivery.contracts import ArtifactMetadata, RequestSummary
+            from mcp_server.services.delivery._filename import build_filename
+            from mcp_server.clients.google_drive_client import GoogleDriveClient
+
+            resultados = result.get("tool_result", {}).get("resultados_pi", [])
+            all_rows = []
+            columns = ["Tag", "Descriptor", "Value", "Unit", "Timestamp", "DigitalState"]
+            for r in resultados:
+                all_rows.append([
+                    r.get("tag", ""),
+                    r.get("descriptor", ""),
+                    r.get("valor_atual"),
+                    r.get("eng_unit", ""),
+                    r.get("timestamp", ""),
+                    r.get("digital_state", ""),
+                ])
+
+            builder = CsvReportBuilder(
+                temp_dir=settings.MCP_ARTIFACT_TEMP_DIR,
+                encoding=settings.MCP_ARTIFACT_CSV_ENCODING,
+                delimiter=settings.MCP_ARTIFACT_CSV_DELIMITER,
+            )
+            path = builder.build_csv(
+                columns=columns,
+                rows=all_rows,
+                max_rows=settings.MCP_ARTIFACT_MAX_ROWS,
+                max_bytes=settings.MCP_ARTIFACT_MAX_BYTES,
+                max_cell_bytes=32768,
+            )
+            file_bytes = path.read_bytes()
+            filename = build_filename(
+                environment=settings.MCP_ARTIFACT_FILENAME_ENVIRONMENT,
+                tool="consultar_tag",
+                extension="csv",
+            )
+            client = GoogleDriveClient(
+                credentials_path=settings.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE,
+                folder_id=settings.GOOGLE_DRIVE_EXPORT_FOLDER_ID,
+                timeout_seconds=settings.MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS,
+            )
+            publisher = DefaultDrivePublisher(client)
+            uploaded = publisher.publish(
+                file_bytes=file_bytes,
+                filename=filename,
+                mime_type="text/csv",
+                app_properties={"source": "pi-chat", "tool": "consultar_tag"},
+            )
+            path.unlink(missing_ok=True)
+
+            artifact_meta = ArtifactMetadata(
+                format="csv",
+                filename=uploaded.name,
+                mime_type=uploaded.mime_type,
+                row_count=len(all_rows),
+                column_count=len(columns),
+                size_bytes=uploaded.size_bytes,
+                view_url=uploaded.view_url,
+                download_url=uploaded.download_url,
+            )
+            req_summary = RequestSummary(
+                tool_name="consultar_tag",
+                tags_requested=len(tags),
+                tags_processed=len(resultados),
+            )
+            manifest = build_artifact_manifest(
+                status="success",
+                tool_name="consultar_tag",
+                request_summary=req_summary,
+                artifact_metadata=artifact_meta,
+                max_manifest_bytes=settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES,
+            )
+            return manifest.to_dict()
+
+        return result["output"]
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -128,39 +308,159 @@ async def tag_statistics(
         group_by: Granularidade dos buckets estatísticos. Aceita '1m','1h','1d','1w','1mo'. Default='1h'. A inferência a partir da linguagem natural é responsabilidade do agente.
         return_series: Se True, retorna lista de valores por período.
     """
-    from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
-
+    # Resolve defaults antes da closure para evitar UnboundLocalError
     if data_method == "summary":
-        summary_type = summary_type or "Average"
-        summary_duration = summary_duration or "1h"
-        calculation_basis = calculation_basis or "TimeWeighted"
+        resolved_summary_type = summary_type or "Average"
+        resolved_summary_duration = summary_duration or "1h"
+        resolved_calculation_basis = calculation_basis or "TimeWeighted"
+    else:
+        resolved_summary_type = None
+        resolved_summary_duration = None
+        resolved_calculation_basis = None
 
-    result = await executar_estatistica_tags_service(
-        tags=tags,
-        operation=operation,
-        start_time=start_time,
-        end_time=end_time,
-        interval=interval,
-        max_count=max_count,
-        data_method=data_method,
-        summary_type=summary_type,
-        summary_duration=summary_duration,
-        calculation_basis=calculation_basis,
-        group_by=group_by or "1h",
-        return_series=return_series,
-    )
+    async def _inner():
+        from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
 
-    if result.get("status") in ("invalid_argument", "internal_error"):
-        error_code = result.get("error_code", "UNKNOWN")
-        message = result.get("output", "Erro interno inesperado.")
-        if result.get("status") == "internal_error":
-            message = "Erro interno inesperado. Tente novamente."
-        raise ToolError(f"[{error_code}] {message}")
+        from core.config import settings as mcp_settings
 
-    if result.get("status") in ("no_data", "insufficient_data"):
-        return json.dumps(result.get("tool_result", {}), ensure_ascii=False)
+        is_delivery_on = mcp_settings.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY
 
-    return result["output"]
+        # T013: fail-closed — série com flag false não retorna inline
+        output_mode = "series" if (group_by or return_series) else "scalar"
+        if output_mode == "series" and not is_delivery_on:
+            raise ToolError(
+                "[ARTIFACT_DELIVERY_DISABLED] "
+                "A entrega automática de artefatos está desabilitada. "
+                "Séries temporais não podem ser retornadas inline."
+            )
+
+        artifact_publisher = None
+        if is_delivery_on:
+            from mcp_server.services.delivery.drive_publisher import DefaultDrivePublisher
+            from mcp_server.services.delivery.report_builder import CsvReportBuilder
+            from mcp_server.services.delivery.manifest_builder import build_artifact_manifest
+            from mcp_server.services.delivery.contracts import (
+                ArtifactMetadata,
+                RequestSummary,
+            )
+            from mcp_server.services.delivery._filename import build_filename
+            from mcp_server.clients.google_drive_client import GoogleDriveClient
+
+            async def _artifact_publisher(artifact_data_list, summary):
+                all_rows = []
+                total_columns = ["Timestamp", "Tag", "Operation", "Value", "UnitsAbbreviation", "Quality"]
+                for series_items, meta in artifact_data_list:
+                    tag = meta.get("tag", "?")
+                    operation_name = meta.get("operation", "?")
+                    for item in series_items:
+                        all_rows.append([
+                            item.get("period_start", ""),
+                            tag,
+                            operation_name,
+                            item.get("value"),
+                            item.get("unit", ""),
+                            item.get("quality", ""),
+                        ])
+
+                builder = CsvReportBuilder(
+                    temp_dir=mcp_settings.MCP_ARTIFACT_TEMP_DIR,
+                    encoding=mcp_settings.MCP_ARTIFACT_CSV_ENCODING,
+                    delimiter=mcp_settings.MCP_ARTIFACT_CSV_DELIMITER,
+                )
+                path = builder.build_csv(
+                    columns=total_columns,
+                    rows=all_rows,
+                    max_rows=mcp_settings.MCP_ARTIFACT_MAX_ROWS,
+                    max_bytes=mcp_settings.MCP_ARTIFACT_MAX_BYTES,
+                    max_cell_bytes=32768,
+                )
+
+                file_bytes = path.read_bytes()
+                filename = build_filename(
+                    environment=mcp_settings.MCP_ARTIFACT_FILENAME_ENVIRONMENT,
+                    tool="tag_statistics",
+                    extension="csv",
+                )
+
+                client = GoogleDriveClient(
+                    credentials_path=mcp_settings.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE,
+                    folder_id=mcp_settings.GOOGLE_DRIVE_EXPORT_FOLDER_ID,
+                    timeout_seconds=mcp_settings.MCP_ARTIFACT_UPLOAD_TIMEOUT_SECONDS,
+                )
+                publisher = DefaultDrivePublisher(client)
+                uploaded = publisher.publish(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    mime_type="text/csv",
+                    app_properties={"source": "pi-chat", "tool": "tag_statistics"},
+                )
+                path.unlink(missing_ok=True)
+
+                artifact_meta = ArtifactMetadata(
+                    format="csv",
+                    filename=uploaded.name,
+                    mime_type=uploaded.mime_type,
+                    row_count=len(all_rows),
+                    column_count=len(total_columns),
+                    size_bytes=uploaded.size_bytes,
+                    view_url=uploaded.view_url,
+                    download_url=uploaded.download_url,
+                )
+
+                req_summary = RequestSummary(
+                    tool_name="tag_statistics",
+                    tags_requested=len(tags),
+                    tags_processed=len(artifact_data_list),
+                    start_time=start_time,
+                    end_time=end_time,
+                    operation=operation,
+                    group_by=str(group_by or ""),
+                    output_mode="series",
+                )
+
+                manifest = build_artifact_manifest(
+                    status="success",
+                    tool_name="tag_statistics",
+                    request_summary=req_summary,
+                    artifact_metadata=artifact_meta,
+                    max_manifest_bytes=mcp_settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES,
+                )
+                return manifest.to_dict()
+            artifact_publisher = _artifact_publisher
+
+        result = await executar_estatistica_tags_service(
+            tags=tags,
+            operation=operation,
+            start_time=start_time,
+            end_time=end_time,
+            interval=interval,
+            max_count=max_count,
+            data_method=data_method,
+            summary_type=resolved_summary_type,
+            summary_duration=resolved_summary_duration,
+            calculation_basis=resolved_calculation_basis,
+            group_by=group_by or "1h",
+            return_series=return_series,
+            drive_artifact_delivery=is_delivery_on,
+            artifact_publisher=artifact_publisher,
+        )
+
+        if result.get("status") in ("invalid_argument", "internal_error"):
+            error_code = result.get("error_code", "UNKNOWN")
+            message = result.get("output", "Erro interno inesperado.")
+            if result.get("status") == "internal_error":
+                message = "Erro interno inesperado. Tente novamente."
+            raise ToolError(f"[{error_code}] {message}")
+
+        if result.get("status") in ("no_data", "insufficient_data"):
+            return json.dumps(result.get("tool_result", {}), ensure_ascii=False)
+
+        if result.get("delivery") == "drive_artifact":
+            return result["tool_result"]
+
+        return result["output"]
+
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -202,23 +502,25 @@ async def tag_calculus(
         context_text: Pergunta original (opcional).
         max_count: Limite (somente 'recorded').
     """
-    from domain.analytics.services.math_tool_service import executar_calculo_historico_service
+    async def _inner():
+        from domain.analytics.services.math_tool_service import executar_calculo_historico_service
 
-    result = await executar_calculo_historico_service(
-        tags=tags,
-        operation=operation,
-        start_time=start_time,
-        end_time=end_time,
-        interval=interval,
-        time_unit=time_unit,
-        context_text=context_text or "",
-        max_count=max_count,
-        data_method=data_method,
-        summary_type=summary_type,
-        summary_duration=summary_duration,
-        calculation_basis=calculation_basis,
-    )
-    return result["output"]
+        result = await executar_calculo_historico_service(
+            tags=tags,
+            operation=operation,
+            start_time=start_time,
+            end_time=end_time,
+            interval=interval,
+            time_unit=time_unit,
+            context_text=context_text or "",
+            max_count=max_count,
+            data_method=data_method,
+            summary_type=summary_type,
+            summary_duration=summary_duration,
+            calculation_basis=calculation_basis,
+        )
+        return result["output"]
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -241,14 +543,16 @@ async def status_pims_tool(
         pergunta_usuario: Pergunta original do usuário (opcional).
         lookback_minutes: Janela em minutos (60=atual, 120=2h, 1440=hoje).
     """
-    from domain.pims_ops.services.status_pims_service import consultar_status_pims_service
+    async def _inner():
+        from domain.pims_ops.services.status_pims_service import consultar_status_pims_service
 
-    result = await consultar_status_pims_service(
-        user_message=pergunta_usuario or "",
-        lookback_minutes=lookback_minutes,
-        include_raw_response=False,
-    )
-    return result["output"]
+        result = await consultar_status_pims_service(
+            user_message=pergunta_usuario or "",
+            lookback_minutes=lookback_minutes,
+            include_raw_response=False,
+        )
+        return result["output"]
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -275,19 +579,21 @@ async def tag_attributes_tool(
                          'identity' | 'scaling' | 'interface' | 'security' | 'all'.
         attributes: Lista explícita de atributos (sobrepõe attribute_group).
     """
-    try:
-        from domain.pims.services.tag_attributes_service import (
-            get_tag_attributes,
-        )
+    async def _inner():
+        try:
+            from domain.pims.services.tag_attributes_service import (
+                get_tag_attributes,
+            )
 
-        result = await get_tag_attributes(
-            tag=tag,
-            attribute_group=attribute_group,
-            attributes=attributes,
-        )
-        return result["output"]
-    except ValueError as e:
-        return f"Erro: {e}"
+            result = await get_tag_attributes(
+                tag=tag,
+                attribute_group=attribute_group,
+                attributes=attributes,
+            )
+            return result["output"]
+        except ValueError as e:
+            return f"Erro: {e}"
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +602,7 @@ async def tag_attributes_tool(
 @mcp.tool
 async def search_pi_points(
     query: str,
-    max_count: int = 20,
+    max_count: int = 5,
     search_mode: str = "auto",
 ) -> str:
     """
@@ -307,19 +613,21 @@ async def search_pi_points(
 
     Args:
         query: Termo de busca (parte do nome, descrição, equipamento, etc.).
-        max_count: Máximo de resultados (default 20, máximo 100).
+        max_count: Máximo de resultados (default 5, máximo 100).
         search_mode: 'auto', 'name', 'description', 'query'.
     """
-    from domain.pims.services.search_points_service import (
-        search_pi_points as svc_search,
-    )
+    async def _inner():
+        from domain.pims.services.search_points_service import (
+            search_pi_points as svc_search,
+        )
 
-    result = await svc_search(
-        query=query,
-        max_count=max_count,
-        search_mode=search_mode,
-    )
-    return result["output"]
+        result = await svc_search(
+            query=query,
+            max_count=max_count,
+            search_mode=search_mode,
+        )
+        return result["output"]
+    return await _mcp_safe_tool(_inner)
 
 
 # ---------------------------------------------------------------------------
@@ -357,7 +665,14 @@ async def generate_test_artifact_tool(
     )
 
 if settings.ENABLE_TEST_ARTIFACT_TOOL:
-    mcp.tool(generate_test_artifact_tool)
+    async def _wrapped_ga(*args, **kwargs):
+        async def _inner():
+            return await generate_test_artifact_tool(*args, **kwargs)
+        return await _mcp_safe_tool(_inner)
+    # Preserve original docstring
+    _wrapped_ga.__doc__ = generate_test_artifact_tool.__doc__
+    # Register the wrapped version
+    mcp.tool(_wrapped_ga, name="generate_test_artifact_tool")
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +769,8 @@ if settings.ENABLE_DRIVE_CSV_EXPORT_TOOL:
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     from core.startup_checks import check_math_tool
+
+    settings.log_effective_config()
 
     logger.info(
         "Starting MCP Server on %s:%s (Math Tool: %s)",

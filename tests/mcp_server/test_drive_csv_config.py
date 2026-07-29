@@ -17,6 +17,7 @@ def _make_settings(**kwargs):
     defaults = dict(
         GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
         GRAFANA_BEARER_TOKEN="fake",
+        ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=False,
     )
     merged = {**defaults, **kwargs}
     return Settings(**merged)
@@ -30,7 +31,9 @@ def test_default_flag_false():
 
 def test_false_allows_missing_credential():
     """When flag is false, credential and folder can be missing."""
-    s = _make_settings(ENABLE_DRIVE_CSV_EXPORT_TOOL=False)
+    s = _make_settings(ENABLE_DRIVE_CSV_EXPORT_TOOL=False,
+                       GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE=None,
+                       GOOGLE_DRIVE_EXPORT_FOLDER_ID=None)
     assert s.GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE is None
     assert s.GOOGLE_DRIVE_EXPORT_FOLDER_ID is None
 

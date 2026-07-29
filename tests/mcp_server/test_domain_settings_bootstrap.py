@@ -21,7 +21,8 @@ print(f'REDIS={d.REDIS_URL}')
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True, text=True, timeout=10,
-            env={**os.environ, "ENABLE_DRIVE_CSV_EXPORT_TOOL": "false",
+            env={**os.environ, "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY": "false",
+                 "ENABLE_DRIVE_CSV_EXPORT_TOOL": "false",
                  "GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE": "",
                  "GOOGLE_DRIVE_EXPORT_FOLDER_ID": ""},
         )
@@ -35,7 +36,8 @@ print(f'REDIS={d.REDIS_URL}')
         sys.path.insert(0, ".")
         from core.config import Settings
         s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
-                     GRAFANA_BEARER_TOKEN="fake", ENABLE_DRIVE_CSV_EXPORT_TOOL=False)
+                     GRAFANA_BEARER_TOKEN="fake", ENABLE_DRIVE_CSV_EXPORT_TOOL=False,
+                     ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=False)
         assert hasattr(s, "REDIS_URL")
         assert hasattr(s, "PIMS_STATUS_LOKI_QUERY")
         assert hasattr(s, "PIMS_STATUS_LOOKBACK_MINUTES")
@@ -44,6 +46,7 @@ print(f'REDIS={d.REDIS_URL}')
     def test_mcp_imports_without_app_env(self):
         code = """
 import sys, os
+os.environ['ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY'] = 'false'
 os.environ['ENABLE_DRIVE_CSV_EXPORT_TOOL'] = 'false'
 os.environ['GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE'] = ''
 os.environ['GOOGLE_DRIVE_EXPORT_FOLDER_ID'] = ''

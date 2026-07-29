@@ -41,7 +41,13 @@ _ENABLED_SETTINGS = {
 async def test_tool_not_registered_when_disabled(mock_settings):
     mock_settings.ENABLE_DRIVE_CSV_EXPORT_TOOL = False
     mock_settings.ENABLE_TEST_ARTIFACT_TOOL = False
+    mock_settings.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY = False
     import importlib
+    from domain.core.config import _reset_domain_settings
+    try:
+        _reset_domain_settings(test_only=True)
+    except RuntimeError:
+        pass
     import mcp_server.server as server_mod
     importlib.reload(server_mod)
     mcp = server_mod.mcp
