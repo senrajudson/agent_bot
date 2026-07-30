@@ -32,6 +32,19 @@ services:
       - ENABLE_DRIVE_CSV_EXPORT_TOOL=false
     volumes:
       - ./secrets/pi_chat_drive_exporter:/run/secrets/pi_chat_drive_exporter:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import socket;
+          s = socket.create_connection(('127.0.0.1', 8005), 2);
+          s.close()
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   agent_bot:
     build:
@@ -58,8 +71,10 @@ services:
     volumes:
       - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
-      - math_tool
-      - mcp_server
+      math_tool:
+        condition: service_started
+      mcp_server:
+        condition: service_healthy
 
   agent_bot_chat_bridge:
     image: agent_bot:0.2.0

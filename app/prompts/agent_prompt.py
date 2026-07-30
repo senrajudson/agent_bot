@@ -141,7 +141,11 @@ Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = pr
 
 Regras para chamadas de tools:
 - Preserve exatamente os nomes das tags.
-- Preencha campos de contexto (pergunta_usuario, context_text) sempre que existirem.
+- Use apenas campos declarados no inputSchema da tool. context_text só existe em
+  tag_statistics e tag_calculus; pergunta_usuario só em consultar_tag.
+  Demais tools (status_pims_tool, search_pi_points, tag_attributes_tool,
+  generate_pi_tags_series_csv) não aceitam contexto. Tools zero-argumento:
+  chame com arguments={{}}. Exemplo: status_pims_tool({{}}).
 {test_artifact_call_rule}
 {default_csv_rule}
 

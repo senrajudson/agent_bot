@@ -18,7 +18,8 @@
 | 10 | máximo da tag X na última hora | `tag_statistics_tool` | Operacional |
 | 11 | calcule a integral da tag X | `tag_calculus_tool` | Operacional |
 | 12 | calcule a derivada da tag X | `tag_calculus_tool` | Operacional |
-| 13 | status do PIMS | `status_pims_tool` | Operacional |
+| 13 | status do PIMS | `status_pims_tool` (arguments={}) | Operacional |
+| 37 | saude do pims | `status_pims_tool` (arguments={}) | Operacional | 1 chamada |
 | 14 | o que significa compdev? | RAG/conceitual | Conceitual |
 | 15 | diferença entre exceção e compressão | RAG/conceitual | Conceitual |
 | 16 | 1ª search_pi_points retorna vazio, 2ª com query diferente retorna candidatos | 2 search_pi_points, resposta com candidatos | Política |

@@ -8,6 +8,7 @@ historical statistics, calculus and status checks.
 
 import json
 import logging
+import re
 from typing import Any
 
 from google.adk.agents import LlmAgent
@@ -33,6 +34,18 @@ from app.core.config import settings
 from app.prompts.agent_prompt import build_system_prompt
 from app.schemas.llm import LLMParams
 from app.agent.shared import RETRYABLE_ERRORS
+
+_TOOL_NAME_RE = re.compile(r"call\[([a-z_][a-z0-9_]{0,63})\]")
+
+
+def _extract_tool_name_from_error(msg: str) -> str | None:
+    match = _TOOL_NAME_RE.search(str(msg))
+    return match.group(1) if match else None
+
+
+def _is_sanitized_tool_name(name: str) -> bool:
+    return bool(re.fullmatch(r"^[a-z_][a-z0-9_]{0,63}$", str(name)))
+
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +198,23 @@ def _classify_error(error: Exception) -> str:
             "Tente novamente em instantes."
         )
 
+    if (
+        "ValidationError" in error_type
+        or "unexpected_keyword_argument" in error_msg
+        or "Extra inputs are not permitted" in error_msg
+        or "Field required" in error_msg
+    ):
+        tool_name = _extract_tool_name_from_error(error_msg)
+        if tool_name and _is_sanitized_tool_name(tool_name):
+            return (
+                f"Os argumentos enviados para a tool {tool_name} não correspondem "
+                "ao schema. Use somente os campos declarados."
+            )
+        return (
+            "Os argumentos enviados para a tool não correspondem ao schema. "
+            "Use somente os campos declarados."
+        )
+
     return f"Não consegui executar a consulta. Erro ({error_type}): {error_msg}"
 
 
@@ -199,6 +229,55 @@ def _detect_repeated_tool_calls(messages: list[dict[str, Any]]) -> bool:
             if counts[key] >= 3:
                 return True
     return False
+
+
+def _is_validation_error_response(response: Any) -> bool:
+    """Check if a tool response contains a Pydantic ValidationError."""
+    if response is None:
+        return False
+    text = str(response)
+    return any(kw in text.lower() for kw in (
+        "unexpected keyword argument",
+        "extra inputs are not permitted",
+        "validationerror",
+    ))
+
+
+def _detect_invalid_tool_arguments_loop(
+    messages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Detect repeated tool calls with ValidationError arguments.
+
+    Blocks on the 2nd consecutive invalid response for the same tool.
+    Allows one retry but blocks if the 2nd call also fails validation.
+    Returns dict with blocked, tool_name, and optional override output.
+    """
+    error_count: dict[str, int] = {}
+
+    for idx, msg in enumerate(messages):
+        # Check tool_responses for validation errors
+        for tr in msg.get("tool_responses") or []:
+            name = tr.get("name", "")
+            response = tr.get("response")
+            if not name:
+                continue
+            if not _is_validation_error_response(response):
+                continue
+            # This is a validation error response for this tool
+            count = error_count.get(name, 0)
+            if count >= 1:
+                # Second+ consecutive validation error for same tool
+                return {
+                    "blocked": True,
+                    "tool_name": name,
+                    "output": (
+                        f"A tool {name} não aceita os argumentos enviados. "
+                        "Verifique o schema."
+                    ),
+                }
+            error_count[name] = count + 1
+
+    return {"blocked": False, "tool_name": None, "output": None}
 
 
 _ENVELOPE_TYPE = "agent_artifact_result"
@@ -731,6 +810,20 @@ async def _run_agent_core(
             "messages": messages,
             "output": search_decision["final_response_override"],
             "error": "search_loop_blocked",
+            "attachments": [],
+        }
+
+    # Detect invalid tool arguments loop (max 2 validation errors for same tool)
+    invalid_args = _detect_invalid_tool_arguments_loop(messages)
+    if invalid_args["blocked"]:
+        logger.warning(
+            "invalid_tool_arguments tool=%s blocked=true",
+            invalid_args["tool_name"],
+        )
+        return {
+            "messages": messages,
+            "output": invalid_args["output"],
+            "error": "invalid_tool_arguments_blocked",
             "attachments": [],
         }
 

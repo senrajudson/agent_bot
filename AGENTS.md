@@ -688,6 +688,8 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 **Sanitização**: erros retornam uma de 3 constantes (`"Falha de rede ao consultar /dataservers"`, `"PI Web API retornou status inválido"`, `"PI Web API indisponível"`). Nenhuma URL, IP, WebId, credencial ou stack trace é exposta.
 
+**Schema**: `inputSchema` sem propriedades. A tool não aceita argumentos. Chamada deve ser `status_pims_tool({})`. O agente invocou erroneamente com `context_text` no trace `9b69c18285785fb773547d7557c713df` (jul/2026), causando `ValidationError` e loop de retries. A correção removeu a regra genérica "sempre que existirem" do system prompt, substituída por validação schema-first e bloqueio de repetição.
+
 **Logs do servidor** registram latência e código HTTP interno, sem vazar para o LLM.
 
 ### 11.5 search_pi_points
@@ -1099,15 +1101,13 @@ poetry run uvicorn app.main:app --reload --port 8002
 ### Rodar o MCP Server (porta 8003 local)
 
 ```bash
-poetry --directory mcp_server run python server.py
-# ou, a partir da raiz do repo (recomendado)
-poetry --directory mcp_server run python mcp_server/server.py
+poetry --directory mcp_server run python -m mcp_server.server
 ```
 
 > **Nota**: o pacote `domain/` é uma *path dependency* compartilhada. Em Docker ele é
-> copiado para `/app/domain/` dentro do WORKDIR, mas em local o Poetry não injeta o
-> repositório raiz no `sys.path` automaticamente. Por isso o `server.py` adiciona o
-> diretório pai ao `sys.path` ao iniciar.
+> copiado para `/app/domain/` dentro do WORKDIR.
+> A execução é feita como módulo (`python -m mcp_server.server`) em vez de script direto
+> para preservar a resolução de imports absolutos `from mcp_server.*`.
 
 ### Rodar o Math Tool (porta 8001)
 
@@ -1320,7 +1320,8 @@ pytest -m integration                                 # Integração (requer Doc
 | OCR falhando | Validar `image_base64` não-vazio e `mime_type` suportado (png/jpeg/webp) |
 | Phoenix não aparece | `PHOENIX_ENABLED=true` + endpoint acessível; **atenção**: o SpanExporter custom DEVE usar `replace_default_processor=False` |
 | Math Tool timeout | Verificar `MATH_TOOL_BASE_URL` e `MATH_TOOL_TIMEOUT_SECONDS` (default 120s) |
-| MCP server inacessível | Verificar `MCP_SERVER_URL` (porta 8005 Docker / 8015 local default) e se `mcp_server` está rodando |
+| MCP server inacessível / crash-loop | Verificar se o container `mcp_server` está `Up` (`docker ps`). Se estiver `Restarting`, checar logs com `docker logs mcp_server`: `ModuleNotFoundError: No module named 'mcp_server'` indica que o Dockerfile achatou o pacote. **Solução**: `COPY mcp_server/ /app/mcp_server/` em vez de `COPY mcp_server/ /app/`. Rebuild com `docker compose build --no-cache mcp_server`. |
+| MCP server `ModuleNotFoundError: No module named 'mcp_server'` | Causado pelo layout achatado do Dockerfile (`COPY mcp_server/ /app/`). O código espera `/app/mcp_server/...` mas o conteúdo foi copiado diretamente para `/app/`. **Correção**: alterar para `COPY mcp_server/ /app/mcp_server/` e `CMD ["python", "-m", "mcp_server.server"]`. A execução como módulo preserva os imports `from mcp_server.*`. |
 | Tokens inflados no Phoenix | Confirmar que `phoenix.py` tem `_TokenDedupSpanExporter` + `replace_default_processor=False` |
 | Bridge não recebe mensagens | Verificar credenciais GCP, `GOOGLE_CHAT_SUBSCRIPTION`, `secrets/google_chat/service-account.json` |
 | `MAX_AGENT_STEPS=8` atingido | Reformular pergunta; pode indicar prompt vago ou tool com erro |
@@ -1345,6 +1346,7 @@ pytest -m integration                                 # Integração (requer Doc
 | `search_pi_points` retorna `[DISABLED]` | A flag `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND` não habilita a tool — a tool está sempre disponível. Verificar log de startup para `strict_and` status. |
 | Rollout: ativar strict AND | 1. Testar em QA com `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true`. 2. Rodar `poetry run pytest tests/unit/test_search_points_service.py -v` (183 testes). 3. Rodar smoke test no PI real (query "velocidade rb2" deve retornar LFS_RB2_VELOPROC no topo). 4. Validar 1 semana de logs. 5. Ativar em produção (flag=true + restart mcp_server). 6. Nenhuma reingestão de RAG necessária. |
 | Rollback: desativar strict AND | `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` + restart mcp_server. Verificar log: `search_pi_points: STRICT_AND DISABLED`. Caminho legado intacto, sem novo deploy. |
+| LLM envia `context_text` para tool zero-argumento | **Causa raiz**: regra genérica no system prompt (`app/prompts/agent_prompt.py:144`) instruía "Preencha campos de contexto (pergunta_usuario, context_text) sempre que existirem." O LLM interpretava que toda tool recebe `context_text`, mesmo `status_pims_tool` que não tem parâmetros. **Correção (jul/2026)**: regra substituída por orientação schema-first: "use apenas campos do inputSchema exposto". `INVALID_TOOL_ARGUMENTS` bloqueia após 2 tentativas inválidas. Traço: `9b69c18285785fb773547d7557c713df`. |
 
 ---
 
@@ -1891,7 +1893,7 @@ O `orchestrator.py` mantém stubs deprecated que usam `state: dict` para compati
 | Aspecto | Local (dev) | QA (Poetry) | PRD (Docker) |
 |---|---|---|---|
 | **app** | `uvicorn app.main:app --port 8002` (default `Settings.API_PORT`) | `uvicorn app.main:app --port 8002` | Container `agent_bot` (8002) |
-| **mcp_server** | `python mcp_server/server.py` (8015) | `python mcp_server/server.py` (8015) | Container `mcp_server` (8005) |
+| **mcp_server** | `python -m mcp_server.server` (8015) | `python -m mcp_server.server` (8015) | Container `mcp_server` (8005) |
 | **math_tool** | `cd calc && uvicorn app.main:app --port 8001` | `cd calc && uvicorn app.main:app --port 8001` | Container `math_tool` (8001) |
 | **MCP_SERVER_URL** | `http://localhost:8015/mcp` | `http://localhost:8015/mcp` | `http://mcp_server:8005/mcp` |
 | **MATH_TOOL_BASE_URL** | `http://10.247.179.197:8001` (via .env) | `http://10.247.179.197:8001` (via .env) | `http://math_tool:8001` (docker-compose) |

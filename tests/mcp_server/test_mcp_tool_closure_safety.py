@@ -132,3 +132,24 @@ class TestClosureSafety:
         ):
             result = await status_pims_tool.run(arguments={})  # type: ignore[attr-defined]
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_status_pims_tool_rejects_unknown_field(self):
+        """Schema must reject unknown arguments like context_text.
+
+        Domain settings are configured by server.py import (via conftest
+        auto-use fixture). Pydantic validation error occurs before any
+        service call, so domain settings are irrelevant for this test.
+        """
+        from mcp_server.server import status_pims_tool
+
+        with pytest.raises((Exception,)) as exc_info:
+            await status_pims_tool.run(arguments={"context_text": "x"})  # type: ignore[attr-defined]
+
+        error_text = str(exc_info.value).lower()
+        assert any(kw in error_text for kw in (
+            "unexpected keyword argument",
+            "extra inputs are not permitted",
+            "validationerror",
+            "toolerror",
+        )), f"Unexpected error: {exc_info.value}"

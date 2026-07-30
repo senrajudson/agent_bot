@@ -11,8 +11,8 @@ COPY mcp_server/pyproject.toml /app/pyproject.toml
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --only=main --no-root
 
-COPY mcp_server/ /app/
+COPY mcp_server/ /app/mcp_server/
 
 EXPOSE 8005
 
-CMD ["python", "server.py"]
+CMD ["python", "-m", "mcp_server.server"]

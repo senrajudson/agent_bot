@@ -26,6 +26,7 @@ MATRIX = [
     ("calcule a integral da tag X", "tag_calculus_tool"),
     ("calcule a derivada da tag X", "tag_calculus_tool"),
     ("status do PIMS", "status_pims_tool"),
+    ("saude do pims", "status_pims_tool"),
     ("o que significa compdev?", None),  # conceptual — not a tool
     ("diferença entre exceção e compressão", None),  # conceptual
 ]

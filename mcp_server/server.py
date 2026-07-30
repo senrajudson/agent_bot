@@ -11,9 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
-_HERE = Path(__file__).parent
-sys.path.insert(0, str(_HERE))
-sys.path.insert(0, str(_HERE.parent))
+sys.path.insert(0, str(Path(__file__).parent))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,7 +57,9 @@ mcp = FastMCP(
         "Desambiguação: estatística simples → tag_statistics_tool; "
         "integral/derivada explícita → tag_calculus_tool. "
         "Valor atual → consultar_tag; atributos de configuração → tag_attributes_tool. "
-        "Política: search_pi_points no máximo 2 vezes por turno; 2ª só com query diferente e se 1ª foi fraca; 3ª bloqueada."
+        "Política: search_pi_points no máximo 2 vezes por turno; 2ª só com query diferente e se 1ª foi fraca; 3ª bloqueada. "
+        "Schema-first: use apenas campos do inputSchema de cada tool. "
+        "status_pims_tool é zero-argumento; chame com arguments={}."
     ),
 )
 
@@ -579,6 +579,9 @@ async def status_pims_tool() -> str:
     Retorna JSON compacto com available (bool), latency_ms (int),
     endpoint ("/dataservers"), error (string ou null) e
     latency_classification ("baixa"|"alta"|"indisponivel").
+
+    Parâmetros: nenhum.
+    Chamada: status_pims_tool({}).
     """
     async def _inner():
         from domain.pims_ops.services.status_pims_service import consultar_health_pi_web_api_service

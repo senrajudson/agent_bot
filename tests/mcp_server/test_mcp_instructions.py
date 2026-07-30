@@ -51,3 +51,11 @@ def test_instructions_has_disambiguation():
     # Check for some disambiguation keyword
     has_desamb = "Desambiguação" in instructions or "dúvida" in instructions
     assert has_desamb, "Instructions missing disambiguation rule"
+
+
+def test_instructions_mentions_schema_first():
+    mcp = _import_mcp()
+    instructions = mcp.instructions
+    assert "inputSchema" in instructions or "Schema-first" in instructions, (
+        "Instructions missing schema-first rule"
+    )

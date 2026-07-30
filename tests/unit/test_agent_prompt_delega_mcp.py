@@ -124,3 +124,19 @@ def test_prompt_drive_policy_does_not_mention_download_url():
 def test_prompt_drive_policy_single_link():
     prompt = get_prompt()
     assert "link de" in prompt and "visualização" in prompt
+
+
+def test_prompt_contains_schema_first_rule():
+    prompt = get_prompt()
+    assert "inputSchema" in prompt
+
+
+def test_prompt_no_generic_context_rule():
+    prompt = get_prompt()
+    assert "sempre que existirem" not in prompt
+
+
+def test_prompt_status_pims_no_args_example():
+    prompt = get_prompt()
+    assert "status_pims_tool" in prompt
+    assert "arguments={}" in prompt

@@ -27,7 +27,7 @@ Quando receber `delivery: drive_artifact`:
 | Integral, derivada, taxa de variação, área sob curva                                                                 | Cálculo temporal explícito | `tag_calculus_tool`   |
 | Compressão, exceção, compdev, excdev, archiving, scan, pointsource, location, atributos internos de uma tag PI       | Atributos de PI Point      | `tag_attributes_tool` |
 | Valores minuto a minuto, série interpolada, valores brutos recorded, CSV com valores                                | Série temporal sem agregação | `generate_pi_tags_series_csv` |
-| Disponibilidade da PI Web API (/dataservers)                                                                          | Health check               | `status_pims_tool`    |
+| Disponibilidade da PI Web API (/dataservers), saúde do PIMS                                                          | Health check               | `status_pims_tool` (arguments={}) |
 
 ## Descoberta de tags
 
