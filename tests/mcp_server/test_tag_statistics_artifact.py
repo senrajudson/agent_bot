@@ -28,8 +28,6 @@ def _ensure_domain_settings():
         PI_SERVER_NAME="PIMS",
         MATH_TOOL_BASE_URL="http://fake",
         MATH_TOOL_TIMEOUT_SECONDS=10,
-        GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
-        GRAFANA_BEARER_TOKEN="fake",
         REDIS_URL="redis://fake",
     ))
     _DOMAIN_CONFIGURED = True

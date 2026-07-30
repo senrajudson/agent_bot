@@ -38,12 +38,6 @@ class Settings(BaseSettings):
     PI_WEB_API_PASSWORD: str | None = None
     PI_WEB_API_VERIFY_SSL: bool = False
 
-    GRAFANA_LOKI_QUERY_RANGE_URL: str
-    GRAFANA_BEARER_TOKEN: str = "SEU_TOKEN_DO_GRAFANA"
-    PIMS_STATUS_LOKI_QUERY: str = '{job="zabbix_proxy"}'
-    PIMS_STATUS_LOOKBACK_MINUTES: int = 20
-    PIMS_STATUS_LIMIT: int = 5000
-
     PHOENIX_ENABLED: bool = False
     PHOENIX_PROJECT_NAME: str = "pi-chat-api"
     PHOENIX_COLLECTOR_ENDPOINT: str = "http://localhost:6006/v1/traces"
@@ -108,11 +102,6 @@ class Settings(BaseSettings):
             PI_WEB_API_VERIFY_SSL=self.PI_WEB_API_VERIFY_SSL,
             MATH_TOOL_BASE_URL=self.MATH_TOOL_BASE_URL,
             MATH_TOOL_TIMEOUT_SECONDS=self.MATH_TOOL_TIMEOUT_SECONDS,
-            GRAFANA_LOKI_QUERY_RANGE_URL=self.GRAFANA_LOKI_QUERY_RANGE_URL,
-            GRAFANA_BEARER_TOKEN=self.GRAFANA_BEARER_TOKEN,
-            PIMS_STATUS_LOKI_QUERY=self.PIMS_STATUS_LOKI_QUERY,
-            PIMS_STATUS_LOOKBACK_MINUTES=self.PIMS_STATUS_LOOKBACK_MINUTES,
-            PIMS_STATUS_LIMIT=self.PIMS_STATUS_LIMIT,
             REDIS_URL=self.REDIS_URL,
         )
 

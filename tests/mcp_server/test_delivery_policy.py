@@ -72,16 +72,6 @@ class TestConsultarTag:
         assert d.mode == DeliveryMode.DRIVE_ARTIFACT
 
 
-class TestStatusPimsTool:
-    def test_veredito_inline(self, policy):
-        d = policy.decide(tool_name="status_pims_tool")
-        assert d.mode == DeliveryMode.INLINE
-
-    def test_full_logs_drive_artifact(self, policy):
-        d = policy.decide(tool_name="status_pims_tool", operation="logs_completos")
-        assert d.mode == DeliveryMode.DRIVE_ARTIFACT
-
-
 class TestSearchPiPoints:
     def test_inline(self, policy):
         d = policy.decide(tool_name="search_pi_points")

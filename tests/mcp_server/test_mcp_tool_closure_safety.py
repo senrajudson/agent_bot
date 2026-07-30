@@ -32,8 +32,6 @@ def _ensure_domain_settings():
         PI_SERVER_NAME="PIMS",
         MATH_TOOL_BASE_URL="http://fake",
         MATH_TOOL_TIMEOUT_SECONDS=10,
-        GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
-        GRAFANA_BEARER_TOKEN="fake",
         REDIS_URL="redis://fake",
     ))
     _DOMAIN_CONFIGURED = True
@@ -129,8 +127,8 @@ class TestClosureSafety:
         from mcp_server.server import status_pims_tool
 
         with patch(
-            "domain.pims_ops.services.status_pims_service.consultar_status_pims_service",
-            AsyncMock(return_value={"ok": True, "output": "status ok"}),
+            "domain.pims_ops.services.status_pims_service.consultar_health_pi_web_api_service",
+            AsyncMock(return_value='{"available":true,"latency_ms":0,"endpoint":"/dataservers","error":null}'),
         ):
             result = await status_pims_tool.run(arguments={})  # type: ignore[attr-defined]
         assert result is not None

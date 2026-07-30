@@ -13,7 +13,6 @@ from domain.core.integration_settings import DomainIntegrationSettings
 _FAKE_SETTINGS = DomainIntegrationSettings(
     PI_WEB_API_BASE_URL="http://fake.test/piwebapi",
     MATH_TOOL_BASE_URL="http://fake.test:8001",
-    GRAFANA_LOKI_QUERY_RANGE_URL="http://fake.test/loki",
 )
 
 

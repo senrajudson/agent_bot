@@ -44,7 +44,7 @@ O PI Agent utiliza **6 tools principais** + **2 opcionais**, todas expostas via 
 | 3 | `tag_attributes_tool` | Atributos de configuração (compressão, scan, etc.) | PI Web API `/points/{webId}/attributes` | tag → atributos cadastrais |
 | 4 | `tag_statistics` | Estatísticas históricas (média, max, min, consumo) | PI Web API `/streams/{webId}/summary` + Math Tool `/stats` | tags + período → valor estatístico ou série temporal |
 | 5 | `tag_calculus` | Integral/derivada temporal | PI Web API streams + Math Tool `/calculus` | tags + período + operação → resultado |
-| 6 | `status_pims_tool` | Status operacional do PIMS | Grafana/Loki + PI Web API `/dataservers` | pergunta → veredito (EXCELENTE a OFFLINE) |
+| 6 | `status_pims_tool` | Health check da PI Web API | PiWebApiClient.get_dataservers() | () → JSON (available, latency_ms, endpoint, error) |
 
 ### Tools Opcionais (feature flags)
 
@@ -64,7 +64,7 @@ PI Agent (ADK ReAct)
               ├─→ tag_attributes_tool() → PI Web API / GET /points/{webId}/attributes
               ├─→ tag_statistics()      → PI Web API streams + Math Tool /stats
               ├─→ tag_calculus()        → PI Web API streams + Math Tool /calculus
-              ├─→ status_pims_tool()   → Grafana/Loki + PI Web API /dataservers
+              ├─→ status_pims_tool()   → PiWebApiClient.get_dataservers()
               ├─→ generate_test_artifact_tool() → upload API
               └─→ export_csv_to_drive_tool()    → Google Drive API
 ```

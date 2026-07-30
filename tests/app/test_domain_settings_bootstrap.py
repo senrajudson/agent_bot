@@ -9,7 +9,7 @@ import pytest
 class TestAppDomainBootstrap:
     def test_app_settings_produces_domain_settings(self):
         from app.core.config import Settings
-        s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL="http://fake", GRAFANA_BEARER_TOKEN="fake")
+        s = Settings(_env_file=None)
         d = s.to_domain_integration_settings()
         assert d.PI_WEB_API_BASE_URL == "http://10.247.224.39/piwebapi"
         assert d.MATH_TOOL_BASE_URL == "http://math_tool:8001"
@@ -20,7 +20,7 @@ class TestAppDomainBootstrap:
 import sys
 sys.path.insert(0, '.')
 from app.core.config import Settings
-s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL='http://fake', GRAFANA_BEARER_TOKEN='fake')
+s = Settings(_env_file=None)
 d = s.to_domain_integration_settings()
 print(d.PI_WEB_API_BASE_URL)
 """

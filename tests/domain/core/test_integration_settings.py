@@ -15,9 +15,7 @@ class TestDomainIntegrationSettings:
             "PI_WEB_API_BASE_URL", "PI_SERVER_NAME", "PI_WEB_API_USERNAME",
             "PI_WEB_API_PASSWORD", "PI_WEB_API_VERIFY_SSL",
             "MATH_TOOL_BASE_URL", "MATH_TOOL_TIMEOUT_SECONDS",
-            "GRAFANA_LOKI_QUERY_RANGE_URL", "GRAFANA_BEARER_TOKEN",
-            "PIMS_STATUS_LOKI_QUERY", "PIMS_STATUS_LOOKBACK_MINUTES",
-            "PIMS_STATUS_LIMIT", "REDIS_URL",
+            "REDIS_URL",
         }
         assert fields == expected, f"Fields mismatch: {fields ^ expected}"
 
@@ -30,11 +28,6 @@ class TestDomainIntegrationSettings:
         assert s.PI_WEB_API_VERIFY_SSL is False
         assert s.MATH_TOOL_BASE_URL == "http://math_tool:8001"
         assert s.MATH_TOOL_TIMEOUT_SECONDS == 120.0
-        assert s.GRAFANA_LOKI_QUERY_RANGE_URL == ""
-        assert s.GRAFANA_BEARER_TOKEN == ""
-        assert s.PIMS_STATUS_LOKI_QUERY == '{job="zabbix_proxy"}'
-        assert s.PIMS_STATUS_LOOKBACK_MINUTES == 20
-        assert s.PIMS_STATUS_LIMIT == 5000
         assert s.REDIS_URL == "redis://127.0.0.1:6379/2"
 
     def test_frozen(self):
@@ -45,19 +38,15 @@ class TestDomainIntegrationSettings:
     def test_secrets_protected_in_repr(self):
         s = DomainIntegrationSettings(
             PI_WEB_API_PASSWORD="secret123",
-            GRAFANA_BEARER_TOKEN="tok456",
         )
         r = repr(s)
         assert "secret123" not in r
-        assert "tok456" not in r
 
     def test_secrets_accessible_via_attribute(self):
         s = DomainIntegrationSettings(
             PI_WEB_API_PASSWORD="secret123",
-            GRAFANA_BEARER_TOKEN="tok456",
         )
         assert s.PI_WEB_API_PASSWORD == "secret123"
-        assert s.GRAFANA_BEARER_TOKEN == "tok456"
 
     def test_not_BaseSettings(self):
         from pydantic import BaseModel
@@ -86,7 +75,7 @@ from domain.core.integration_settings import DomainIntegrationSettings
 s = DomainIntegrationSettings()
 print(s.PI_WEB_API_BASE_URL)
 """
-        env = {k: v for k, v in os.environ.items() if "PI_" not in k and "GRAFANA_" not in k}
+        env = {k: v for k, v in os.environ.items() if "PI_" not in k}
         result = subprocess.run(
             [sys.executable, "-c", code],
             capture_output=True, text=True, timeout=10, env=env,

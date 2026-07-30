@@ -107,10 +107,7 @@ def test_public_signatures_unchanged():
             "time_unit: str = 'none', context_text: str | None = None, "
             "max_count: int = 200000) -> str"
         ),
-        "status_pims_tool": (
-            "(pergunta_usuario: str | None = None, "
-            "lookback_minutes: int | None = None) -> str"
-        ),
+        "status_pims_tool": "() -> str",
     }
 
     for name in _TOOL_NAMES:

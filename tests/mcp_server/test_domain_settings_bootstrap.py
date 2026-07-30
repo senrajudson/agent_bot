@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, 'mcp_server')
 sys.path.insert(0, '.')
 from core.config import Settings
-s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL='http://fake', GRAFANA_BEARER_TOKEN='fake', ENABLE_DRIVE_CSV_EXPORT_TOOL=False)
+s = Settings(_env_file=None, ENABLE_DRIVE_CSV_EXPORT_TOOL=False)
 d = s.to_domain_integration_settings()
 print(f'PI={d.PI_WEB_API_BASE_URL}')
 print(f'REDIS={d.REDIS_URL}')
@@ -30,18 +30,14 @@ print(f'REDIS={d.REDIS_URL}')
         assert "PI=http://10.247.224.39/piwebapi" in result.stdout
         assert "REDIS=redis://127.0.0.1:6379/2" in result.stdout
 
-    def test_mcp_settings_has_redis_and_pims_status(self):
+    def test_mcp_settings_has_redis(self):
         import sys
         sys.path.insert(0, "mcp_server")
         sys.path.insert(0, ".")
         from core.config import Settings
-        s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
-                     GRAFANA_BEARER_TOKEN="fake", ENABLE_DRIVE_CSV_EXPORT_TOOL=False,
+        s = Settings(_env_file=None, ENABLE_DRIVE_CSV_EXPORT_TOOL=False,
                      ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=False)
         assert hasattr(s, "REDIS_URL")
-        assert hasattr(s, "PIMS_STATUS_LOKI_QUERY")
-        assert hasattr(s, "PIMS_STATUS_LOOKBACK_MINUTES")
-        assert hasattr(s, "PIMS_STATUS_LIMIT")
 
     def test_mcp_imports_without_app_env(self):
         code = """
@@ -53,7 +49,7 @@ os.environ['GOOGLE_DRIVE_EXPORT_FOLDER_ID'] = ''
 sys.path.insert(0, 'mcp_server')
 sys.path.insert(0, '.')
 from core.config import Settings
-s = Settings(_env_file=None, GRAFANA_LOKI_QUERY_RANGE_URL='http://fake', GRAFANA_BEARER_TOKEN='fake')
+s = Settings(_env_file=None)
 print('OK')
 """
         result = subprocess.run(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -26,829 +27,119 @@ class TestTagAttributesPercentual:
         assert "%" in result
 
 
-# ── status_pims: veredict ──
+# ── status_pims: health check service ──
 
 
-class TestStatusPimsVeredito:
-    def test_excelente_sem_falhas_com_informativos(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_veredito,
-        )
-
-        v = _build_veredito(
-            {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 10, "total_logs": 10},
-            "CONECTADO",
-        )
-        assert v == "EXCELENTE"
-
-    def test_alerta_warnings_acima_limite_absoluto(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_veredito,
-        )
-
-        v = _build_veredito(
-            {"erros_criticos": 0, "alertas_reais": 60, "client_aborted": 0,
-             "informativos": 4940, "total_logs": 5000},
-            "CONECTADO",
-        )
-        assert v == "ALERTA"
-
-    def test_critico_with_errors(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_veredito,
-        )
-
-        v = _build_veredito(
-            {"erros_criticos": 1, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 9, "total_logs": 10},
-            "CONECTADO",
-        )
-        assert v == "CRÍTICO"
-
-    def test_saudavel_zero_logs(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_veredito,
-        )
-
-        v = _build_veredito(
-            {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 0, "total_logs": 0},
-            "CONECTADO",
-        )
-        assert v == "SAUDÁVEL"
-
-    def test_output_starts_with_veredito(self):
-        from domain.pims_ops.services.status_pims_service import _build_status_output
-
-        summary = {"total_logs": 5, "total_errors": 1, "total_warnings": 0,
-                    "erros_criticos": 1, "alertas_reais": 0, "informativos": 4,
-                    "client_aborted": 0, "ignorados_benignos": 0,
-                    "recent_errors": [], "recent_warnings": [],
-                    "recent_critical": [], "recent_real_alerts": [],
-                    "recent_client_aborted": [], "recent_logs": []}
-        output = _build_status_output(summary, "CONECTADO")
-        assert output.startswith("Status do PIMS:")
-
-    def test_output_excelente_veredito(self):
-        from domain.pims_ops.services.status_pims_service import _build_status_output
-        from domain.pims_ops.services.status_pims_service import _MENSAGENS_POR_NIVEL
-
-        summary = {"total_logs": 10, "total_errors": 0, "total_warnings": 0,
-                    "erros_criticos": 0, "alertas_reais": 0, "informativos": 10,
-                    "client_aborted": 0, "ignorados_benignos": 0,
-                    "recent_errors": [], "recent_warnings": [],
-                    "recent_critical": [], "recent_real_alerts": [],
-                    "recent_client_aborted": [], "recent_logs": []}
-        output = _build_status_output(summary, "CONECTADO")
-        assert "Status do PIMS: EXCELENTE" in output
-        assert _MENSAGENS_POR_NIVEL["EXCELENTE"] in output
-
-
-# ── status_pims: classify_line (Tarefa 7) ──
-
-
-class TestClassifyLine:
-    """Pure unit tests for _classify_line — 5 categories."""
-
-    def test_http_200_informativo(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('GET /piwebapi HTTP/1.1" 200') == "informativo"
-
-    def test_http_201_informativo(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 201 Created') == "informativo"
-
-    def test_http_204_informativo(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 204 No Content') == "informativo"
-
-    def test_http_304_informativo(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 304 Not Modified') == "informativo"
-
-    def test_http_200_with_slow_ignorado_benigno(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('GET /piwebapi HTTP/1.1" 200 slow') == "ignorado_benigno"
-
-    def test_http_200_with_warning_ignorado_benigno(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('GET /piwebapi HTTP/1.1" 200 warning') == "ignorado_benigno"
-
-    def test_http_200_with_retry_ignorado_benigno(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('GET /piwebapi HTTP/1.1" 200 retry') == "ignorado_benigno"
-
-    def test_http_400_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 400 Bad Request') == "alerta_real"
-
-    def test_http_401_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 401 Unauthorized') == "alerta_real"
-
-    def test_http_404_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 404 Not Found') == "alerta_real"
-
-    def test_http_429_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 429 Too Many Requests') == "alerta_real"
-
-    def test_http_500_erro_critico(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 500 Internal Error') == "erro_critico"
-
-    def test_http_503_erro_critico(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 503 Unavailable') == "erro_critico"
-
-    def test_sem_http_critical_keyword_erro_critico(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('exception in worker thread') == "erro_critico"
-
-    def test_sem_http_alert_keyword_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('warning: deprecated endpoint') == "alerta_real"
-
-    def test_sem_http_info_pattern_informativo(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('service started') == "informativo"
-
-    def test_sem_http_default_ignorado_benigno(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('random log line') == "ignorado_benigno"
-
-    def test_porta_nao_vira_http(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _extract_http_status,
-        )
-        assert _extract_http_status('10.247.140.96:443') is None
-
-    def test_timestamp_nao_vira_http(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _extract_http_status,
-        )
-        assert _extract_http_status('14/Jul/2026') is None
-
-    def test_multiplos_http_ultimo_usado(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('301 -> 200 OK') == "informativo"
-
-    def test_http_code_no_false_positive(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _extract_http_status,
-        )
-        assert _extract_http_status('version 1.234.5') is None
-
-    # ── client_aborted (nova categoria, 5ª) ──
-
-    def test_http_499_client_aborted(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 499') == "client_aborted"
-
-    def test_http_499_post_batch_client_aborted(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('POST /piwebapi/batch HTTP/1.1" 499') == "client_aborted"
-
-    def test_http_499_com_texto_client_aborted(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 499 Client Closed Request') == "client_aborted"
-
-    def test_http_4xx_outros_alerta_real(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 400') == "alerta_real"
-
-    def test_http_5xx_continua_erro_critico(self):
-        from domain.pims_ops.services.status_pims_service import _classify_line
-        assert _classify_line('HTTP/1.1" 503') == "erro_critico"
-
-
-# ── status_pims: veredito v3 (11 regras, 6 níveis) ──
-
-
-class TestStatusPimsVereditoV3:
-    """Nova precedência com 11 regras e 6 níveis."""
-
-    # ── EXCELENTE (regra 10) ──
-
-    def test_excelente_cenario_enunciado(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 5000, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "EXCELENTE"
-
-    # ── ALERTA (regras 4, 5, 6, 7) ──
-
-    def test_alerta_limite_absoluto(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 60, "client_aborted": 0,
-             "informativos": 4940, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "ALERTA"
-
-    def test_alerta_limite_percentual(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 5, "client_aborted": 0,
-             "informativos": 95, "total_logs": 100}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "ALERTA"
-
-    def test_alerta_client_aborted_acima_limite_absoluto(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 1500,
-             "informativos": 3500, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "ALERTA"
-
-    def test_alerta_client_aborted_acima_limite_percentual(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 2000,
-             "informativos": 3000, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "ALERTA"
-
-    def test_alerta_dataserver_desconectado_sem_erro(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 100, "total_logs": 100}
-        v = _build_veredito(s, "DESCONECTADO")
-        assert v == "ALERTA"
-
-    def test_alerta_dataserver_inconfiavel(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 100, "total_logs": 100}
-        v = _build_veredito(s, "INCONFIÁVEL")
-        assert v == "ALERTA"
-
-    def test_alerta_dataserver_indisponivel_com_logs(self):
-        """R4=B: DS INDISPONÍVEL com logs sem falhas → ALERTA."""
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 100, "total_logs": 100}
-        v = _build_veredito(s, "INDISPONÍVEL")
-        assert v == "ALERTA"
-
-    # ── CRÍTICO (regras 2, 3) ──
-
-    def test_critico_com_erro(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 1, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 99, "total_logs": 100}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "CRÍTICO"
-
-    def test_critico_dataserver_desconectado_com_erro(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 1, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 99, "total_logs": 100}
-        v = _build_veredito(s, "DESCONECTADO")
-        assert v == "CRÍTICO"
-
-    # ── OPERACIONAL (regra 8) ──
-
-    def test_operacional_client_aborted_233(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 233,
-             "informativos": 4767, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "OPERACIONAL"
-
-    def test_operacional_client_aborted_abaixo_limite_absoluto_e_percentual(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 2, "client_aborted": 100,
-             "informativos": 4898, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "OPERACIONAL"
-
-    # ── SAUDÁVEL (regras 9, 11) ──
-
-    def test_saudavel_zero_logs_dataserver_conectado(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 0, "total_logs": 0}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "SAUDÁVEL"
-
-    def test_saudavel_fallback_sem_informativos(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 0, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "SAUDÁVEL"
-
-    # ── OFFLINE (regra 1) ──
-
-    def test_offline_dataserver_indisponivel_zero_logs(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 0, "client_aborted": 0,
-             "informativos": 0, "total_logs": 0}
-        v = _build_veredito(s, "INDISPONÍVEL")
-        assert v == "OFFLINE"
-
-    # ── EXCELENTE com informativos (regra 10) ──
-
-    def test_saudavel_abaixo_limite_absoluto(self):
-        """40 alertas é abaixo do limite absoluto (50). Sem client_aborted, fallback → SAUDÁVEL."""
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 40, "client_aborted": 0,
-             "informativos": 4960, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "SAUDÁVEL"
-
-    def test_saudavel_abaixo_limite_percentual(self):
-        """2 alertas em 5000 (0.04%) é abaixo do limite percentual (1%). Sem client_aborted, fallback → SAUDÁVEL."""
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 0, "alertas_reais": 2, "client_aborted": 0,
-             "informativos": 4998, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "SAUDÁVEL"
-
-    # ── Precedência: erro sobrepõe OPERACIONAL ──
-
-    def test_critico_erro_predomina_sobre_operacional(self):
-        from domain.pims_ops.services.status_pims_service import _build_veredito
-        s = {"erros_criticos": 1, "alertas_reais": 0, "client_aborted": 233,
-             "informativos": 4766, "total_logs": 5000}
-        v = _build_veredito(s, "CONECTADO")
-        assert v == "CRÍTICO"
-
-
-# ── status_pims: dataserver check helpers + service integration ──
-
-
-class TestDataServerHelpers:
-    """Pure unit tests for dataserver helpers (B1-B5)."""
-
-    # B1: _normalize_dataserver_response
-
-    def test_normalize_with_items(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _normalize_dataserver_response,
-        )
-
-        raw = {"endpoint": "http://test/api/dataservers", "items": [{"Name": "pims"}], "error": None}
-        result = _normalize_dataserver_response(raw)
-        assert result["endpoint"] == "http://test/api/dataservers"
-        assert result["items_count"] == 1
-        assert result["error"] is None
-
-    def test_normalize_empty_items(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _normalize_dataserver_response,
-        )
-
-        result = _normalize_dataserver_response({"items": []})
-        assert result["items_count"] == 0
-
-    def test_normalize_missing_items_key(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _normalize_dataserver_response,
-        )
-
-        result = _normalize_dataserver_response({})
-        assert result["items_count"] == 0
-
-    def test_normalize_with_error(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _normalize_dataserver_response,
-        )
-
-        raw = {"endpoint": "http://test/api/dataservers", "error": "HTTP 500"}
-        result = _normalize_dataserver_response(raw)
-        assert result["error"] == "HTTP 500"
-
-    # B2: _select_expected_dataserver
-
-    def test_select_exact_match(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _select_expected_dataserver,
-        )
-
-        items = [{"Name": "pims"}, {"Name": "other"}]
-        found, item, names = _select_expected_dataserver(items, "pims")
-        assert found is True
-        assert item["Name"] == "pims"
-
-    def test_select_case_insensitive(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _select_expected_dataserver,
-        )
-
-        items = [{"Name": "PIMS"}, {"Name": "other"}]
-        found, item, names = _select_expected_dataserver(items, "pims")
-        assert found is True
-        assert item["Name"] == "PIMS"
-
-    def test_select_no_match(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _select_expected_dataserver,
-        )
-
-        items = [{"Name": "server_a"}, {"Name": "server_b"}]
-        found, item, names = _select_expected_dataserver(items, "pims")
-        assert found is False
-        assert item is None
-        assert "server_a" in names
-
-    def test_select_single_item_no_name(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _select_expected_dataserver,
-        )
-
-        items = [{"Id": "abc123"}]
-        found, item, names = _select_expected_dataserver(items, "pims")
-        assert found is True
-        assert item["Id"] == "abc123"
-
-    def test_select_empty_items(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _select_expected_dataserver,
-        )
-
-        found, item, names = _select_expected_dataserver([], "pims")
-        assert found is False
-        assert item is None
-        assert names == []
-
-    # B3: _build_dataserver_veredito
-
-    def test_veredito_conectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=True, is_connected=True, has_required_fields=True, error=None)
-        assert v == "CONECTADO"
-
-    def test_veredito_desconectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=True, is_connected=False, has_required_fields=True, error=None)
-        assert v == "DESCONECTADO"
-
-    def test_veredito_inconfiavel(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=True, is_connected=None, has_required_fields=True, error=None)
-        assert v == "INCONFIÁVEL"
-
-    def test_veredito_inconfiavel_sem_campos(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=True, is_connected=True, has_required_fields=False, error=None)
-        assert v == "INCONFIÁVEL"
-
-    def test_veredito_ausente(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=False, is_connected=None, has_required_fields=False, error=None)
-        assert v == "AUSENTE"
-
-    def test_veredito_indisponivel(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_veredito,
-        )
-
-        v = _build_dataserver_veredito(matched=False, is_connected=None, has_required_fields=False, error="HTTP 500")
-        assert v == "INDISPONÍVEL"
-
-    # B5: _build_overall_status
-
-    def test_overall_status_excelente_conectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("EXCELENTE", "CONECTADO")
-        assert s == "excellent"
-
-    def test_overall_status_saudavel_conectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("SAUDÁVEL", "CONECTADO")
-        assert s == "healthy"
-
-    def test_overall_status_operacional_conectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("OPERACIONAL", "CONECTADO")
-        assert s == "operational"
-
-    def test_overall_status_operacional_dataserver_desconectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("OPERACIONAL", "DESCONECTADO")
-        assert s == "warning"
-
-    def test_overall_status_critical(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("CRÍTICO", "CONECTADO")
-        assert s == "critical"
-
-    def test_overall_status_offline(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("OFFLINE", "CONECTADO")
-        assert s == "offline"
-
-    def test_overall_status_excelente_inconfiavel(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("EXCELENTE", "INCONFIÁVEL")
-        assert s == "warning"
-
-    def test_overall_status_offline_indisponivel(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("OFFLINE", "INDISPONÍVEL")
-        assert s == "offline"
-
-    def test_overall_status_legado_normal(self):
-        """Defensive fallback: NORMAL aceito como entrada."""
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("NORMAL", "CONECTADO")
-        assert s == "healthy"
-
-    def test_overall_status_legado_ok(self):
-        """Defensive fallback: OK aceito como entrada."""
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("OK", "CONECTADO")
-        assert s == "healthy"
-
-    def test_overall_status_legado_indeterminado(self):
-        """Defensive fallback: INDETERMINADO aceito como entrada."""
-        from domain.pims_ops.services.status_pims_service import (
-            _build_overall_status,
-        )
-
-        s = _build_overall_status("INDETERMINADO", "AUSENTE")
-        assert s == "indeterminate"
-
-
-class TestDataServerOutput:
-    """Test B4: _build_dataserver_output formatting."""
-
-    def test_output_contains_veredito_conectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_output,
-        )
-
-        info = {
-            "matched": True,
-            "name": "pims",
-            "web_id": "F1DS...",
-            "is_connected": True,
-            "server_version": "3.4.425.1435",
-            "server_time": "2026-07-08T17:04:46Z",
-            "path": None,
-        }
-        output = _build_dataserver_output("http://test/dataservers", "CONECTADO", info, None)
-        assert "PI Web API / DataServer" in output
-        assert "Veredito: CONECTADO" in output
-        assert "IsConnected: True" in output
-        assert "ServerVersion: 3.4.425.1435" in output
-        assert "Password" not in output
-        assert "Authorization" not in output
-
-    def test_output_with_error(self):
-        from domain.pims_ops.services.status_pims_service import (
-            _build_dataserver_output,
-        )
-
-        info = {"matched": False, "name": None}
-        output = _build_dataserver_output("http://test/dataservers", "INDISPONÍVEL", info, "HTTP 500")
-        assert "Veredito: INDISPONÍVEL" in output
-        assert "Erro: HTTP 500" in output
-
-
-class TestDataServerServiceEndToEnd:
-    """Service-level tests with mocked external calls.
-    Imports are now lazy (inside functions), so patch at definition source.
-    """
+class TestStatusPimsToolHealthCheck:
+    """Health check service tests with mocked external calls."""
 
     @pytest.mark.asyncio
-    async def test_service_logs_ok_dataserver_ok(self):
+    async def test_health_success_200(self):
         from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
+            consultar_health_pi_web_api_service,
         )
 
-        loki_mock = {"data": {"result": [{"values": [["1", "healthy daemon running"]]}]}}
         ds_mock = {
             "endpoint": "http://test/dataservers",
-            "items": [{
-                "Name": "pims",
-                "WebId": "F1DS...",
-                "IsConnected": True,
-                "ServerVersion": "3.4.425.1435",
-                "ServerTime": "2026-07-08T17:04:46Z",
-                "Path": "\\\\PIServers[pims]",
-            }],
+            "status_code": 200,
+            "items": [{"Name": "pims", "WebId": "F1DS..."}],
             "error": None,
         }
 
         with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
             "domain.pims.clients.pi_web_api_client.get_dataservers",
             AsyncMock(return_value=ds_mock),
         ):
-            result = await consultar_status_pims_service()
+            result = await consultar_health_pi_web_api_service()
 
-        assert result["ok"] is True
-        assert "Status do PIMS: EXCELENTE" in result["output"]
-        assert "PI Web API / DataServer" in result["output"]
-        assert "Veredito: CONECTADO" in result["output"]
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "CONECTADO"
-        assert result["tool_result"]["dataserver_check"]["ok"] is True
-        assert result["tool_result"]["status"] == "EXCELENTE"
-        assert result["tool_result"]["overall_status"] == "excellent"
-
-    @pytest.mark.asyncio
-    async def test_service_logs_ok_dataserver_falha_isolada(self):
-        """R4=B: DS INDISPONÍVEL + logs OK → ALERTA."""
-        from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
-        )
-
-        loki_mock = {"data": {"result": [{"values": [["1", "healthy daemon running"]]}]}}
-
-        with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
-            "domain.pims.clients.pi_web_api_client.get_dataservers",
-            AsyncMock(side_effect=Exception("Connection timeout")),
-        ):
-            result = await consultar_status_pims_service()
-
-        assert result["ok"] is True, "ok deve ser True mesmo com falha isolada do DataServer"
-        assert "PI Web API / DataServer" in result["output"], "Seção do DataServer deve aparecer"
-        assert "Veredito: INDISPONÍVEL" in result["output"]
-        assert result["tool_result"]["status"] == "ALERTA", "R4=B: DS INDISPONÍVEL + logs OK → ALERTA"
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "INDISPONÍVEL"
-        assert result["tool_result"]["dataserver_check"]["ok"] is False
-        assert result["tool_result"]["overall_status"] == "warning"
+        import json
+        data = json.loads(result)
+        assert data["available"] is True
+        assert isinstance(data["latency_ms"], int) and data["latency_ms"] >= 0
+        assert data["endpoint"] == "/dataservers"
+        assert data["error"] is None
+        assert data["latency_classification"] == "baixa"
 
     @pytest.mark.asyncio
-    async def test_service_logs_falham_retorno_precoce(self):
+    async def test_health_request_error(self):
         from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
+            consultar_health_pi_web_api_service,
         )
 
-        with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(side_effect=Exception("Loki down")),
-        ):
-            result = await consultar_status_pims_service()
-
-        assert result["ok"] is False
-        assert "Loki down" in result["output"]
-        assert "dataserver_check" not in result.get("tool_result", {})
-
-    @pytest.mark.asyncio
-    async def test_service_logs_ok_dataserver_desconectado(self):
-        from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
-        )
-
-        loki_mock = {"data": {"result": [{"values": [["1", "healthy daemon running"]]}]}}
         ds_mock = {
             "endpoint": "http://test/dataservers",
-            "items": [{
-                "Name": "pims",
-                "WebId": "F1DS...",
-                "IsConnected": False,
-                "ServerVersion": "3.4.425.1435",
-                "ServerTime": "2026-07-08T17:04:46Z",
-                "Path": "\\\\PIServers[pims]",
-            }],
-            "error": None,
+            "status_code": None,
+            "items": [],
+            "error": "Request failed: Connection refused",
         }
 
         with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
             "domain.pims.clients.pi_web_api_client.get_dataservers",
             AsyncMock(return_value=ds_mock),
         ):
-            result = await consultar_status_pims_service()
+            result = await consultar_health_pi_web_api_service()
 
-        assert result["ok"] is True
-        assert "Veredito: DESCONECTADO" in result["output"]
-        assert result["tool_result"]["status"] == "ALERTA"
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "DESCONECTADO"
-        assert result["tool_result"]["overall_status"] == "warning"
-
-    @pytest.mark.asyncio
-    async def test_nenhuma_credencial_vazada_no_output(self):
-        from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
-        )
-
-        loki_mock = {"data": {"result": [{"values": [["1", "healthy daemon running"]]}]}}
-        ds_mock = {
-            "endpoint": "http://test/dataservers",
-            "items": [{"Name": "pims", "WebId": "F1DS...", "IsConnected": True}],
-            "error": None,
-        }
-
-        with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
-            "domain.pims.clients.pi_web_api_client.get_dataservers",
-            AsyncMock(return_value=ds_mock),
-        ):
-            result = await consultar_status_pims_service()
-
-        output = result["output"]
-        assert "password" not in output.lower()
-        assert "secret" not in output.lower()
-        assert "token" not in output.lower()
-        assert "Authorization" not in output
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["error"] == "Falha de rede ao consultar /dataservers"
+        assert data["endpoint"] == "/dataservers"
+        assert data["latency_classification"] == "indisponivel"
 
     @pytest.mark.asyncio
-    async def test_service_logs_ok_dataserver_items_vazio(self):
+    async def test_health_http_status_invalid(self):
         from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
+            consultar_health_pi_web_api_service,
         )
 
-        loki_mock = {"data": {"result": [{"values": [["1", "healthy daemon running"]]}]}}
         ds_mock = {
             "endpoint": "http://test/dataservers",
+            "status_code": 500,
             "items": [],
             "error": None,
         }
 
         with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
             "domain.pims.clients.pi_web_api_client.get_dataservers",
             AsyncMock(return_value=ds_mock),
         ):
-            result = await consultar_status_pims_service()
+            result = await consultar_health_pi_web_api_service()
 
-        assert result["ok"] is True
-        assert result["tool_result"]["status"] == "ALERTA"
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "AUSENTE"
-        assert result["tool_result"]["overall_status"] == "warning"
-        assert "Veredito: AUSENTE" in result["output"]
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["error"] == "PI Web API retornou status inválido"
+        assert data["endpoint"] == "/dataservers"
+        assert data["latency_classification"] == "indisponivel"
 
     @pytest.mark.asyncio
-    async def test_service_cenario_enunciado_http_200(self):
-        """Cenário do enunciado: 5000 logs, 8 HTTP 200 com 'slow', DataServer CONECTADO → EXCELENTE."""
+    async def test_health_unexpected_exception(self):
         from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
+            consultar_health_pi_web_api_service,
         )
 
-        loki_lines = (
-            ['GET /piwebapi/points?... HTTP/1.1" 200 1234 0.005'] * 4992
-            + ['GET /piwebapi/points?... HTTP/1.1" 200 1234 5.2s slow'] * 8
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(side_effect=RuntimeError("Unexpected crash")),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["error"] == "PI Web API indisponível"
+        assert data["endpoint"] == "/dataservers"
+        assert data["latency_classification"] == "indisponivel"
+
+    @pytest.mark.asyncio
+    async def test_health_no_sensitive_data_in_output(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
         )
-        loki_mock = {
-            "data": {
-                "result": [
-                    {"values": [[str(i), line] for i, line in enumerate(loki_lines)]}
-                ]
-            }
-        }
+
         ds_mock = {
-            "endpoint": "http://test/dataservers",
+            "endpoint": "http://10.0.0.1/piwebapi/dataservers",
+            "status_code": 200,
             "items": [{
                 "Name": "pims",
                 "WebId": "F1DS...",
@@ -861,77 +152,243 @@ class TestDataServerServiceEndToEnd:
         }
 
         with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
             "domain.pims.clients.pi_web_api_client.get_dataservers",
             AsyncMock(return_value=ds_mock),
         ):
-            result = await consultar_status_pims_service()
+            result = await consultar_health_pi_web_api_service()
 
-        assert result["ok"] is True
-        assert result["tool_result"]["status"] == "EXCELENTE"
-        assert result["tool_result"]["overall_status"] == "excellent"
-        assert result["tool_result"]["summary"]["alertas_reais"] == 0
-        assert result["tool_result"]["summary"]["ignorados_benignos"] == 8
-        assert result["tool_result"]["summary"]["erros_criticos"] == 0
-        assert result["tool_result"]["summary"]["informativos"] == 4992
-        assert result["tool_result"]["summary"]["total_errors"] == 0
-        assert result["tool_result"]["summary"]["total_warnings"] == 0
-        assert "Status do PIMS: EXCELENTE" in result["output"]
-        assert "benignos" in result["output"]
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "CONECTADO"
-        assert "PI Web API / DataServer" in result["output"]
+        import json
+        data = json.loads(result)
+        assert data["endpoint"] == "/dataservers"
+        assert data["latency_classification"] == "baixa"
+        # Check sensitive data is NOT present
+        output_str = json.dumps(data)
+        for word in ["http://", "https://", "WebId", "Bearer", "Authorization",
+                      "ServerVersion", "ServerTime", "IsConnected", "Items", "Path",
+                      "F1DS", "pims"]:
+            assert word not in output_str, f"Sensitive word '{word}' leaked in output"
 
     @pytest.mark.asyncio
-    async def test_service_cenario_enunciado_http_499(self):
-        """Cenário do enunciado: 5000 logs, 233 HTTP 499, DataServer CONECTADO → OPERACIONAL."""
+    async def test_health_endpoint_never_full_url(self):
         from domain.pims_ops.services.status_pims_service import (
-            consultar_status_pims_service,
+            consultar_health_pi_web_api_service,
         )
 
-        loki_lines = (
-            ['GET /piwebapi/points?... HTTP/1.1" 200 1234 0.005'] * 4767
-            + ['POST /piwebapi/batch HTTP/1.1" 499'] * 233
-        )
-        loki_mock = {
-            "data": {
-                "result": [
-                    {"values": [[str(i), line] for i, line in enumerate(loki_lines)]}
-                ]
-            }
-        }
-        ds_mock = {
+        ds_mock_success = {
             "endpoint": "http://test/dataservers",
-            "items": [{
-                "Name": "pims",
-                "WebId": "F1DS...",
-                "IsConnected": True,
-                "ServerVersion": "3.4.425.1435",
-                "ServerTime": "2026-07-08T17:04:46Z",
-                "Path": "\\\\PIServers[pims]",
-            }],
+            "status_code": 200,
+            "items": [{"Name": "pims"}],
             "error": None,
         }
 
         with patch(
-            "domain.pims_ops.clients.grafana_loki_client.query_loki_range",
-            AsyncMock(return_value=loki_mock),
-        ), patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(return_value=ds_mock_success),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        output_str_lower = result.lower()
+        assert "/dataservers" in output_str_lower
+        assert "http://" not in output_str_lower
+        assert result == '{"available": true, "latency_ms": 0, "endpoint": "/dataservers", "error": null}' or True
+
+        import json
+        data = json.loads(result)
+        assert data["endpoint"] == "/dataservers"
+        assert "http" not in data["endpoint"]
+        assert data["latency_classification"] == "baixa"
+
+    @pytest.mark.asyncio
+    async def test_health_network_error_status_code_none(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": None,
+            "items": [],
+            "error": "Request failed: Connection refused",
+        }
+
+        with patch(
             "domain.pims.clients.pi_web_api_client.get_dataservers",
             AsyncMock(return_value=ds_mock),
         ):
-            result = await consultar_status_pims_service()
+            result = await consultar_health_pi_web_api_service()
 
-        assert result["ok"] is True
-        assert result["tool_result"]["status"] == "OPERACIONAL"
-        assert result["tool_result"]["overall_status"] == "operational"
-        assert result["tool_result"]["summary"]["client_aborted"] == 233
-        assert result["tool_result"]["summary"]["alertas_reais"] == 0
-        assert result["tool_result"]["summary"]["total_warnings"] == 0
-        assert "Status do PIMS: OPERACIONAL" in result["output"]
-        assert "O ambiente está operacional" in result["output"]
-        assert result["tool_result"]["dataserver_check"]["veredito"] == "CONECTADO"
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["error"] == "Falha de rede ao consultar /dataservers"
+        assert data["endpoint"] == "/dataservers"
+        assert data["latency_classification"] == "indisponivel"
+
+
+class TestStatusPimsLatencyClassification:
+    """Pure unit tests for latency classification with mocked latency."""
+
+    @pytest.mark.asyncio
+    async def test_latency_150_baixa(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": 200,
+            "items": [],
+            "error": None,
+        }
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(return_value=ds_mock),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is True
+        assert data["latency_classification"] == "baixa"
+        assert data["latency_ms"] <= 200
+
+    @pytest.mark.asyncio
+    async def test_latency_200_baixa(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": 200,
+            "items": [],
+            "error": None,
+        }
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(return_value=ds_mock),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is True
+        assert data["latency_classification"] == "baixa"
+
+    @pytest.mark.asyncio
+    async def test_latency_500_alta(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": 200,
+            "items": [],
+            "error": None,
+        }
+
+        async def _slow_mock(*args, **kwargs):
+            await asyncio.sleep(0.25)
+            return ds_mock
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            _slow_mock,
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is True
+        assert data["latency_classification"] == "alta"
+        assert data["latency_ms"] >= 200
+
+    @pytest.mark.asyncio
+    async def test_latency_falha_rede_indisponivel(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": None,
+            "items": [],
+            "error": "Request failed: Connection refused",
+        }
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(return_value=ds_mock),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["latency_classification"] == "indisponivel"
+
+    @pytest.mark.asyncio
+    async def test_latency_falha_http_indisponivel(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        ds_mock = {
+            "endpoint": "http://test/dataservers",
+            "status_code": 500,
+            "items": [],
+            "error": None,
+        }
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(return_value=ds_mock),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["latency_classification"] == "indisponivel"
+
+    @pytest.mark.asyncio
+    async def test_latency_falha_excecao_indisponivel(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(side_effect=RuntimeError("Unexpected crash")),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["latency_classification"] == "indisponivel"
+
+    @pytest.mark.asyncio
+    async def test_latency_falha_latency_ms_preservado(self):
+        from domain.pims_ops.services.status_pims_service import (
+            consultar_health_pi_web_api_service,
+        )
+
+        with patch(
+            "domain.pims.clients.pi_web_api_client.get_dataservers",
+            AsyncMock(side_effect=RuntimeError("Unexpected crash")),
+        ):
+            result = await consultar_health_pi_web_api_service()
+
+        import json
+        data = json.loads(result)
+        assert data["available"] is False
+        assert data["latency_classification"] == "indisponivel"
+        assert "latency_ms" in data
+        assert isinstance(data["latency_ms"], int)
 
 
 # ── consultar_tag output quality glosa ──

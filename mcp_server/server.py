@@ -55,7 +55,7 @@ mcp = FastMCP(
         "atributos de configuração do PI Point (compressão/exceção/scan) "
         "→ tag_attributes_tool; estatísticas históricas (média/máx/mín/soma) "
         "→ tag_statistics_tool; cálculo temporal (integral/derivada/variação) "
-        "→ tag_calculus_tool; status operacional do PIMS → status_pims_tool. "
+        "→ tag_calculus_tool; disponibilidade da PI Web API (/dataservers) → status_pims_tool. "
         "Desambiguação: estatística simples → tag_statistics_tool; "
         "integral/derivada explícita → tag_calculus_tool. "
         "Valor atual → consultar_tag; atributos de configuração → tag_attributes_tool. "
@@ -571,31 +571,19 @@ async def tag_calculus(
 # Tool: status_pims_tool
 # ---------------------------------------------------------------------------
 @mcp.tool
-async def status_pims_tool(
-    pergunta_usuario: str | None = None,
-    lookback_minutes: int | None = None,
-) -> str:
+async def status_pims_tool() -> str:
     """
-    Consulta logs do Grafana/Loki para avaliar status operacional do PIMS.
+    Verifica se a PI Web API do PIMS está acessível consultando o endpoint
+    /dataservers.
 
-    Use quando o usuário perguntar sobre: status do PIMS, saúde do ambiente,
-    erros, lentidão, indisponibilidade, timeout, erro 500/503, instabilidade
-    em servidores. Também verifica conectividade do DataServer configurado
-    na PI Web API via /dataservers.
-
-    Args:
-        pergunta_usuario: Pergunta original do usuário (opcional).
-        lookback_minutes: Janela em minutos (60=atual, 120=2h, 1440=hoje).
+    Retorna JSON compacto com available (bool), latency_ms (int),
+    endpoint ("/dataservers"), error (string ou null) e
+    latency_classification ("baixa"|"alta"|"indisponivel").
     """
     async def _inner():
-        from domain.pims_ops.services.status_pims_service import consultar_status_pims_service
+        from domain.pims_ops.services.status_pims_service import consultar_health_pi_web_api_service
 
-        result = await consultar_status_pims_service(
-            user_message=pergunta_usuario or "",
-            lookback_minutes=lookback_minutes,
-            include_raw_response=False,
-        )
-        return result["output"]
+        return await consultar_health_pi_web_api_service()
     return await _mcp_safe_tool(_inner)
 
 

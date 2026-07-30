@@ -56,7 +56,7 @@ O **Agent Bot** é uma API conversacional inteligente construída com FastAPI qu
 - Estatísticas históricas (média, máximo, mínimo, soma, desvio padrão, consumo)
 - Cálculos temporais (integralização, derivada, taxa de variação)
 - Consulta de digital states e digital sets
-- Status operacional do PIMS via logs Grafana/Loki
+- Health check da PI Web API (/dataservers)
 
 ### Subsistemas do Monorepo
 
@@ -113,7 +113,7 @@ agent_bot/                              # monorepo
 │   │   ├── qdrant_client.py            # RAG: busca semântica + Chunk 20 fixo
 │   │   ├── pi_web_api_client.py        # Cliente HTTP PI Web API (batch, streams, enumeration)
 │   │   ├── redis_client.py             # Cliente Redis (memória)
-│   │   ├── grafana_loki_client.py      # Cliente Grafana/Loki
+
 │   │   └── math_tool_client.py         # Cliente HTTP Math Tool
 │   ├── schemas/
 │   │   ├── chat.py                     # ChatRequest, ChatResponse, ChatImage, OcrResult
@@ -162,7 +162,7 @@ agent_bot/                              # monorepo
 │   │   └── config.py                   # Configuração MCP (separate .env)
 │   ├── clients/
 │   │   ├── pi_web_api_client.py        # Pi Web API client (duplicado do app/)
-│   │   ├── grafana_loki_client.py      # Grafana/Loki client
+
 │   │   ├── math_tool_client.py         # Math Tool client
 │   │   └── redis_client.py             # Redis client
 │   ├── services/
@@ -422,7 +422,7 @@ Agent (app/agent/agent.py)
               ├─→ tag_statistics()     → services/math_tool_service.py
               ├─→ tag_calculus()       → services/math_tool_service.py
               ├─→ generate_pi_tags_series_csv() → services/generate_pi_tags_series_csv_service.py
-              └─→ status_pims_tool()  → services/status_pims_service.py
+               └─→ status_pims_tool()  → PiWebApiClient.get_dataservers()
 ```
 
 ### Tools Expostas
@@ -433,7 +433,7 @@ Agent (app/agent/agent.py)
 | `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período). SOMENTE para operações estatísticas |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
 | `generate_pi_tags_series_csv` | `tags, start_time, end_time, data_method, interval` | Séries temporais sem agregação estatística. CSV no Drive. Sem `operation` |
-| `status_pims_tool` | `pergunta_usuario: str \| None`, `lookback_minutes: int \| None` | Status via Grafana/Loki |
+| `status_pims_tool` | `-` (sem parâmetros) | Health check da PI Web API (/dataservers) |
 
 ### Configuração
 
@@ -675,50 +675,20 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 ### 11.4 status_pims_tool
 
-**Propósito**: Status operacional do PIMS via logs Grafana/Loki + conectividade da PI Web API.
+**Propósito**: Verificar se a PI Web API do PIMS está acessível consultando o endpoint `/dataservers` via `PiWebApiClient.get_dataservers()`.
 
-**Parâmetros**:
-- `pergunta_usuario`: Pergunta original
-- `lookback_minutes`: Janela de tempo (default: 20 min; 60=status atual, 120=2h, 1440=hoje)
+**Parâmetros**: nenhum (assinatura `() -> str`).
 
-**Classificação de logs (5 categorias)**:
-A tool classifica cada linha de log em uma das 5 categorias abaixo, nesta ordem de precedência:
+**Retorno**: JSON string com 5 campos:
+- `available` (bool): `true` se a requisição foi bem-sucedida (HTTP 200), `false` caso contrário.
+- `latency_ms` (int): tempo de resposta em milissegundos.
+- `endpoint` (string): sempre `"/dataservers"`.
+- `error` (string ou null): `null` em sucesso; mensagem sanitizada em falha.
+- `latency_classification` (string): classificação da latência — `"baixa"` (≤200ms), `"alta"` (>200ms) ou `"indisponivel"` (erro).
 
-| Categoria | Critérios |
-|---|---|
-| `erro_critico` | HTTP 5xx; `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused`, `broken pipe`, `panic` |
-| `client_aborted` | HTTP 499; HTTP 4xx com `client aborted`, `client closed request`, `client canceled` |
-| `alerta_real` | HTTP 4xx (exceto 499); `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request`, `unauthorized`, `forbidden` (exceto se também contém HTTP 2xx/304) |
-| `informativo` | HTTP 2xx, HTTP 304; `healthy`, `ok`, `started`, `ready`, `listening` |
-| `ignorado_benigno` | Linha com keyword de alerta mas que também contém HTTP 2xx/304 (ruído benigno de access log); linhas sem nenhum padrão reconhecido |
+**Sanitização**: erros retornam uma de 3 constantes (`"Falha de rede ao consultar /dataservers"`, `"PI Web API retornou status inválido"`, `"PI Web API indisponível"`). Nenhuma URL, IP, WebId, credencial ou stack trace é exposta.
 
-**Veredito final** (precedência decrescente, 11 regras, 6 níveis):
-
-| # | Condição | Veredito |
-|---|----------|----------|
-| 1 | DS `INDISPONÍVEL` + `total_logs == 0` | `OFFLINE` |
-| 2 | `erros_criticos >= 1` | `CRÍTICO` |
-| 3 | DS `DESCONECTADO` + `alertas_reais >= 1` | `CRÍTICO` |
-| 4 | `alertas_reais >= 50` | `ALERTA` |
-| 5 | `total > 0` + `alertas_reais / total >= 0.01` | `ALERTA` |
-| 6 | `client_aborted >= 1000` ou `client_aborted / total >= 0.20` | `ALERTA` |
-| 7 | DS `DESCONECTADO`/`INCONFIÁVEL`/`AUSENTE`/`INDISPONÍVEL` | `ALERTA` |
-| 8 | `client_aborted > 0` + erros==0 + alertas < limites | `OPERACIONAL` |
-| 9 | `total_logs == 0` + DS `CONECTADO` | `SAUDÁVEL` |
-| 10 | erros==0 + alertas==0 + client_aborted==0 + informativos>0 | `EXCELENTE` |
-| 11 | Fallback | `SAUDÁVEL` |
-
-**Campos no `tool_result`**:
-- `status`: veredito final (`EXCELENTE`, `SAUDÁVEL`, `OPERACIONAL`, `ALERTA`, `CRÍTICO`, `OFFLINE`)
-- `summary`: dicionário com `total_logs`, `erros_criticos`, `alertas_reais`, `client_aborted`, `informativos`, `ignorados_benignos`, e os aliases legados `total_errors`/`total_warnings`
-- `dataserver_check`: verificação de conectividade do DataServer
-- `overall_status`: normalizado para `excellent`/`healthy`/`operational`/`warning`/`critical`/`offline`
-
-**Limites** (constantes internas no módulo):
-- `_LIMIT_ALERTA_ABSOLUTO = 50`
-- `_LIMIT_ALERTA_PERCENTUAL = 0.01`
-- `_LIMIT_CLIENT_ABORTED_ABSOLUTO_OPERACIONAL = 1000`
-- `_LIMIT_CLIENT_ABORTED_PERCENTUAL_OPERACIONAL = 0.20`
+**Logs do servidor** registram latência e código HTTP interno, sem vazar para o LLM.
 
 ### 11.5 search_pi_points
 
@@ -985,13 +955,6 @@ class LLMParams(BaseModel):
 
 ### App Principal (`app/.env`)
 
-#### Obrigatórias
-
-| Variável | Descrição |
-|----------|-----------|
-| `GRAFANA_LOKI_QUERY_RANGE_URL` | URL do endpoint query_range do Grafana/Loki |
-| `GRAFANA_BEARER_TOKEN` | Token de autenticação do Grafana |
-
 #### LLM
 
 | Variável | Padrão | Descrição |
@@ -1016,14 +979,6 @@ class LLMParams(BaseModel):
 | `PI_WEB_API_USERNAME` | — | Usuário (opcional) |
 | `PI_WEB_API_PASSWORD` | — | Senha (opcional) |
 | `PI_WEB_API_VERIFY_SSL` | `false` | Verificar SSL |
-
-#### Grafana / Loki
-
-| Variável | Padrão | Descrição |
-|----------|--------|-----------|
-| `PIMS_STATUS_LOKI_QUERY` | `{job="zabbix_proxy"}` | Query Loki |
-| `PIMS_STATUS_LOOKBACK_MINUTES` | `20` | Janela de lookback (minutos) |
-| `PIMS_STATUS_LIMIT` | `5000` | Limite de linhas |
 
 #### Math Tool
 
@@ -1280,17 +1235,9 @@ Para consumo de vazão em Nm3:
 - `detectar_time_unit()`: detecta unidade temporal a partir do texto do usuário
 - `inferir_time_unit_por_unidade()`: infere unidade temporal baseado na unidade de engenharia da tag
 
-### Classificação de Logs da status_pims_tool
+### status_pims_tool
 
-A classificação determinística de logs usa 5 categorias:
-
-- **erro_critico**: HTTP `5xx`, palavras-chave `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused`. Sempre gera veredito `CRÍTICO`.
-- **client_aborted**: HTTP `499`; HTTP 4xx com `client aborted`, `client closed request`, `client canceled`. Separa cancelamentos de cliente de `alerta_real`. Abaixo do limite alto → `OPERACIONAL`; acima → `ALERTA`.
-- **alerta_real**: HTTP `4xx` (exceto 499), palavras-chave `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request`. Gera veredito `ALERTA` se ultrapassar limites configurados.
-- **informativo**: HTTP `2xx`, `304`, `healthy`, `ok`, `started`, `ready`, `listening`. Nunca incrementa contadores de alerta.
-- **ignorado_benigno**: Linha com keyword de alerta mas que também contém HTTP `2xx`/`304` (ruído benigno de access log). Não incrementa `alertas_reais`.
-
-Veredito final usa precedência de 11 regras com 6 níveis (ver seção 11.4). HTTP `200` com palavras como `warning`, `slow` ou `retry` não geram alerta operacional. HTTP `499` com DataServer `CONECTADO` e sem erros gera `OPERACIONAL` (não `ALERTA`).
+A tool `status_pims_tool` é uma health check que verifica a disponibilidade da PI Web API via `GET /dataservers`. Retorna JSON com `available`, `latency_ms`, `endpoint`, `error` e `latency_classification` sanitizados. O campo `latency_classification` é calculado deterministicamente no service: `latency_ms <= 200 → "baixa"`, `latency_ms > 200 → "alta"`, falha → `"indisponivel"`. Não consulta mais Grafana/Loki nem classifica logs. Ver seção 11.4.
 
 ### Formato do Google Chat
 
@@ -1507,7 +1454,7 @@ app/
 | 3 | Time-Series Analytics | Estatísticas e cálculos temporais |
 | 4 | OCR/Image Understanding | Extração de texto de imagens |
 | 5 | RAG/Knowledge Retrieval | Contexto de documentação |
-| 6 | PIMS Operations | Status operacional via Grafana/Loki |
+| 6 | PIMS Operations | Health check da PI Web API (/dataservers) |
 | 7 | LLM Provider | Abstração de provedores LLM |
 | 8 | MCP Tool Gateway | Interface MCP sobre domínio |
 | 9 | Google Chat Integration | ACL entre Chat API e Conversation |
@@ -1699,7 +1646,7 @@ Domain ← Application ← Infrastructure ← Agent
 | 3 | Time-Series Analytics | `domain/analytics/` | Estatísticas e cálculos temporais |
 | 4 | OCR/Image Understanding | `app/tasks/` | Extração de texto de imagens |
 | 5 | RAG/Knowledge Retrieval | `app/clients/qdrant_client.py` | Contexto de documentação |
-| 6 | PIMS Operations | `domain/pims_ops/` | Status operacional via Grafana/Loki |
+| 6 | PIMS Operations | `domain/pims_ops/` | Health check da PI Web API (/dataservers) |
 | 7 | LLM Provider | `app/clients/provider_client.py` | Abstração de provedores LLM |
 | 8 | MCP Tool Gateway | `mcp_server/` | Interface MCP sobre domínio |
 | 9 | Google Chat Integration | `app/bridge/` | ACL entre Chat API e Conversation |
@@ -1782,7 +1729,7 @@ domain/
 ├── core/           config.py (Settings centralizado)
 ├── pims/           clients/, services/, utils/ (PI Web API)
 ├── analytics/      clients/, services/, utils/ (Math Tool)
-├── pims_ops/       clients/, services/ (Grafana/Loki)
+├── pims_ops/       clients/, services/ (PI Web API health check)
 ├── conversation/   clients/ (Redis)
 └── shared/         schemas/ (math_tool.py)
 ```
@@ -2073,27 +2020,9 @@ O `_detect_repeated_tool_calls()` verifica se a mesma tool (mesma combinação `
 - Converte listas markdown para bullets
 - Limita tamanho de mensagens (4096 chars)
 
-### Classificação de Logs da status_pims_tool
+### status_pims_tool
 
-A classificação determinística de logs usa 5 categorias:
-
-| Categoria | Critérios |
-|---|---|
-| `erro_critico` | HTTP 5xx; `error`, `erro`, `failed`, `failure`, `exception`, `traceback`, `fatal`, `unavailable`, `down`, `refused`, `offline`, `connection refused` |
-| `client_aborted` | HTTP 499; HTTP 4xx com `client aborted`, `client closed request`, `client canceled` |
-| `alerta_real` | HTTP 4xx (exceto 499); `warning`, `warn`, `retry`, `slow`, `timeout`, `backoff`, `bad request` (exceto se também contém HTTP 2xx/304) |
-| `informativo` | HTTP 2xx, HTTP 304; `healthy`, `ok`, `started`, `ready`, `listening` |
-| `ignorado_benigno` | Linha com keyword de alerta mas que também contém HTTP 2xx/304 (ruído benigno de access log); linhas sem nenhum padrão reconhecido |
-
-**Veredito final (precedência decrescente, 11 regras, 6 níveis)**:
-
-| # | Condição | Veredito |
-|---|----------|----------|
-| 1 | DS `INDISPONÍVEL` + `total_logs == 0` | `OFFLINE` |
-| 2 | `erros_criticos >= 1` | `CRÍTICO` |
-| 3 | DS `DESCONECTADO` + `alertas_reais >= 1` | `CRÍTICO` |
-| 4 | `alertas_reais >= 50` | `ALERTA` |
-| 5 | `total > 0` + `alertas_reais / total >= 0.01` | `ALERTA` |
+A tool `status_pims_tool` é uma health check da PI Web API via `/dataservers`. Retorna JSON com `available`, `latency_ms`, `endpoint`, `error` e `latency_classification` sanitizados. Não consulta mais Grafana/Loki nem classifica logs. Ver seção 11.4.
 | 6 | `client_aborted >= 1000` ou `client_aborted / total >= 0.20` | `ALERTA` |
 | 7 | DS `DESCONECTADO`/`INCONFIÁVEL`/`AUSENTE`/`INDISPONÍVEL` | `ALERTA` |
 | 8 | `client_aborted > 0` + erros==0 + alertas < limites | `OPERACIONAL` |

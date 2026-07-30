@@ -96,7 +96,9 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 - tag_statistics: SOMENTE operações estatísticas (média, máximo, mínimo, soma, desvio padrão, consumo). NÃO usar para valores brutos.
 - tag_calculus: integral, derivada, taxa de variação.
 - generate_pi_tags_series_csv: valores minuto a minuto, série interpolada, valores brutos recorded, CSV com valores.
-- status_pims_tool: status do PIMS, logs, saúde do ambiente.
+- status_pims_tool: verifica se a PI Web API está acessível (/dataservers).
+  O campo latency_classification classifica a latência como "baixa" (≤200ms),
+  "alta" (>200ms) ou "indisponivel" (erro). Use esse campo na resposta.
 {test_artifact_tool_map_line}
 
 {test_artifact_section}

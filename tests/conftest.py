@@ -7,11 +7,6 @@ import textwrap
 import pytest
 
 
-os.environ.setdefault(
-    "GRAFANA_LOKI_QUERY_RANGE_URL",
-    "http://loki.test/loki/api/v1/query_range",
-)
-
 
 SAMPLE_MARKDOWN = textwrap.dedent("""\
     # CHUNK 01 - Chunk fixo: selecao de tool e resumo operacional

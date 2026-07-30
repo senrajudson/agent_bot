@@ -79,16 +79,6 @@ class DefaultOutputDeliveryPolicy:
                     suggested_format="csv",
                 )
 
-        # ──status_pims_tool: logs completos (semântico) ──
-        if tool == "status_pims_tool":
-            if operation in ("logs_completos", "full_logs"):
-                return DeliveryDecision(
-                    mode=DeliveryMode.DRIVE_ARTIFACT,
-                    reason="full_logs",
-                    reason_code="FULL_LOGS",
-                    suggested_format="csv",
-                )
-
         # ──tag_attributes_tool: retorno grande ──
         if tool == "tag_attributes_tool":
             if serialized_size is not None and serialized_size > self._inline_max_bytes:

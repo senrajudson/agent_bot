@@ -15,8 +15,6 @@ if str(_MCP_ROOT.parent) not in sys.path:
 def _make_settings(**kwargs):
     from core.config import Settings
     defaults = dict(
-        GRAFANA_LOKI_QUERY_RANGE_URL="http://fake",
-        GRAFANA_BEARER_TOKEN="fake",
         ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=False,
     )
     merged = {**defaults, **kwargs}

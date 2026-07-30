@@ -15,7 +15,7 @@ Analyze the agent architecture in general terms, explaining what type of agent i
 1. `consultar_tag` — current value + metadata of PI tags
 2. `tag_statistics` — historical statistics (mean, max, min, sum, consumption)
 3. `tag_calculus` — integral, derivative, rate of change
-4. `status_pims_tool` — PIMS operational status via Grafana/Loki
+4. `status_pims_tool` — PI Web API health check (/dataservers)
 5. `search_pi_points` — tag discovery by name/description
 6. `tag_attributes_tool` — configuration attributes (compression, scan, etc.)
 7. `generate_test_artifact_tool` (feature flag) — QA test file generation

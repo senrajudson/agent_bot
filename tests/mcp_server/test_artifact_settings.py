@@ -15,8 +15,6 @@ from pydantic import ValidationError
 def _make_valid_kwargs():
     return {
         "PI_WEB_API_BASE_URL": "http://fake",
-        "GRAFANA_LOKI_QUERY_RANGE_URL": "http://fake",
-        "GRAFANA_BEARER_TOKEN": "fake",
         "ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY": False,
         "MCP_ARTIFACT_MAX_ROWS": 1000000,
         "MCP_ARTIFACT_MAX_BYTES": 104857600,
