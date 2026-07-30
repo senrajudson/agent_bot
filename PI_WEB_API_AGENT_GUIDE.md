@@ -33,6 +33,8 @@ Quando receber `delivery: drive_artifact`:
 
 Use `search_pi_points` quando o usuário não souber o nome exato da tag e quiser encontrar tags relacionadas a uma descrição, equipamento, área, variável ou parte do nome.
 
+**Importante**: consultas multi-token (ex.: "velocidade rb2") usam **AND explícito** da PI Web API Search Query Syntax: `Description:=*velocidade* AND Description:=*RB2*`. Isso torna todos os conceitos obrigatórios e não depende da ordem no Descriptor. Candidatos obtidos apenas por um termo único (ex.: `Description:=*RB2*`) não são válidos.
+
 Use `consultar_tag` quando o usuário já informou uma tag específica e quer valor atual, unidade, descrição, tipo, digital set, instrumenttag ou metadados.
 
 ## Regra para perguntas naturais sobre tags
@@ -1043,21 +1045,40 @@ Query enviada à PI Web API:
 Name:=*LFI_RB3*
 ```
 
-## Busca automática
+## Busca automática com AND explícito
 
-Para `search_mode="auto"`, a tool deve executar buscas separadas, não uma query única combinada.
+Para `search_mode="auto"`, consultas multi-token (2+ conceitos significativos) usam **AND explícito** da PI Web API Search Query Syntax. Cada conceito é obrigatório; consultas de termo único não geram resultado válido.
 
-Ordem recomendada:
+### Consultas de 1 token
 
 ```text
-1. Description:=*{termo}*
-2. Name:=*{termo}*
-3. Unir resultados.
-4. Remover duplicados por WebId ou Name.
-5. Retornar no máximo 5 tags.
+Description:=*termo*
+```
+ou:
+```text
+Name:=*termo*
 ```
 
-Exemplo:
+### Consultas de 2+ tokens — AND explícito
+
+```text
+Description:=*velocidade* AND Description:=*RB2*
+```
+
+Isso significa:
+- A descrição deve conter "velocidade" **E** "RB2";
+- a ordem dos termos no Descriptor não importa;
+- caracteres podem existir entre eles.
+
+### O que NÃO usar como estratégia principal
+
+`Description:="*velocidade rb2*"` — exige os termos na mesma sequência textual.
+
+`Description:=*velocidade*RB2*` — exige ordem fixa (velocidade antes de RB2).
+
+`Description:=*RB2*` ou `Description:=*velocidade*` — cada consulta ignora um dos conceitos.
+
+### Exemplo completo
 
 ```text
 Usuário: "tem alguma tag de velocidade do forno?"
@@ -1067,27 +1088,18 @@ search_pi_points:
   search_mode = "auto"
 ```
 
-A tool deve tentar primeiro busca por descrição:
+Query(s) PI geradas internamente:
 
 ```text
-Description:=*velocidade forno*
+Q1: Description:=*velocidade* AND Description:=*forno*
+Q2: Name:=*velocidade* AND Name:=*forno*
+Q3: Name:=*forno* AND Description:=*velocidade*   (contexto em Name, variável em Description)
+Q4: Description:=*forno* AND Name:=*velocidade*   (inverso controlado)
 ```
 
-Se vierem menos de 5 resultados, complementar por nome:
+As 4 queries são executadas em paralelo. Resultados são unidos, deduplicados, validados por filtragem local (todos os conceitos devem estar em `Name + Descriptor` da tag), classificados por confidence e ranqueados. Apenas confidence high e medium são retornados.
 
-```text
-Name:=*velocidade forno*
-```
-
-Se a busca por frase inteira não encontrar bons candidatos, a implementação da tool pode tentar termos principais ou padrões técnicos validados, como:
-
-```text
-Description:=*velocidade*
-Name:=*VEL*FORNO*
-Name:=*FRN*VELOCIDADE*
-```
-
-A resposta deve listar somente até 5 tags candidatas e pedir mais contexto se o operador precisar refinar.
+O agente recebe no máximo 5 resultados.
 
 ## Fallback por nameFilter
 
@@ -1217,60 +1229,70 @@ Exemplo:
 GET /points/search?dataServerWebId={DATA_SERVER_WEB_ID}&query=Name:=*LFI_RB3*&maxCount=5
 ```
 
-## Modo automático
+## Filtros conjuntivos com AND
 
-No modo automático, não combinar `Name` e `Description` em uma única query esperando comportamento de `OR`.
+Para consultas multi-token (ex.: "velocidade rb2"), usar **AND explícito** entre filtros do mesmo campo:
 
-Errado para modo automático:
+```text
+Description:=*velocidade* AND Description:=*RB2*
+```
+
+Significa: Description contém "velocidade" **E** Description contém "RB2". Ambos são obrigatórios. A ordem no Descriptor não importa.
+
+### O que NÃO fazer
+
+```text
+Description:="*velocidade rb2*"
+```
+- exige a sequência textual exata (depende da ordem).
 
 ```text
 Name:=*velocidade* Description:=*velocidade*
 ```
-
-Isso significa:
-
-```text
-Name contém velocidade E Description contém velocidade
-```
-
-Não significa:
+- combina Name e Description na mesma query; significa AND entre campos, não OR.
 
 ```text
-Name contém velocidade OU Description contém velocidade
+Description:=*RB2*
 ```
+- como resultado final, ignora o conceito "velocidade". Fallback de termo único não é válido.
 
-Para `search_mode="auto"`, executar duas chamadas separadas e mesclar os resultados por `WebId` ou `Name`.
+### Modo automático (auto)
 
-Ordem recomendada:
+O modo automático executa um conjunto controlado de queries independentes (não combinadas em uma única string):
 
 ```text
-1. Description:=*{termo}*
-2. Name:=*{termo}*
-3. Remover duplicados.
-4. Retornar no máximo 5 tags.
+Q1. Description:=*t1* AND Description:=*t2* [...]
+Q2. Name:=*t1* AND Name:=*t2* [...]
+Q3. Name:=*contexto* AND Description:=*variável*   (quando inequívoco)
+Q4. Description:=*contexto* AND Name:=*variável*   (inverso controlado)
 ```
 
-Se a busca por descrição já retornar 5 tags, não é necessário chamar nome.
+As queries são executadas em paralelo. Resultados são unidos, deduplicados por WebId, validados por filtragem local, classificados por confidence (high/medium/low) e ranqueados. Low é descartado. Apenas high e medium são retornados.
 
-Se a busca por descrição retornar menos de 5 tags, chamar nome para complementar.
+**Hard cap**: máximo 5 resultados públicos.
 
 ## Mapeamento recomendado para a tool `search_pi_points`
 
 ```text
 search_mode="description":
-  query = Description:=*{termo}*
+  1 token: Description:=*{token}*
+  N tokens: Description:=*{t1}* AND Description:=*{t2}* [...]
 
 search_mode="name":
-  query = Name:=*{termo}*
+  1 token: Name:=*{token}*
+  N tokens: Name:=*{t1}* AND Name:=*{t2}* [...]
 
 search_mode="auto":
-  1. Description:=*{termo}*
-  2. Name:=*{termo}*
-  unir resultados, remover duplicados e retornar no máximo 5 tags
+  ≤4 queries paralelas:
+    Q1. Description:=*{t1}* AND Description:=*{t2}* [...]
+    Q2. Name:=*{t1}* AND Name:=*{t2}* [...]
+    Q3. Name:=*{contexto}* AND Description:=*{variável}*
+    Q4. (inverso controlado)
+  unir, deduplicar por WebId, filtrar localmente, classificar confidence, ranquear, cap 5
 
 search_mode="query":
   aceitar uma query avançada pronta, por exemplo:
-  Description:=*velocidade* Name:=*RB3*
+  Description:=*velocidade* AND Name:=*RB3*
 ```
 
 Se `search_mode="query"` receber texto simples sem `Description:=` ou `Name:=`, tratar como busca automática.

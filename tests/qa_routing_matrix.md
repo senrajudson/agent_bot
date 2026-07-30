@@ -35,3 +35,10 @@
 | 27 | qual foi a média por minuto da TAG na última hora? | `tag_statistics_tool` com `operation=mean`, `data_method=summary`, `group_by=1m`, `summary_duration=1m` | Operacional |
 | 28 | qual foi o máximo a cada cinco minutos? | `tag_statistics_tool` com `operation=max`, `data_method=summary`, `group_by=5m`, `summary_duration=5m` | Operacional |
 | 29 | valores minuto a minuto | NÃO usar `operation=mean`, NÃO usar `tag_statistics_tool` | Regra negativa |
+| 30 | velocidade rb2 | `search_pi_points`, deve conter `LFS_RB2_VELOPROC`, NÃO deve conter corrente RB2 nem RB3 | Multi-token AND |
+| 31 | rb2 velocidade | `search_pi_points`, resultado equivalente ao caso 30 (independência de ordem) | Multi-token AND |
+| 32 | velocidade rb3 | `search_pi_points`, NÃO deve conter RB2 | Multi-token AND |
+| 33 | corrente rb2 | `search_pi_points`, NÃO deve conter velocidade nem RB3 | Multi-token AND |
+| 34 | termo sem correspondência (ex.: "xyzabc") | `search_pi_points` → `no_confident_match`, `isError=false`, 0 resultados | no_confident_match |
+| 35 | taxa de variação (termo inexistente) | `search_pi_points` → `no_confident_match`, `suggestions` com refinamento | no_confident_match |
+| 36 | RB2 (termo único amplo) | `search_pi_points`, deve retornar top tags com RB2 no nome/descrição | Termo único |

@@ -851,7 +851,7 @@ async def search_pi_points(
 
     Args:
         query: Termo de busca (parte do nome, descrição, equipamento, etc.).
-        max_count: Máximo de resultados (default 5, máximo 100).
+        max_count: Máximo de resultados públicos (default 5).
         search_mode: 'auto', 'name', 'description', 'query'.
     """
     async def _inner():
@@ -1039,6 +1039,14 @@ if __name__ == "__main__":
         logger.info(
             "generate_pi_tags_series_csv: DISABLED — "
             "defina ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true para habilitá-la"
+        )
+
+    if settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND:
+        logger.info("search_pi_points: STRICT_AND ENABLED")
+    else:
+        logger.info(
+            "search_pi_points: STRICT_AND DISABLED — "
+            "defina ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true para habilitá-la"
         )
 
     asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))

@@ -606,7 +606,7 @@ Enviados via OTLP HTTP (`/v1/traces`, protobuf) para o Phoenix collector.
 
 ## 11. Tools do Agente PI
 
-As 4 tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O agente ADK consome-as via `McpToolset`.
+As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O agente ADK consome-as via `McpToolset`.
 
 ### 11.1 consultar_tag
 
@@ -720,15 +720,46 @@ A tool classifica cada linha de log em uma das 5 categorias abaixo, nesta ordem 
 - `_LIMIT_CLIENT_ABORTED_ABSOLUTO_OPERACIONAL = 1000`
 - `_LIMIT_CLIENT_ABORTED_PERCENTUAL_OPERACIONAL = 0.20`
 
+### 11.5 search_pi_points
+
+**Propósito**: Descobrir tags no PI por nome, descrição, equipamento, área ou termo textual.
+
+**Parâmetros**:
+- `query`: Termo de busca (parte do nome, descrição, equipamento, etc.)
+- `max_count`: Máximo de resultados públicos (default 5)
+- `search_mode`: `auto` (padrão), `name`, `description` ou `query` (avançado)
+
+**Comportamento multi-token (AND explícito)**:
+- Consultas com 2+ tokens usam **AND explícito** da PI Web API Search Query Syntax.
+- Ex.: `velocidade rb2` → `Description:=*velocidade* AND Description:=*RB2*`
+- Todos os conceitos são obrigatórios; a ordem no Descriptor não importa.
+- Fallbacks de termo único (`Description:=*RB2*`) não são resultados válidos.
+
+**Modo auto**:
+- Executa até 4 queries paralelas: (Q1) todos em Description com AND, (Q2) todos em Name com AND, (Q3) contexto em Name + variável em Description, (Q4) inverso. Resultados são unidos, deduplicados, filtrados localmente, classificados por confidence e ranqueados.
+
+**Confidence**:
+- `high`: todos os conceitos em Name e Description, ou match exato.
+- `medium`: todos os conceitos em Name, ou em Description com algum contexto.
+- `low`: apenas por expansão técnica — **não retornado**.
+
+**Retorno**:
+- `status`: `"success"` ou `"no_confident_match"` (isError=false).
+- `results[]`: até 5 itens com `name`, `description`, `confidence`, `matched_concepts`, `match_basis`.
+- `no_confident_match`: bool. `refinement_suggested`: bool.
+
+**Feature flag**: `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` (desativada por padrão). Quando falsa, utiliza o comportamento legado (variantes de termo único).
+
 **Fluxo interno**:
-1. Consulta Grafana/Loki via `query_loki_range`
-2. Classifica cada linha com `_classify_line()` em 5 categorias
-3. Retorna resumo do status (veredito, total logs, erros críticos, alertas reais, client_aborted, informativos, ignorados benignos)
-4. Consulta PI Web API via `GET /dataservers` para verificar conectividade
-5. Verifica `IsConnected`, `ServerVersion`, `ServerTime`, `WebId` do DataServer configurado (`PI_SERVER_NAME`)
-6. Retorna veredito adicional do DataServer: `CONECTADO`, `DESCONECTADO`, `INCONFIÁVEL`, `AUSENTE` ou `INDISPONÍVEL`
-7. Campo `dataserver_check` com info detalhada no `tool_result`
-8. Campo `overall_status` combinando status de logs e DataServer
+1. Extrai termos da query (tokens, variáveis, equipamentos, áreas, termos técnicos).
+2. Se flag `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true` + 2+ tokens: executa strict AND path:
+   a. Monta até 4 queries paralelas: Q1 (Description AND), Q2 (Name AND), Q3 (context→Name + variable→Description), Q4 (variable→Name + context→Description).
+   b. Executa queries via `asyncio.gather` com timeout de 30s.
+   c. Une resultados, deduplica por `web_id`, filtra localmente (`_has_all_tokens_in_text`).
+   d. Classifica cada candidato por `confidence`: HIGH, MEDIUM ou LOW (LOW descartado).
+   e. Ranqueia e aplica hard cap de 5 resultados.
+3. Se flag `false` ou 1 token: utiliza comportamento legado (variantes de termo único com fallbacks).
+4. Retorna texto legível com confidence labels e metadados, ou `no_confident_match`.
 
 **Isolamento de falha**: a falha na checagem do DataServer não impede o retorno de logs; a tool mantém `ok=True` se logs foram consultados com sucesso, mesmo que a PI Web API esteja indisponível.
 
@@ -754,6 +785,8 @@ Cliente HTTP assíncrono (`app/clients/pi_web_api_client.py`) para comunicação
 | `get_dataservers()` | `GET /dataservers` | Retorna lista completa de Items (sem cache, checagem de conectividade) |
 | `get_data_server()` | `GET /dataservers` | Busca data server (cacheado) |
 | `get_all_enumeration_sets()` | `GET /enumerationsets` | Lista todos os digital sets |
+| `search_pi_points(query)` | `GET /points/search` | Busca tags por nome/descrição com sintaxe PI Search Query |
+| `get_points_by_name_filter(name_filter)` | `GET /dataservers/{webId}/points?nameFilter=` | Fallback de busca por nome (sem sintaxe Search Query) |
 
 ### Batch Request
 
@@ -1360,6 +1393,11 @@ pytest -m integration                                 # Integração (requer Doc
 | MCP artifact `Tag não encontrada em tag_statistics` (falha parcial) | O artefato contém dados das tags processadas; a falha é registrada em `errors_summary` no manifesto. Não gera arquivo vazio. |
 | "Valores minuto a minuto" retorna média (`operation=mean`) em vez de valores interpolados | O agente usou `tag_statistics` em vez de `generate_pi_tags_series_csv`. Verificar se `ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=true` e se o prompt/RAG foram atualizados. A nova tool é a correta para séries sem agregação. |
 | `generate_pi_tags_series_csv` retorna `no_data` com frequência | A PI Web API pode não ter dados interpolados no período e interval solicitados. Testar com `recorded` ou verificar a disponibilidade de dados da tag. |
+| `search_pi_points` retorna tags de corrente para consulta "velocidade rb2" | A flag `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND` pode estar desativada (default false). Ativar em QA antes de produção. O modo legado usa fallbacks de termo único. |
+| `search_pi_points` retorna `no_confident_match` | Não é erro técnico (isError=false). A ferramenta não encontrou resultado com confiança high/medium. Refinar a consulta com mais contexto (equipamento, área, parte do nome). |
+| `search_pi_points` retorna `[DISABLED]` | A flag `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND` não habilita a tool — a tool está sempre disponível. Verificar log de startup para `strict_and` status. |
+| Rollout: ativar strict AND | 1. Testar em QA com `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true`. 2. Rodar `poetry run pytest tests/unit/test_search_points_service.py -v` (183 testes). 3. Rodar smoke test no PI real (query "velocidade rb2" deve retornar LFS_RB2_VELOPROC no topo). 4. Validar 1 semana de logs. 5. Ativar em produção (flag=true + restart mcp_server). 6. Nenhuma reingestão de RAG necessária. |
+| Rollback: desativar strict AND | `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` + restart mcp_server. Verificar log: `search_pi_points: STRICT_AND DISABLED`. Caminho legado intacto, sem novo deploy. |
 
 ---
 

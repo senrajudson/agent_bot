@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -50,3 +51,66 @@ def test_client_functions_importable() -> None:
 
     assert callable(search_pi_points)
     assert callable(get_points_by_name_filter)
+
+
+# ===================================================================
+# T024 — FastMCP test for search_pi_points with AND
+# ===================================================================
+@pytest.mark.asyncio
+async def test_search_pi_points_via_mcp_success() -> None:
+    """FastMCP invocation: search_pi_points returns valid output."""
+    mcp_root = Path(__file__).parent.parent.parent / "mcp_server"
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    if str(mcp_root.parent) not in sys.path:
+        sys.path.insert(0, str(mcp_root.parent))
+
+    if "mcp_server.server" not in sys.modules:
+        importlib.import_module("mcp_server.server")
+    from mcp_server.server import search_pi_points
+
+    with patch(
+        "domain.pims.services.search_points_service.client_search",
+        return_value={
+            "Items": [
+                {
+                    "Name": "LFS_RB2_VELOPROC",
+                    "Descriptor": "VELOCIDADE DO PROCESSO DO RB2",
+                    "WebId": "W123",
+                    "PointType": "Float32",
+                    "EngineeringUnits": "m/min",
+                }
+            ]
+        },
+    ):
+        result = await search_pi_points.run(
+            arguments={"query": "velocidade rb2", "search_mode": "auto"},
+        )
+    assert result is not None
+    assert result.content is not None
+    assert len(result.content) > 0
+
+
+@pytest.mark.asyncio
+async def test_search_pi_points_via_mcp_no_match() -> None:
+    """FastMCP: returns valid output even with no match."""
+    mcp_root = Path(__file__).parent.parent.parent / "mcp_server"
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    if str(mcp_root.parent) not in sys.path:
+        sys.path.insert(0, str(mcp_root.parent))
+
+    if "mcp_server.server" not in sys.modules:
+        importlib.import_module("mcp_server.server")
+    from mcp_server.server import search_pi_points
+
+    with patch(
+        "domain.pims.services.search_points_service.client_search",
+        return_value={"Items": []},
+    ):
+        result = await search_pi_points.run(
+            arguments={"query": "xxx yyy", "search_mode": "auto"},
+        )
+    assert result is not None
+    assert result.content is not None
+    assert len(result.content) > 0

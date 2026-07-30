@@ -1,9 +1,9 @@
 from __future__ import annotations
+import asyncio
 from dataclasses import dataclass
-
-import logging
+from enum import Enum
 import re
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -14,6 +14,8 @@ from domain.pims.clients.pi_web_api_client import (
     get_points_by_name_filter,
     search_pi_points as client_search,
 )
+
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,24 @@ VALID_SEARCH_MODES = {"auto", "name", "description", "query"}
 _DEFAULT_MAX_COUNT = 5
 _MAX_COUNT_HARD_CAP = 5
 _MAX_QUERY_LENGTH = 200
+
+
+class Confidence(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+MatchBasis = Literal[
+    "name_exact",
+    "name_contains_all_tokens",
+    "name_contains_context_token",
+    "name_contains_variable_token",
+    "description_contains_all_tokens",
+    "description_contains_variable_token",
+    "industrial_code_match",
+    "technical_expansion_match",
+]
 
 # ---------------------------------------------------------------------------
 # Query Understanding — domain model
@@ -348,6 +368,51 @@ def _build_namefilter_variants(search_terms: SearchTerms | None = None) -> list[
 
 
 # ---------------------------------------------------------------------------
+# Parallel query executor (strict AND)
+# ---------------------------------------------------------------------------
+
+async def _run_single_query(query_str: str, max_count: int, timeout: float) -> list[dict[str, Any]]:
+    try:
+        raw = await asyncio.wait_for(
+            client_search(
+                query=query_str,
+                max_count=max_count,
+                selected_fields=SEARCH_SELECTED_FIELDS,
+            ),
+            timeout=timeout,
+        )
+        return _format_items(raw)
+    except asyncio.TimeoutError:
+        logger.warning("Query timeout: query=%s", query_str)
+        return []
+    except httpx.HTTPStatusError as exc:
+        logger.warning("Query HTTP %d: query=%s", exc.response.status_code, query_str)
+        return []
+    except _NETWORK_ERRORS:
+        logger.warning("Query unreachable: query=%s", query_str)
+        return []
+    except Exception as exc:
+        logger.warning("Query error: query=%s exc=%s", query_str, exc)
+        return []
+
+
+async def _parallel_search(
+    queries: list[str],
+    max_count: int,
+    timeout: float,
+) -> list[dict[str, Any]]:
+    if not queries:
+        return []
+    coros = [_run_single_query(q, max_count, timeout) for q in queries]
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    merged: list[dict[str, Any]] = []
+    for r in results:
+        if isinstance(r, list):
+            merged.extend(r)
+    return merged
+
+
+# ---------------------------------------------------------------------------
 # Variant executor
 # ---------------------------------------------------------------------------
 
@@ -404,6 +469,121 @@ def _build_search_query(query: str, mode: str) -> str:
     if mode == "description":
         return f"Description:=*{query}*"
     return query
+
+
+def _build_and_query_for_field(field: str, tokens: list[str]) -> str:
+    if field not in {"Name", "Description"}:
+        raise ValueError(f"Campo inválido: {field}")
+    if not tokens:
+        raise ValueError("tokens não pode ser vazio")
+    if len(tokens) == 1:
+        return f"{field}:=*{tokens[0]}*"
+    return " AND ".join(f"{field}:=*{t}*" for t in tokens)
+
+
+# ---------------------------------------------------------------------------
+# Boundary & local filtering (strict AND helpers)
+# ---------------------------------------------------------------------------
+
+_BOUNDARY_PATTERN = re.compile(r"[^A-Z0-9]")
+
+
+def _has_boundary_match(token: str, text: str) -> bool:
+    token_up = token.upper()
+    text_up = text.upper()
+    rgx = re.compile(
+        rf"(?:^|{_BOUNDARY_PATTERN.pattern}){re.escape(token_up)}(?:{_BOUNDARY_PATTERN.pattern}|$)"
+    )
+    return bool(rgx.search(text_up))
+
+
+def _has_all_tokens_in_text(
+    tokens: list[str],
+    name: str,
+    descriptor: str | None,
+) -> bool:
+    candidate = f"{name.upper()} {descriptor.upper() if descriptor else ''}"
+    for t in tokens:
+        t_up = t.upper()
+        if _INDUSTRIAL_CODE_REGEX.match(t_up):
+            if not _has_boundary_match(t, candidate):
+                return False
+        elif t_up not in candidate:
+            return False
+    return True
+
+
+def _compute_confidence_and_basis(
+    item: dict[str, Any],
+    tokens: list[str],
+) -> tuple[Confidence, list[str]]:
+    name = (item.get("name") or "").upper()
+    descriptor = (item.get("description") or "").upper()
+    candidate = f"{name} {descriptor}"
+    basis: list[str] = []
+
+    all_in_name = _has_all_tokens_in_text(tokens, name, None)
+    all_in_desc = _has_all_tokens_in_text(tokens, descriptor, None)
+
+    if all_in_name and all_in_desc:
+        basis.append("name_contains_all_tokens")
+        basis.append("description_contains_all_tokens")
+        return (Confidence.HIGH, basis)
+
+    name_normalized = (item.get("name") or "").lower()
+    query_normalized = " ".join(tokens)
+    if name_normalized == query_normalized:
+        basis.append("name_exact")
+        return (Confidence.HIGH, basis)
+
+    context_tokens = [t for t in tokens if _INDUSTRIAL_CODE_REGEX.match(t.upper())]
+    var_tokens = [t for t in tokens if not _INDUSTRIAL_CODE_REGEX.match(t.upper())]
+    context_in_name = bool(context_tokens) and all(
+        _has_boundary_match(t, name) for t in context_tokens
+    )
+    var_in_desc = bool(var_tokens) and all(
+        t.upper() in descriptor for t in var_tokens
+    )
+    var_in_name = bool(var_tokens) and all(
+        t.upper() in name for t in var_tokens
+    )
+    context_in_desc = bool(context_tokens) and all(
+        _has_boundary_match(t, descriptor) for t in context_tokens
+    )
+
+    if context_in_name and var_in_desc and all(
+        _has_boundary_match(t, candidate) if _INDUSTRIAL_CODE_REGEX.match(t.upper())
+        else t.upper() in candidate
+        for t in tokens
+    ):
+        basis.append("name_contains_context_token")
+        basis.append("description_contains_variable_token")
+        return (Confidence.HIGH, basis)
+
+    if all_in_name:
+        basis.append("name_contains_all_tokens")
+        eng_units = (item.get("engineering_units") or "").upper()
+        if eng_units and eng_units != "N/A":
+            basis.append("technical_expansion_match")
+        return (Confidence.MEDIUM, basis)
+
+    if all_in_desc:
+        basis.append("description_contains_all_tokens")
+        boundary_count = sum(
+            1 for t in tokens if _has_boundary_match(t, candidate)
+        )
+        if boundary_count >= len(tokens):
+            return (Confidence.MEDIUM, basis)
+        else:
+            basis.append("technical_expansion_match")
+            return (Confidence.MEDIUM, basis)
+
+    partial_count = sum(1 for t in tokens if t.upper() in candidate)
+    if partial_count >= 2 and partial_count < len(tokens):
+        basis.append("technical_expansion_match")
+        return (Confidence.LOW, basis)
+
+    return (Confidence.LOW, ["technical_expansion_match"])
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +653,50 @@ def _dedup_items(
             seen.add(key)
             result.append(item)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Ranking & confidence filtering (strict AND)
+# ---------------------------------------------------------------------------
+
+
+def _rank_and_cap(
+    items: list[dict[str, Any]],
+    tokens: list[str],
+    cap: int = 5,
+) -> list[dict[str, Any]]:
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for item in items:
+        name = (item.get("name") or "").upper()
+        descriptor = (item.get("description") or "").upper()
+        candidate = f"{name} {descriptor}"
+
+        all_in_name = _has_all_tokens_in_text(tokens, name, None)
+        all_in_desc = _has_all_tokens_in_text(tokens, descriptor, None)
+
+        if name == " ".join(tokens).upper():
+            score = 100
+        elif all_in_name and all_in_desc:
+            score = 80
+        elif all_in_name:
+            score = 50
+        elif all_in_desc:
+            score = 30
+        else:
+            score = 5
+
+        confidence, match_basis = _compute_confidence_and_basis(item, tokens)
+        item["confidence"] = confidence.value
+        item["matched_concepts"] = list(tokens)
+        item["match_basis"] = match_basis
+
+        if confidence == Confidence.LOW:
+            continue
+
+        scored.append((score, item))
+
+    scored.sort(key=lambda x: (-x[0], x[1].get("name", "")))
+    return [item for _, item in scored[:cap]]
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +794,99 @@ def _build_error(
     }
 
 
+def _build_strict_result(
+    query: str,
+    search_mode: str,
+    items: list[dict[str, Any]],
+    tokens: list[str],
+    max_count: int = 5,
+) -> dict[str, Any]:
+    ranked = _rank_and_cap(items, tokens, cap=max_count)
+    count = len(ranked)
+    no_confident_match = count == 0
+    refinement_suggested = no_confident_match or (
+        count > 0
+        and any(item.get("confidence") != "high" for item in ranked)
+    )
+    if no_confident_match:
+        message = (
+            "Nenhuma tag correspondente a todos os termos foi encontrada. "
+            "Para refinar, informe área, equipamento ou parte do nome da tag."
+        )
+    else:
+        _CONF_LABEL = {"high": "alta confiança", "medium": "confiança média"}
+        lines = [f"Encontrei até {count} tag(s):"]
+        for i, item in enumerate(ranked[:max_count], 1):
+            name = item.get("name", "?")
+            desc = item.get("description") or ""
+            conf = item.get("confidence", "?")
+            conf_label = _CONF_LABEL.get(conf, conf)
+            line = f"{i}. {name}"
+            if desc:
+                line += f" — {desc}"
+            line += f" [{conf_label}]"
+            lines.append(line)
+        lines.append("Para refinar, informe área, equipamento ou parte do nome da tag.")
+        message = "\n".join(lines)
+    return {
+        "success": not no_confident_match,
+        "query": query,
+        "search_mode": search_mode,
+        "count": count,
+        "max_count": max_count,
+        "items": ranked,
+        "no_confident_match": no_confident_match,
+        "refinement_suggested": refinement_suggested,
+        "message": message,
+        "output": message,
+    }
+
+
+async def _build_strict_and_queries(
+    search_terms: SearchTerms,
+    max_variants: int,
+) -> list[str]:
+    tokens = search_terms.tokens
+    if len(tokens) < 2:
+        return [_build_and_query_for_field("Description", tokens)]
+    queries: list[str] = []
+    queries.append(_build_and_query_for_field("Description", tokens))
+    queries.append(_build_and_query_for_field("Name", tokens))
+    if max_variants >= 3 and search_terms.variable_terms and (search_terms.equipment_terms or search_terms.area_terms):
+        context = search_terms.equipment_terms + search_terms.area_terms
+        if context:
+            name_part = _build_and_query_for_field("Name", [t.upper() for t in context])
+            desc_part = _build_and_query_for_field("Description", search_terms.variable_terms)
+            queries.append(f"{name_part} AND {desc_part}")
+    if max_variants >= 4 and search_terms.variable_terms and (search_terms.equipment_terms or search_terms.area_terms):
+        context = search_terms.equipment_terms + search_terms.area_terms
+        if context:
+            name_part = _build_and_query_for_field("Name", search_terms.variable_terms)
+            desc_part = _build_and_query_for_field("Description", [t.upper() for t in context])
+            queries.append(f"{name_part} AND {desc_part}")
+    return queries[:max_variants]
+
+
+async def _search_strict_and(
+    search_terms: SearchTerms,
+    effective_mode: str,
+    internal_max_count: int = 25,
+    max_variants: int = 4,
+    timeout: float = 30.0,
+) -> dict[str, Any]:
+    tokens = search_terms.tokens
+    if not tokens:
+        return _build_error(search_terms.original, effective_mode, 0, "Nenhum termo significativo.")
+
+    queries = await _build_strict_and_queries(search_terms, max_variants)
+    if not queries:
+        return _build_strict_result(search_terms.original, effective_mode, [], tokens)
+
+    raw_candidates = await _parallel_search(queries, internal_max_count, timeout)
+    deduped = _dedup_items(raw_candidates)
+    return _build_strict_result(search_terms.original, effective_mode, deduped, tokens)
+
+
 def _detect_advanced_query(query: str) -> bool:
     return bool(re.search(r"(Description|Name)\s*:=", query))
 
@@ -605,6 +922,23 @@ async def search_pi_points(
     # ── query mode with unrecognized syntax → fallback to auto ──
     if effective_mode == "query" and not _detect_advanced_query(query_sanitized):
         effective_mode = "auto"
+
+    # ── Strict AND path (feature flag) ──
+    try:
+        from mcp_server.core.config import settings as _mcp_settings
+
+        if _mcp_settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND and effective_mode in ("auto", "name", "description"):
+            _tokens = search_terms.tokens
+            if len(_tokens) >= 2:
+                return await _search_strict_and(
+                    search_terms,
+                    effective_mode,
+                    internal_max_count=_mcp_settings.MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT,
+                    max_variants=_mcp_settings.MCP_SEARCH_PI_POINTS_MAX_VARIANTS,
+                    timeout=_mcp_settings.MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS,
+                )
+    except ImportError:
+        pass
 
     # ── auto mode ──
     if effective_mode == "auto":

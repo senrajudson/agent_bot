@@ -21,10 +21,18 @@ from domain.pims.services.search_points_service import (
     _validate_max_count,
     _validate_search_mode,
     _build_search_query,
+    _build_and_query_for_field,
     _format_items,
     _build_output,
     _dedup_items,
     _detect_advanced_query,
+    _has_boundary_match,
+    _has_all_tokens_in_text,
+    Confidence,
+    _compute_confidence_and_basis,
+    _rank_and_cap,
+    _build_strict_result,
+    _build_strict_and_queries,
     search_pi_points,
 )
 
@@ -1385,3 +1393,484 @@ class TestValidationPreserved:
         ):
             result = await search_pi_points(query="RB")
             assert result["success"] is True
+
+
+# ===================================================================
+# T015 — TestBuildAndQuery
+# ===================================================================
+class TestBuildAndQuery:
+
+    def test_1_token_description(self):
+        q = _build_and_query_for_field("Description", ["velocidade"])
+        assert q == "Description:=*velocidade*"
+
+    def test_2_tokens_description(self):
+        q = _build_and_query_for_field("Description", ["velocidade", "rb2"])
+        assert q == "Description:=*velocidade* AND Description:=*rb2*"
+
+    def test_3_tokens_description(self):
+        q = _build_and_query_for_field("Description", ["vazao", "gn", "rb3"])
+        assert q == "Description:=*vazao* AND Description:=*gn* AND Description:=*rb3*"
+
+    def test_1_token_name(self):
+        q = _build_and_query_for_field("Name", ["LFI_RB3"])
+        assert q == "Name:=*LFI_RB3*"
+
+    def test_2_tokens_name(self):
+        q = _build_and_query_for_field("Name", ["velocidade", "rb2"])
+        assert q == "Name:=*velocidade* AND Name:=*rb2*"
+
+    def test_reversed_order_equivalence(self):
+        q1 = _build_and_query_for_field("Description", ["velocidade", "rb2"])
+        q2 = _build_and_query_for_field("Description", ["rb2", "velocidade"])
+        assert q1 != q2
+        assert "velocidade" in q1 and "rb2" in q1
+        assert "rb2" in q2 and "velocidade" in q2
+
+    def test_accent_normalization(self):
+        q = _build_and_query_for_field("Description", ["vazao", "rb3"])
+        assert "vazao" in q and "rb3" in q
+
+    def test_invalid_field_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            _build_and_query_for_field("Invalid", ["test"])
+
+    def test_empty_tokens_raises(self):
+        import pytest
+        with pytest.raises(ValueError):
+            _build_and_query_for_field("Description", [])
+
+
+# ===================================================================
+# T016 — TestBoundaryCheck
+# ===================================================================
+class TestBoundaryCheck:
+
+    def test_rb2_exact(self):
+        assert _has_boundary_match("RB2", "CORRENTE EXAUSTOR JATO DO RB2") is True
+
+    def test_rb2_not_rb20(self):
+        assert _has_boundary_match("RB2", "CORRENTE EXAUSTOR JATO DO RB20") is False
+
+    def test_lfi_boundary(self):
+        assert _has_boundary_match("LFI", "LFI_RB3_VAZAO") is True
+
+    def test_rb2_with_underscore_separator(self):
+        assert _has_boundary_match("RB2", "LFI_RB2_VELOPROC") is True
+
+    def test_b04_exact(self):
+        assert _has_boundary_match("B04", "MOTOR B04 PRINCIPAL") is True
+
+    def test_b04_not_b040(self):
+        assert _has_boundary_match("B04", "MOTOR B040 PRINCIPAL") is False
+
+
+# ===================================================================
+# T017 — TestLocalFilter
+# ===================================================================
+class TestLocalFilter:
+
+    def test_lfs_rb2_veloproc_all_tokens(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade", "rb2"],
+            "LFS_RB2_VELOPROC",
+            "VELOCIDADE DO PROCESSO DO RB2",
+        ) is True
+
+    def test_lfs_rb2_ex_jg_corrente_rejected(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade", "rb2"],
+            "LFS_RB2_A_EX_JG",
+            "CORRENTE DO EXAUSTOR JATO DO RB2",
+        ) is False
+
+    def test_lfs_rb3_veloproc_velocidade_rejected(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade", "rb2"],
+            "LFS_RB3_VELOPROC",
+            "VELOCIDADE DO PROCESSO DO RB3",
+        ) is False
+
+    def test_lfs_rb2_motor_01_velocidade_sem_rb2(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade", "rb2"],
+            "LFS_RB2_MOTOR_01",
+            "VELOCIDADE DO MOTOR PRINCIPAL",
+        ) is True  # RB2 in name (underscore boundary), velocidade in desc
+
+    def test_tag_generica_velocidade_sozinha_rejected(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade", "rb2"],
+            "TAG_GENERICA",
+            "VELOCIDADE",
+        ) is False
+
+    def test_1_token_aceito(self):
+        assert _has_all_tokens_in_text(
+            ["velocidade"],
+            "LFS_RB2_VELOPROC",
+            "VELOCIDADE DO PROCESSO DO RB2",
+        ) is True
+
+
+# ===================================================================
+# T018 — TestRankingAndConfidence
+# ===================================================================
+class TestRankingAndConfidence:
+
+    def test_velocidade_rb2_high(self):
+        item = {"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"}
+        conf, _ = _compute_confidence_and_basis(item, ["velocidade", "rb2"])
+        assert conf == Confidence.HIGH
+
+    def test_corrente_rb2_low(self):
+        item = {"name": "LFS_RB2_A_EX_JG", "description": "CORRENTE DO EXAUSTOR JATO DO RB2"}
+        conf, _ = _compute_confidence_and_basis(item, ["velocidade", "rb2"])
+        assert conf == Confidence.LOW
+
+    def test_velocidade_rb3_low(self):
+        item = {"name": "LFS_RB3_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB3"}
+        conf, _ = _compute_confidence_and_basis(item, ["velocidade", "rb2"])
+        assert conf == Confidence.LOW
+
+    def test_name_exact_high(self):
+        item = {"name": "LFS_RB2_VELOPROC", "description": "qualquer"}
+        conf, _ = _compute_confidence_and_basis(item, ["lfs_rb2_veloproc"])
+        assert conf == Confidence.HIGH
+
+    def test_ranking_priority(self):
+        items = [
+            {"name": "LFS_RB2_A_EX_JG", "description": "CORRENTE DO EXAUSTOR JATO DO RB2"},
+            {"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"},
+        ]
+        ranked = _rank_and_cap(items, ["velocidade", "rb2"])
+        assert len(ranked) == 1
+        assert ranked[0]["name"] == "LFS_RB2_VELOPROC"
+
+    def test_hard_cap_5(self):
+        items = [
+            {"name": f"LFS_RB2_TAG_{i}", "description": f"VELOCIDADE DO PROCESSO DO RB2 TAG_{i}"}
+            for i in range(10)
+        ]
+        ranked = _rank_and_cap(items, ["velocidade", "rb2"], cap=5)
+        assert len(ranked) <= 5
+
+    def test_low_not_returned(self):
+        items = [
+            {"name": "LFS_RB2_A_EX_JG", "description": "CORRENTE"},
+            {"name": "LFS_RB3_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB3"},
+        ]
+        ranked = _rank_and_cap(items, ["velocidade", "rb2"])
+        assert len(ranked) == 0
+
+
+# ===================================================================
+# T019 — TestNoConfidentMatch
+# ===================================================================
+class TestNoConfidentMatch:
+
+    def test_no_items_no_confident_match(self):
+        result = _build_strict_result(
+            "velocidade rb2", "auto", [], ["velocidade", "rb2"],
+        )
+        assert result["no_confident_match"] is True
+        assert result["refinement_suggested"] is True
+        assert result["success"] is False
+        assert result["count"] == 0
+
+    def test_low_only_no_confident_match(self):
+        items = [{"name": "LFS_RB2_A_EX_JG", "description": "CORRENTE DO EXAUSTOR JATO DO RB2"}]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert result["no_confident_match"] is True
+
+    def test_success_with_results(self):
+        items = [{"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"}]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert result["no_confident_match"] is False
+        assert result["count"] >= 1
+        assert result["success"] is True
+
+
+# ===================================================================
+# T020 — TestParallelAuto (isolated, no real PI)
+# ===================================================================
+class TestParallelAuto:
+
+    @pytest.mark.asyncio
+    async def test_builds_at_most_4_queries(self):
+        st = SearchTerms(
+            original="velocidade rb2",
+            normalized_phrase="velocidade rb2",
+            tokens=["velocidade", "rb2"],
+            variable_terms=["velocidade"],
+            equipment_terms=[],
+            area_terms=["rb2"],
+            technical_terms=["velocidade", "rb2", "VEL", "VELOC", "VELOCIDADE"],
+        )
+        queries = await _build_strict_and_queries(st, max_variants=4)
+        assert len(queries) <= 4
+        assert len(queries) >= 2
+        for q in queries:
+            assert "Description" in q or "Name" in q
+
+    @pytest.mark.asyncio
+    async def test_1_token_no_extra_queries(self):
+        st = SearchTerms(
+            original="rb2",
+            normalized_phrase="rb2",
+            tokens=["rb2"],
+            variable_terms=[],
+            equipment_terms=[],
+            area_terms=["rb2"],
+            technical_terms=["rb2"],
+        )
+        queries = await _build_strict_and_queries(st, max_variants=4)
+        assert len(queries) == 1  # only description
+
+
+# ===================================================================
+# T021 — TestSchemaOutput
+# ===================================================================
+class TestSchemaOutput:
+
+    def test_output_is_plain_text_with_confidence(self):
+        items = [{"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"}]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        output = result["output"]
+        assert isinstance(output, str)
+        assert "alta confiança" in output
+        assert "LFS_RB2_VELOPROC" in output
+        assert output == result["message"]
+
+    def test_medium_confidence_label(self):
+        items = [{"name": "LFS_RB2_VAZAO", "description": "OUTRA DESCRICAO"}]
+        result = _build_strict_result(
+            "vazao rb2", "auto", items, ["vazao", "rb2"],
+        )
+        output = result["output"]
+        assert "confiança média" in output
+        assert "LFS_RB2_VAZAO" in output
+
+    def test_no_confident_match_plain_text(self):
+        result = _build_strict_result(
+            "xxx yyy", "auto", [], ["xxx", "yyy"],
+        )
+        assert result["no_confident_match"] is True
+        assert result["refinement_suggested"] is True
+        output = result["output"]
+        assert isinstance(output, str)
+        assert "Nenhuma tag" in output
+        assert "Para refinar" in output
+        assert output == result["message"]
+
+    def test_output_matches_message(self):
+        items = [{"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"}]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert result["output"] == result["message"]
+
+
+# ===================================================================
+# T022 — TestFlagDisabledRegression
+# ===================================================================
+class TestFlagDisabledRegression:
+    @pytest.mark.asyncio
+    async def test_auto_mode_legacy_path(self):
+        with patch(
+            "domain.pims.services.search_points_service.client_search",
+            new_callable=AsyncMock,
+            return_value={"Items": _MOCK_ITEMS},
+        ):
+            with patch(
+                "domain.pims.services.search_points_service._mcp_settings",
+                new=type("obj", (object,), {"ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND": False})(),
+                create=True,
+            ):
+                result = await search_pi_points(
+                    query="vazao", search_mode="auto"
+                )
+                assert result["success"] is True
+                assert "output" in result
+
+    @pytest.mark.asyncio
+    async def test_description_mode_legacy(self):
+        with patch(
+            "domain.pims.services.search_points_service.client_search",
+            new_callable=AsyncMock,
+            return_value={"Items": _MOCK_ITEMS},
+        ):
+            result = await search_pi_points(
+                query="vazao", search_mode="description"
+            )
+            assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_name_mode_legacy(self):
+        with patch(
+            "domain.pims.services.search_points_service.client_search",
+            new_callable=AsyncMock,
+            return_value={"Items": _MOCK_ITEMS},
+        ):
+            result = await search_pi_points(
+                query="LFI_RB3", search_mode="name"
+            )
+            assert result["success"] is True
+
+
+# ===================================================================
+# T023 — TestBuildStrictAndQueriesMultiToken
+# ===================================================================
+class TestBuildStrictAndQueriesMultiToken:
+
+    @pytest.mark.asyncio
+    async def test_q3_uses_all_context_tokens(self):
+        st = SearchTerms(
+            original="velocidade rb2 bomba",
+            normalized_phrase="velocidade rb2 bomba",
+            tokens=["velocidade", "rb2", "bomba"],
+            variable_terms=["velocidade"],
+            equipment_terms=["bomba"],
+            area_terms=["rb2"],
+            technical_terms=["velocidade", "rb2", "bomba"],
+        )
+        queries = await _build_strict_and_queries(st, max_variants=4)
+        q3 = queries[2] if len(queries) > 2 else None
+        if q3 and "Description" in q3 and "Name" in q3:
+            assert "rb2" in q3 or "RB2" in q3
+            assert "bomba" in q3 or "BOMBA" in q3
+            assert "velocidade" in q3
+            assert q3.count("AND") == 2  # Name AND-s + DESC AND-s → 2 ANDs
+
+    @pytest.mark.asyncio
+    async def test_q4_uses_all_context_tokens(self):
+        st = SearchTerms(
+            original="temperatura forno aciaria",
+            normalized_phrase="temperatura forno aciaria",
+            tokens=["temperatura", "forno", "aciaria"],
+            variable_terms=["temperatura"],
+            equipment_terms=["forno"],
+            area_terms=["aciaria"],
+            technical_terms=["temperatura", "forno", "aciaria"],
+        )
+        queries = await _build_strict_and_queries(st, max_variants=4)
+        q4 = queries[3] if len(queries) > 3 else None
+        if q4 and "Description" in q4 and "Name" in q4:
+            assert "ACIARIA" in q4 or "aciaria" in q4
+            assert "FORNO" in q4 or "forno" in q4
+            assert "TEMPERATURA" in q4 or "temperatura" in q4
+
+    @pytest.mark.asyncio
+    async def test_q3_has_both_fields(self):
+        st = SearchTerms(
+            original="vazao rb3",
+            normalized_phrase="vazao rb3",
+            tokens=["vazao", "rb3"],
+            variable_terms=["vazao"],
+            equipment_terms=[],
+            area_terms=["rb3"],
+            technical_terms=["vazao", "rb3"],
+        )
+        queries = await _build_strict_and_queries(st, max_variants=4)
+        assert len(queries) >= 2
+        for q in queries:
+            assert isinstance(q, str) and len(q) > 0
+
+
+# ===================================================================
+# T024 — TestBuildStrictResultConfidence
+# ===================================================================
+class TestBuildStrictResultConfidence:
+
+    def test_output_contains_high_confidence(self):
+        items = [{"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"}]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert "alta confiança" in result["output"]
+        assert result["items"][0]["confidence"] == "high"
+
+    def test_output_contains_medium_confidence(self):
+        items = [{"name": "LFS_RB2_VAZAO", "description": "OUTRA DESCRICAO"}]
+        result = _build_strict_result(
+            "vazao rb2", "auto", items, ["vazao", "rb2"],
+        )
+        assert "confiança média" in result["output"]
+
+    def test_multiple_items_all_high(self):
+        items = [
+            {"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"},
+            {"name": "LFS_RB2_VELO", "description": "VELOCIDADE AUX RB2"},
+        ]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert result["no_confident_match"] is False
+        assert result["refinement_suggested"] is False  # all high → no refinement needed
+
+    def test_mixed_confidence_suggests_refinement(self):
+        items = [
+            {"name": "LFS_RB2_VELOPROC", "description": "VELOCIDADE DO PROCESSO DO RB2"},
+            {"name": "TAG_X", "description": "VELOCIDADE PROCESSO RB2"},
+        ]
+        result = _build_strict_result(
+            "velocidade rb2", "auto", items, ["velocidade", "rb2"],
+        )
+        assert result["no_confident_match"] is False
+        assert result["refinement_suggested"] is True  # mixed HIGH+MEDIUM → refinement suggested
+
+
+# ===================================================================
+# T025 — TestBoundaryCheckEdgeCases
+# ===================================================================
+class TestBoundaryCheckEdgeCases:
+
+    def test_token_at_start_of_text(self):
+        assert _has_boundary_match("LFI", "LFI_RB3_VAZAO") is True
+
+    def test_token_at_end_of_text(self):
+        assert _has_boundary_match("RB3", "VAZAO_GN_RB3") is True
+
+    def test_token_with_hyphen_boundary(self):
+        assert _has_boundary_match("B04", "MOTOR-B04-PRINCIPAL") is True
+
+    def test_substring_mismatch(self):
+        assert _has_boundary_match("VEL", "VELOCIDADE") is False
+
+    def test_substring_mismatch_suffix(self):
+        assert _has_boundary_match("RB2", "LFS_RB20_TAG") is False
+
+
+# ===================================================================
+# T026 — TestExtractSearchTerms
+# ===================================================================
+class TestExtractSearchTerms:
+
+    def test_velocidade_rb2_classification(self):
+        st = _extract_search_terms("velocidade rb2")
+        assert "velocidade" in st.tokens
+        assert "rb2" in st.tokens
+        assert "velocidade" in st.variable_terms
+        assert "rb2" in st.area_terms
+
+    def test_three_tokens_mixed(self):
+        st = _extract_search_terms("temperatura forno aciaria")
+        assert len(st.tokens) >= 2
+        if "temperatura" in st.tokens:
+            assert "temperatura" in st.variable_terms
+        if "forno" in st.tokens:
+            assert "forno" in st.equipment_terms
+        if "aciaria" in st.tokens:
+            assert "aciaria" in st.area_terms
+
+    def test_single_token_preserved(self):
+        st = _extract_search_terms("velocidade")
+        assert st.tokens == ["velocidade"]
+        assert "velocidade" in st.variable_terms

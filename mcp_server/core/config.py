@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     MCP_SERIES_CSV_ERROR_MESSAGE_MAX_CHARS: int = 512
     MCP_SERIES_CSV_PUBLISH_TEMP_DIR: str = "/tmp/agent_bot_mcp_series_csv"
 
+    # search_pi_points strict AND (feature flag, default false)
+    ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND: bool = False
+    MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT: int = 25
+    MCP_SEARCH_PI_POINTS_MAX_VARIANTS: int = 4
+    MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS: float = 30.0
+
     def to_domain_integration_settings(self) -> DomainIntegrationSettings:
         return DomainIntegrationSettings(
             PI_WEB_API_BASE_URL=self.PI_WEB_API_BASE_URL,
@@ -226,6 +232,24 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_search_pi_points_strict_and(self) -> "Settings":
+        if not self.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND:
+            return self
+        if self.MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT < 5:
+            raise ValueError(
+                "MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT deve ser >= 5."
+            )
+        if self.MCP_SEARCH_PI_POINTS_MAX_VARIANTS not in {1, 2, 3, 4}:
+            raise ValueError(
+                "MCP_SEARCH_PI_POINTS_MAX_VARIANTS deve estar entre 1 e 4."
+            )
+        if self.MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS <= 0:
+            raise ValueError(
+                "MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS deve ser positivo."
+            )
+        return self
+
     def log_effective_config(self) -> None:
         logger.info(
             "Effective config: "
@@ -233,11 +257,13 @@ class Settings(BaseSettings):
             "ENABLE_DRIVE_CSV_EXPORT_TOOL=%s "
             "ENABLE_TEST_ARTIFACT_TOOL=%s "
             "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=%s "
+            "ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=%s "
             "MCP_PORT=%s",
             self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY,
             self.ENABLE_DRIVE_CSV_EXPORT_TOOL,
             self.ENABLE_TEST_ARTIFACT_TOOL,
             self.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV,
+            self.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND,
             self.MCP_PORT,
         )
 
