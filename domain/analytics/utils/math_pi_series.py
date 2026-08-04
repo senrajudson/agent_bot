@@ -120,6 +120,8 @@ async def buscar_serie_pi(
     summary_type: str = "Average",
     summary_duration: str = "1h",
     calculation_basis: str = "TimeWeighted",
+    *,
+    resolver=None,
 ) -> dict[str, Any]:
     method = (data_method or "interpolated").strip().lower()
 
@@ -136,4 +138,5 @@ async def buscar_serie_pi(
         summary_duration=summary_duration,
         calculation_basis=calculation_basis,
         max_count=max_count,
+        resolver=resolver,
     )

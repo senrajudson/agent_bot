@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from clients.artifact_client import ArtifactClient
+from mcp_server.clients.artifact_client import ArtifactClient
 
 logger = logging.getLogger("mcp_server.generate_test_artifact")
 
@@ -15,7 +15,7 @@ async def generate_test_artifact(
     mime_type: str = "text/plain",
     caption: str | None = None,
 ) -> str:
-    from core.config import settings
+    from mcp_server.core.config import settings
 
     if content is None:
         content = (

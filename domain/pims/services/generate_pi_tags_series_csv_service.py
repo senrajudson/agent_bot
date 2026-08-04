@@ -4,7 +4,7 @@ import asyncio
 import logging
 import math
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -31,6 +31,10 @@ MAX_DAYS = 31
 MAX_ESTIMATED_ROWS = 1_000_000
 MAX_COUNT_RECORDED = 200_000
 SEMAPHORE_LIMIT = 5
+
+# Fuso horário de saída para a coluna Timestamp do CSV.
+# Reutiliza DEFAULT_PI_TIMEZONE de domain.shared.time.pi_time_resolver.
+_SP_TZ: ZoneInfo = ZoneInfo(DEFAULT_PI_TIMEZONE)
 
 _CSV_COLUMNS = [
     "Tag",
@@ -145,12 +149,20 @@ def validate_series_csv_contract(
 
 
 def _extract_timestamp(ts_raw: Any) -> str | None:
+    """Converte timestamp da PI Web API (UTC) para America/Sao_Paulo.
+
+    Preserva o instante absoluto e emite ISO 8601 com offset explícito.
+    Fuso horário de saída: DEFAULT_PI_TIMEZONE (domain.shared.time.pi_time_resolver).
+    Entrada naive (sem tzinfo) é tratada como UTC.
+    """
     if not ts_raw:
         return None
     try:
         dt = datetime.fromisoformat(str(ts_raw))
-        return dt.isoformat()
-    except (ValueError, TypeError):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_SP_TZ).isoformat()
+    except Exception:
         return None
 
 

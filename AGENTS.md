@@ -737,6 +737,60 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 **Compatibilidade**: campos legados `total_errors` (alias de `erros_criticos`) e `total_warnings` (alias de `alertas_reais`) são preservados no summary.
 
+### 11.6 analyze_pi_tag_behavior
+
+**Propósito**: Análise compacta de uma ÚNICA tag PI, retornando métricas numéricas/digitais, gaps, mudanças abruptas, qualidade dos dados e classificação.
+
+**Parâmetros**:
+- `tag`: Nome da tag (obrigatório)
+- `start_time`: ISO 8601 com offset (obrigatório)
+- `end_time`: ISO 8601 com offset (obrigatório)
+- `zero_policy`: `valid`, `suspicious` (padrão) ou `invalid`
+
+**Parâmetros NÃO aceitos**: `context_text`, `pergunta_usuario`, `data_server`, `data_method`, `interval`, `baseline`, `group_by`, `query`, `**kwargs`.
+
+**Coleta automática**:
+- Numéricas: Recorded + Interpolated 5m
+- Digitais: AtOrBefore (estado inicial) + Recorded
+
+**Métricas numéricas**: count, min, max, mean, median, p1, p99, stddev_pop, stddev_sample, sum, zero_count, good_pct, questionable_pct, substituted_pct, zero_pct.
+
+**Métricas digitais**: distribuição de estados (count, percent, duration), transições (count, rate_per_hour, top 5).
+
+**Gaps**: Interpolated (threshold 900s), Recorded (descritivo, mediana × 3).
+
+**Mudanças abruptas**: z-score rolling (5) OR variação relativa > 50% do range. Top 5.
+
+**Qualidade**: DADOS_EXCELENTES/SAUDÁVEIS/ACEITÁVEIS/DEGRADADOS.
+
+**Saída**: Markdown estruturado com 9 seções fixas.
+
+**Limite**: UMA tag, 31 dias, resposta inline (sem arquivo).
+
+### 11.7 generate_pi_tags_analysis_report
+
+**Propósito**: Análise de 1 a 10 tags com relatório XLSX publicado no Google Drive.
+
+**Parâmetros**:
+- `tags`: Lista de 1 a 10 tags (obrigatório)
+- `start_time`: ISO 8601 com offset (obrigatório)
+- `end_time`: ISO 8601 com offset (obrigatório)
+- `zero_policy`: `valid`, `suspicious` ou `invalid` (padrão: `invalid`)
+
+**Parâmetros NÃO aceitos**: `context_text`, `pergunta_usuario`, `data_server`, `data_method`, `interval`, `baseline`, `group_by`, `query`, `**kwargs`.
+
+**Coleta automática**: mesma de `analyze_pi_tag_behavior` para cada tag.
+
+**Processamento**: concorrente com `Semaphore(5)`. Falhas isoladas por tag.
+
+**Sheets XLSX**: Resumo, Qualidade, Estatisticas, Recorded, Interpolated_5m, Gaps, Spikes, Estados_Digitais (condicional), Erros_Warnings, Metadados.
+
+**Falha parcial**: `status="partial_success"` com `errors_summary`. Falha total: ToolError sem manifest.
+
+**Saída**: `ArtifactManifest` com `schema_version="1.0"`, `format="xlsx"`, `view_url`.
+
+**Limite**: 1–10 tags, 31 dias, 1.000.000 linhas, 100 MiB.
+
 ---
 
 ## 12. PI Web API Client
@@ -791,6 +845,34 @@ POINT_SELECTED_FIELDS = (
 
 - **`_DATASERVER_CACHE`**: cacheia o data server por nome (escopo de processo)
 - **`_ENUM_SET_CACHE`**: cacheia digital set states por nome lowercase
+
+### Resolver Canônico de PI Point (v2)
+
+**Feature flag**: `ENABLE_PI_POINT_RESOLVER_V2` (default `false`)
+
+O resolver canônico (`domain/pims/clients/pi_point_resolver.py`) unifica a resolução de PI Points por nome, eliminando a divergência entre Batch e GET direto.
+
+**Transporte primário**: `POST /batch` com `build_resolution_only_batch_request(tag)` — sub-batch minimal com 1 sub-request `point_0`.
+
+**Transporte de fallback**: `GET /points?path=...` (via `get_point_by_tag`) — dispara apenas quando Batch retorna `EMPTY` ou `INVALID_RESPONSE`.
+
+**Retorno**: `PiPointResolution` (dataclass frozen) com `ResolutionStatus` enum.
+
+| Status | Significado |
+|---|---|
+| `RESOLVED` | PI Point encontrado |
+| `EMPTY_RESULT` | Resposta 2xx sem Items |
+| `NOT_FOUND` | Tag inexistente (confirmada) |
+| `INVALID_RESPONSE` | Resposta malformada |
+| `TRANSPORT_ERROR` | Erro de rede/HTTP |
+| `AUTH_ERROR` | Falha de autenticação |
+| `AMBIGUOUS_RESOLUTION` | Batch e GET discordam |
+
+**Observabilidade**: logs sanitizados (sem URL, IP, WebId, credencial). Helper `safe_log_payload()`.
+
+**Compatibilidade**: `get_point_by_tag` permanece como adapter legado. Callers internas (`get_point_attributes`, `get_recorded_values_by_tag`, etc.) não são afetados.
+
+**Tools migradas**: `consultar_tag`, `tag_statistics`, `tag_calculus`, `analyze_pi_tag_behavior`, `generate_pi_tags_analysis_report`.
 
 ### Digital States
 
@@ -1082,6 +1164,12 @@ class LLMParams(BaseModel):
 | `MCP_INLINE_MAX_ITEMS` | `100` | Limite secundário: itens inline |
 | `MCP_INLINE_MAX_BYTES` | `65536` | Limite secundário: bytes inline (64 KiB) |
 
+#### MCP Analysis Tools
+
+| Variável | Padrão | Descrição |
+|----------|--------|-----------|
+| `ENABLE_MCP_ANALYSIS_TOOLS` | `false` | Habilitar `analyze_pi_tag_behavior` e `generate_pi_tags_analysis_report` |
+
 ---
 
 ## 17. Comandos
@@ -1322,6 +1410,8 @@ pytest -m integration                                 # Integração (requer Doc
 | Math Tool timeout | Verificar `MATH_TOOL_BASE_URL` e `MATH_TOOL_TIMEOUT_SECONDS` (default 120s) |
 | MCP server inacessível / crash-loop | Verificar se o container `mcp_server` está `Up` (`docker ps`). Se estiver `Restarting`, checar logs com `docker logs mcp_server`: `ModuleNotFoundError: No module named 'mcp_server'` indica que o Dockerfile achatou o pacote. **Solução**: `COPY mcp_server/ /app/mcp_server/` em vez de `COPY mcp_server/ /app/`. Rebuild com `docker compose build --no-cache mcp_server`. |
 | MCP server `ModuleNotFoundError: No module named 'mcp_server'` | Causado pelo layout achatado do Dockerfile (`COPY mcp_server/ /app/`). O código espera `/app/mcp_server/...` mas o conteúdo foi copiado diretamente para `/app/`. **Correção**: alterar para `COPY mcp_server/ /app/mcp_server/` e `CMD ["python", "-m", "mcp_server.server"]`. A execução como módulo preserva os imports `from mcp_server.*`. |
+| `ModuleNotFoundError: No module named 'domain'` ao iniciar MCP local | Executar `poetry run python -m mcp_server.server` a partir da raiz do repositório. Execução por caminho (`python mcp_server/server.py`) é proibida e dispara fail-fast. Verificar que o venv foi instalado com `poetry install` (path dependency `agent-bot-domain`). Executar `bash scripts/smoke_mcp_local.sh` para diagnóstico. |
+| `AuthlibDeprecationWarning: authlib.jose module is deprecated` | Não bloqueante. Migrar para `joserfc` em mudança separada. |
 | Tokens inflados no Phoenix | Confirmar que `phoenix.py` tem `_TokenDedupSpanExporter` + `replace_default_processor=False` |
 | Bridge não recebe mensagens | Verificar credenciais GCP, `GOOGLE_CHAT_SUBSCRIPTION`, `secrets/google_chat/service-account.json` |
 | `MAX_AGENT_STEPS=8` atingido | Reformular pergunta; pode indicar prompt vago ou tool com erro |
@@ -1347,6 +1437,22 @@ pytest -m integration                                 # Integração (requer Doc
 | Rollout: ativar strict AND | 1. Testar em QA com `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true`. 2. Rodar `poetry run pytest tests/unit/test_search_points_service.py -v` (183 testes). 3. Rodar smoke test no PI real (query "velocidade rb2" deve retornar LFS_RB2_VELOPROC no topo). 4. Validar 1 semana de logs. 5. Ativar em produção (flag=true + restart mcp_server). 6. Nenhuma reingestão de RAG necessária. |
 | Rollback: desativar strict AND | `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` + restart mcp_server. Verificar log: `search_pi_points: STRICT_AND DISABLED`. Caminho legado intacto, sem novo deploy. |
 | LLM envia `context_text` para tool zero-argumento | **Causa raiz**: regra genérica no system prompt (`app/prompts/agent_prompt.py:144`) instruía "Preencha campos de contexto (pergunta_usuario, context_text) sempre que existirem." O LLM interpretava que toda tool recebe `context_text`, mesmo `status_pims_tool` que não tem parâmetros. **Correção (jul/2026)**: regra substituída por orientação schema-first: "use apenas campos do inputSchema exposto". `INVALID_TOOL_ARGUMENTS` bloqueia após 2 tentativas inválidas. Traço: `9b69c18285785fb773547d7557c713df`. |
+| `analyze_pi_tag_behavior` retornou `verdict=DADOS_DEGRADADOS` | Verificar `good_pct`, `questionable_pct`, `substituted_pct` no output. Se `good_pct < 80%`, os dados estão degradados. Verificar qualidade da fonte PI. |
+| `generate_pi_tags_analysis_report` retornou `partial_success` | Algumas tags falharam. Verificar `errors_summary` no manifest para identificar quais tags falharam e por quê. Tags com erro continuam no manifest com `retryable=true/false`. |
+| `openpyxl ImportError` em runtime | Verificar `pyproject.toml` contém `openpyxl (>=3.1.0,<4.0.0)` e `poetry install` foi executado. |
+| XLSX acima do limite | O retorno contém erro `ARTIFACT_ROW_LIMIT_EXCEEDED` ou `ARTIFACT_SIZE_LIMIT_EXCEEDED`. Reduza o período ou o número de tags. |
+
+### VS Code (opcional)
+
+Para `.vscode/launch.json`:
+
+```json
+{
+  "module": "mcp_server.server",
+  "cwd": "${workspaceFolder}",
+  "type": "python"
+}
+```
 
 ---
 
@@ -1911,7 +2017,7 @@ O `orchestrator.py` mantém stubs deprecated que usam `state: dict` para compati
 cd calc && poetry run uvicorn app.main:app --reload --port 8001
 
 # Terminal 2: MCP Server
-cd mcp_server && poetry run python server.py  # porta 8015
+poetry run python -m mcp_server.server  # porta 8015
 
 # Terminal 3: App principal
 poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8002

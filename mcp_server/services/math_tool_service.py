@@ -346,6 +346,8 @@ async def executar_estatistica_tags_service(
     calculation_basis: str = "TimeWeighted",
     group_by: str | None = None,
     return_series: bool = False,
+    *,
+    resolver=None,
 ) -> dict[str, Any]:
     outputs = []
     results = []
@@ -372,6 +374,7 @@ async def executar_estatistica_tags_service(
                 summary_type=summary_type,
                 summary_duration=summary_duration,
                 calculation_basis=calculation_basis,
+                resolver=resolver,
             )
 
             if output_mode == "series":
@@ -554,6 +557,8 @@ async def executar_calculo_historico_service(
     summary_type: str = "Average",
     summary_duration: str = "1h",
     calculation_basis: str = "TimeWeighted",
+    *,
+    resolver=None,
 ) -> dict[str, Any]:
     outputs = []
     results = []
@@ -572,6 +577,7 @@ async def executar_calculo_historico_service(
                 summary_type=summary_type,
                 summary_duration=summary_duration,
                 calculation_basis=calculation_basis,
+                resolver=resolver,
             )
 
             points = extrair_points(pi_response)

@@ -271,3 +271,88 @@ def instrument_fastapi_app(app):
         return
 
     FastAPIInstrumentor.instrument_app(app)
+
+
+# ---------------------------------------------------------------------------
+# Analysis tools metrics (OTel counters/histograms)
+# ---------------------------------------------------------------------------
+_analysis_duration_histogram = None
+_analysis_gaps_counter = None
+_analysis_spikes_counter = None
+_analysis_quality_counter = None
+
+
+def _get_analysis_metrics():
+    global _analysis_duration_histogram, _analysis_gaps_counter
+    global _analysis_spikes_counter, _analysis_quality_counter
+
+    if _analysis_duration_histogram is not None:
+        return (
+            _analysis_duration_histogram,
+            _analysis_gaps_counter,
+            _analysis_spikes_counter,
+            _analysis_quality_counter,
+        )
+
+    try:
+        from opentelemetry import metrics
+
+        meter = metrics.get_meter("agent_bot.analysis")
+
+        _analysis_duration_histogram = meter.create_histogram(
+            name="analysis.duration_ms",
+            description="Duration of analysis operations in milliseconds",
+            unit="ms",
+        )
+        _analysis_gaps_counter = meter.create_counter(
+            name="analysis.gaps.count",
+            description="Number of gaps detected",
+            unit="1",
+        )
+        _analysis_spikes_counter = meter.create_counter(
+            name="analysis.spikes.count",
+            description="Number of spikes detected",
+            unit="1",
+        )
+        _analysis_quality_counter = meter.create_counter(
+            name="analysis.quality.verdict",
+            description="Quality verdict distribution",
+            unit="1",
+        )
+
+        return (
+            _analysis_duration_histogram,
+            _analysis_gaps_counter,
+            _analysis_spikes_counter,
+            _analysis_quality_counter,
+        )
+    except Exception as e:
+        logger.debug("Failed to create analysis metrics: %s", e)
+        return None, None, None, None
+
+
+def record_analysis_metrics(
+    *,
+    tool_name: str,
+    duration_ms: float,
+    gaps_count: int = 0,
+    spikes_count: int = 0,
+    verdict: str = "",
+    tags_count: int = 1,
+) -> None:
+    """Record analysis metrics for observeability."""
+    h, gc, sc, vc = _get_analysis_metrics()
+    if h is None:
+        return
+
+    attrs = {"tool": tool_name, "tags_count": str(tags_count)}
+    h.record(duration_ms, attributes=attrs)
+
+    if gaps_count > 0:
+        gc.add(gaps_count, attributes={"tool": tool_name, "method": "interpolated"})
+
+    if spikes_count > 0:
+        sc.add(spikes_count, attributes={"tool": tool_name, "basis": "mixed"})
+
+    if verdict:
+        vc.add(1, attributes={"tool": tool_name, "verdict": verdict})

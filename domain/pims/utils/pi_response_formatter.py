@@ -59,6 +59,24 @@ def _normalizar_valor(valor: Any) -> Any:
     return valor
 
 
+def extract_unresolved_subresponse_indices(
+    raw_data: dict[str, Any],
+    expected_count: int,
+) -> list[int]:
+    """Retorna os índices de sub-resposta com Status != 200.
+
+    Usado por consultar_tag_service para omitir tags não-resolvidas
+    do output final, em vez de produzir None/'N/A' silencioso.
+    """
+    unresolved: list[int] = []
+    for i in range(expected_count):
+        point_entry = raw_data.get(f"point_{i}", {}) or {}
+        status = point_entry.get("Status", 0)
+        if status != 200:
+            unresolved.append(i)
+    return unresolved
+
+
 def format_pi_batch_response(raw_data: dict[str, Any]) -> dict[str, Any]:
     tags_limpas: list[dict[str, Any]] = []
 

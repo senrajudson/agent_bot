@@ -3,6 +3,7 @@ from typing import Any
 from domain.pims.clients.pi_web_api_client import get_tags_data
 from domain.pims.utils.digital_states import enriquecer_com_digital_states
 from domain.pims.utils.pi_response_formatter import (
+    extract_unresolved_subresponse_indices,
     format_pi_batch_response,
     formatar_mensagem_tags,
 )
@@ -34,11 +35,24 @@ async def consultar_tags_pi(
 
     raw_pi_response = await get_tags_data(tags_consultadas)
 
+    unresolved_indices = extract_unresolved_subresponse_indices(
+        raw_pi_response, expected_count=len(tags_consultadas)
+    )
+    unresolved_tags = [tags_consultadas[i] for i in unresolved_indices]
+
     formatted_response = format_pi_batch_response(raw_pi_response)
 
-    digital_info = await enriquecer_com_digital_states(
-        formatted_response["resultados_pi"]
-    )
+    resultados_pi_all = formatted_response["resultados_pi"]
+    if unresolved_indices:
+        unresolved_set = set(unresolved_indices)
+        resultados_pi_filtered = [
+            r for i, r in enumerate(resultados_pi_all)
+            if i not in unresolved_set
+        ]
+    else:
+        resultados_pi_filtered = resultados_pi_all
+
+    digital_info = await enriquecer_com_digital_states(resultados_pi_filtered)
 
     resultados_pi = digital_info["resultados_pi"]
 
@@ -54,6 +68,9 @@ async def consultar_tags_pi(
         "digital_sets_consultados": digital_info["digital_sets_consultados"],
         "digital_states_por_set": digital_info["digital_states_por_set"],
     }
+
+    if unresolved_tags:
+        tool_result["tags_nao_resolvidas"] = unresolved_tags
 
     if include_raw_response:
         tool_result["raw_pi_response"] = raw_pi_response

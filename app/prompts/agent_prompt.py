@@ -99,6 +99,8 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 - status_pims_tool: verifica se a PI Web API está acessível (/dataservers).
   O campo latency_classification classifica a latência como "baixa" (≤200ms),
   "alta" (>200ms) ou "indisponivel" (erro). Use esse campo na resposta.
+- analyze_pi_tag_behavior: análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais). Retorna resposta INLINE em Markdown.
+- generate_pi_tags_analysis_report: análise de 1 a 10 tags com relatório XLSX para download. Retorna ArtifactManifest com view_url do Google Drive.
 {test_artifact_tool_map_line}
 
 {test_artifact_section}
@@ -130,6 +132,17 @@ Desambiguação de roteamento:
   mês a mês / por mês / mensal → "1mo"
 - Sem granularidade explícita: omitir group_by (a tool usa 1h).
 - Enviar apenas códigos canônicos em group_by; nunca linguagem natural.
+- "análise de behavior", "análise de comportamento", "estatísticas de uma tag",
+  "qualidade dos dados de uma tag", "gaps de uma tag", "mudanças abruptas",
+  "análise compacta" → analyze_pi_tag_behavior.
+- "relatório de análise", "análise de múltiplas tags", "comparar tags",
+  "relatório XLSX", "exportar análise", "análise detalhada de tags"
+  → generate_pi_tags_analysis_report.
+- analyze_pi_tag_behavior recebe UMA tag; generate_pi_tags_analysis_report
+  recebe 1 a 10 tags.
+- Ambas recebem apenas: tag(s), start_time, end_time, zero_policy.
+  NÃO envie context_text, pergunta_usuario, data_server, data_method,
+  interval, baseline ou group_by.
 {test_artifact_disambiguation_line}
 
 Use esta referência temporal para resolver expressões como hoje, ontem, mês passado,

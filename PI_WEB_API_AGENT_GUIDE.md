@@ -28,6 +28,8 @@ Quando receber `delivery: drive_artifact`:
 | Compressão, exceção, compdev, excdev, archiving, scan, pointsource, location, atributos internos de uma tag PI       | Atributos de PI Point      | `tag_attributes_tool` |
 | Valores minuto a minuto, série interpolada, valores brutos recorded, CSV com valores                                | Série temporal sem agregação | `generate_pi_tags_series_csv` |
 | Disponibilidade da PI Web API (/dataservers), saúde do PIMS                                                          | Health check               | `status_pims_tool` (arguments={}) |
+| Análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais)                     | Análise single-tag INLINE  | `analyze_pi_tag_behavior` |
+| Análise de 1 a 10 tags com relatório XLSX (comparação multi-tag, export)                                            | Relatório multi-tag DRIVE  | `generate_pi_tags_analysis_report` |
 
 ## Descoberta de tags
 
@@ -1557,3 +1559,131 @@ um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
 - Máximo de 1.000.000 de linhas por CSV.
 - Máximo de 100 MiB por arquivo.
 - Times mínimos suportados: 1s, 1m, 5m, 15m, 1h, 1d, etc.
+
+---
+
+# CHUNK 27 - Análise compacta de uma tag PI
+
+## Intenção
+
+Use esta documentação quando o usuário pedir análise de comportamento,
+qualidade dos dados, gaps ou mudanças abruptas de uma ÚNICA tag.
+
+## Tool
+
+`analyze_pi_tag_behavior`
+
+## Parâmetros
+
+- `tag`: nome da tag (obrigatório)
+- `start_time`: ISO 8601 com offset (obrigatório)
+- `end_time`: ISO 8601 com offset (obrigatório)
+- `zero_policy`: `valid`, `suspicious` (padrão) ou `invalid`
+
+## Comportamento
+
+A tool coleta automaticamente:
+- Recorded (eventos brutos)
+- Interpolated 5m (grade uniforme)
+
+Para tags digitais:
+- Recorded (transições)
+- AtOrBefore (estado inicial)
+
+## Métricas numéricas
+
+count, min, max, mean, median, p1, p99, stddev_pop, stddev_sample, sum,
+zero_count, good_pct, questionable_pct, substituted_pct, zero_pct.
+
+## Métricas digitais
+
+Distribuição de estados (count, percent, duration),
+transições (count, rate_per_hour, top 5).
+
+## Gaps
+
+Interpolated: threshold = 5m × 3 = 900s (3 slots ausentes).
+Recorded: descritivo, mediana cadência × 3.
+
+## Mudanças abruptas
+
+z-score rolling (5 pontos) OR variação relativa > 50% do range.
+Top 5 por magnitude absoluta.
+
+## Qualidade
+
+Matriz determinística:
+- DADOS_EXCELENTES: good ≥ 99%, questionable == 0, substituted == 0
+- DADOS_SAUDÁVEIS: good ≥ 95%, questionable ≤ 1%, substituted ≤ 1%
+- DADOS_ACEITÁVEIS: good ≥ 80%
+- DADOS_DEGRADADOS: demais
+
+## Saída
+
+Markdown estruturado com seções: Resumo, Estatísticas, Comportamento,
+Gaps, Mudanças Abruptas, Qualidade, Classificação da Qualidade dos Dados.
+
+## Limites
+
+- UMA tag por chamada.
+- Período máximo: 31 dias.
+- Resposta inline (sem arquivo).
+
+---
+
+# CHUNK 28 - Relatório XLSX multi-tag
+
+## Intenção
+
+Use esta documentação quando o usuário pedir análise de múltiplas tags
+com exportação, comparação detalhada ou relatório formatado.
+
+## Tool
+
+`generate_pi_tags_analysis_report`
+
+## Parâmetros
+
+- `tags`: lista de 1 a 10 tags (obrigatório)
+- `start_time`: ISO 8601 com offset (obrigatório)
+- `end_time`: ISO 8601 com offset (obrigatório)
+- `zero_policy`: `valid`, `suspicious` ou `invalid` (padrão: `invalid`)
+
+## Comportamento
+
+A tool coleta automaticamente para cada tag:
+- Recorded + Interpolated 5m (numéricas)
+- AtOrBefore + Recorded (digitais)
+
+Processamento concorrente comSemaphore(5).
+
+## Sheets do XLSX
+
+1. Resumo — tag, tipo, descriptor, units, período, veredito
+2. Qualidade — good%, questionable%, substituted%, zero%, verdict
+3. Estatisticas — count, min, max, mean, median, p1, p99, stddev
+4. Recorded — pontos brutos (placeholder)
+5. Interpolated_5m — sempre presente; N/A para digitais
+6. Gaps — interpolated e recorded separados
+7. Spikes — top 5 por tag
+8. Estados_Digitais — apenas se ≥ 1 tag digital
+9. Erros_Warnings — erros por tag
+10. Metadados — tool_name, período, schema_version
+
+## Falha parcial
+
+- Todas OK: status="success"
+- Algumas OK: status="partial_success" + errors_summary
+- Nenhuma OK: ToolError sem manifest
+
+## Saída
+
+ArtifactManifest com schema_version="1.0", format="xlsx",
+view_url do Google Drive.
+
+## Limites
+
+- 1 a 10 tags por chamada.
+- Período máximo: 31 dias.
+- Máximo 1.000.000 de linhas no XLSX.
+- Máximo 100 MiB por arquivo.

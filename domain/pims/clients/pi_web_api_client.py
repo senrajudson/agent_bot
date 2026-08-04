@@ -122,7 +122,14 @@ def _normalizar_metodo_temporal(method: str) -> str:
     return method
 
 
-async def _get_point_and_web_id(tag: str) -> tuple[dict[str, Any], str]:
+async def _get_point_and_web_id(
+    tag: str, *, resolver=None
+) -> tuple[dict[str, Any], str]:
+    if resolver is not None:
+        resolution = await resolver(tag)
+        if resolution.is_resolved and resolution.items:
+            point = resolution.items[0]
+            return point, _get_web_id(point)
     point = await get_point_by_tag(tag)
     return point, _get_web_id(point)
 
@@ -193,6 +200,27 @@ async def execute_pi_batch(batch_request: dict[str, Any]) -> dict[str, Any]:
 
 async def get_tags_data(tags: list[str]) -> dict[str, Any]:
     return await execute_pi_batch(build_tags_batch_request(tags))
+
+
+def build_resolution_only_batch_request(tag: str) -> dict[str, Any]:
+    """Sub-batch minimal: 1 sub-request GET /points?path=... com selectedFields.
+
+    Diferente de build_tags_batch_request (que faz point + value + 9 attributes),
+    este carrega apenas point_0, suficiente para validar existência.
+    """
+    batch_request: dict[str, Any] = {}
+    base_url = _base_url()
+    pi_path = _pi_path(tag)
+
+    batch_request["point_0"] = {
+        "Method": "GET",
+        "Resource": (
+            f"{base_url}/points"
+            f"?path={pi_path}"
+            f"&selectedFields={POINT_SELECTED_FIELDS}"
+        ),
+    }
+    return batch_request
 
 
 async def get_data_server() -> dict[str, Any]:
@@ -470,9 +498,11 @@ async def buscar_dados_temporais_tag(
     summary_duration: str = "1h",
     calculation_basis: str = "TimeWeighted",
     max_count: int = 200000,
+    *,
+    resolver=None,
 ) -> dict[str, Any]:
     method = _normalizar_metodo_temporal(method)
-    point_metadata, web_id = await _get_point_and_web_id(tag)
+    point_metadata, web_id = await _get_point_and_web_id(tag, resolver=resolver)
 
     params: dict[str, Any] = {
         "startTime": start_time,

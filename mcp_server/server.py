@@ -8,10 +8,16 @@ historical statistics, temporal calculus, and PIMS operational status.
 import asyncio
 import json
 import logging
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+# Fail-fast: rejeita execução como script solto.
+# python -m mcp_server.server → __package__ == "mcp_server" → NÃO aciona
+# python mcp_server/server.py → __package__ in (None, "") → aciona
+if __name__ == "__main__" and not __package__:
+    raise SystemExit(
+        "Execute o MCP Server a partir da raiz do repositório com:\n"
+        "  poetry run python -m mcp_server.server\n"
+        "Execução por caminho não é suportada."
+    )
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,7 +28,7 @@ logger = logging.getLogger("mcp_server")
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
-from core.config import settings
+from mcp_server.core.config import settings
 
 from domain.core.config import configure_domain_settings
 from domain.shared.errors import DomainValidationError
@@ -362,7 +368,7 @@ async def tag_statistics(
 
         from domain.analytics.services.math_tool_service import executar_estatistica_tags_service
 
-        from core.config import settings as mcp_settings
+        from mcp_server.core.config import settings as mcp_settings
 
         is_delivery_on = mcp_settings.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY
 
@@ -665,7 +671,7 @@ async def generate_pi_tags_series_csv(
         from domain.pims.services.generate_pi_tags_series_csv_service import (
             generate_pi_tags_series_csv_service,
         )
-        from core.config import settings as mcp_settings
+        from mcp_server.core.config import settings as mcp_settings
 
         if not mcp_settings.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV:
             raise ToolError(
@@ -884,7 +890,7 @@ async def generate_test_artifact_tool(
         mime_type: MIME type do arquivo (default: text/plain).
         caption: Legenda para exibição no Google Chat (opcional).
     """
-    from services.generate_test_artifact_service import generate_test_artifact
+    from mcp_server.services.generate_test_artifact_service import generate_test_artifact
 
     return await generate_test_artifact(
         filename=filename,
@@ -923,8 +929,8 @@ async def export_csv_to_drive_tool(
         columns: Lista de nomes de colunas.
         rows: Lista de linhas; cada linha deve ter o mesmo número de colunas.
     """
-    from clients.google_drive_client import GoogleDriveClient, DriveCsvError
-    from services.export_csv_to_drive_service import (
+    from mcp_server.clients.google_drive_client import GoogleDriveClient, DriveCsvError
+    from mcp_server.services.export_csv_to_drive_service import (
         export_csv_to_drive,
         DriveCsvValidationError,
         DriveCsvSerializationError,
@@ -994,10 +1000,22 @@ if settings.ENABLE_DRIVE_CSV_EXPORT_TOOL:
 
 
 # ---------------------------------------------------------------------------
+# Tool: analyze_pi_tag_behavior + generate_pi_tags_analysis_report
+# ---------------------------------------------------------------------------
+if settings.ENABLE_MCP_ANALYSIS_TOOLS:
+    from mcp_server.services.analysis_tools import (
+        analyze_pi_tag_behavior,
+        generate_pi_tags_analysis_report,
+    )
+    mcp.tool(analyze_pi_tag_behavior)
+    mcp.tool(generate_pi_tags_analysis_report)
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    from core.startup_checks import check_math_tool
+    from mcp_server.core.startup_checks import check_math_tool
 
     settings.log_effective_config()
 
@@ -1038,6 +1056,22 @@ if __name__ == "__main__":
         logger.info(
             "search_pi_points: STRICT_AND DISABLED — "
             "defina ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true para habilitá-la"
+        )
+
+    if settings.ENABLE_MCP_ANALYSIS_TOOLS:
+        logger.info("analysis_tools: ENABLED")
+    else:
+        logger.info(
+            "analysis_tools: DISABLED — "
+            "defina ENABLE_MCP_ANALYSIS_TOOLS=true para habilitá-la"
+        )
+
+    if settings.ENABLE_PI_POINT_RESOLVER_V2:
+        logger.info("pi_point_resolver: ENABLED (v2)")
+    else:
+        logger.info(
+            "pi_point_resolver: DISABLED (legacy) — "
+            "defina ENABLE_PI_POINT_RESOLVER_V2=true para habilitá-la"
         )
 
     asyncio.run(check_math_tool(settings.MATH_TOOL_BASE_URL))

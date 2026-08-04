@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from clients.google_drive_client import GoogleDriveClient, DriveCsvError
+from mcp_server.clients.google_drive_client import GoogleDriveClient, DriveCsvError
 
 logger = logging.getLogger("mcp_server.export_csv_to_drive")
 

@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     MCP_SEARCH_PI_POINTS_MAX_VARIANTS: int = 4
     MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS: float = 30.0
 
+    # PI tag analysis tools (feature flag, default false)
+    ENABLE_MCP_ANALYSIS_TOOLS: bool = False
+
+    # Canonical PI point resolver (feature flag, default false)
+    ENABLE_PI_POINT_RESOLVER_V2: bool = False
+
     def to_domain_integration_settings(self) -> DomainIntegrationSettings:
         return DomainIntegrationSettings(
             PI_WEB_API_BASE_URL=self.PI_WEB_API_BASE_URL,
