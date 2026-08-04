@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Literal
 
 from fastmcp.exceptions import ToolError
@@ -10,7 +11,8 @@ from domain.analysis.formatters import InlineReportFormatter
 from domain.analysis.models import AnalysisError, AnalysisRequest
 from domain.analysis.services.pi_data_collector import PiDataCollector
 from domain.analysis.services.tag_analysis_service import TagAnalysisService
-from domain.shared.errors import DomainValidationError
+from domain.shared.errors import DomainValidationError, ValidationErrorCode
+from domain.shared.time import resolve_pi_time_range
 from mcp_server.core.config import settings
 from mcp_server.services.delivery._filename import build_filename
 from mcp_server.services.delivery.contracts import (
@@ -26,6 +28,38 @@ from mcp_server.services.delivery.xlsx_report_builder import XlsxReportBuilder
 
 logger = logging.getLogger("mcp_server.analysis_tools")
 
+_RESOLVER_TO_PUBLIC: dict[str, str] = {
+    ValidationErrorCode.INVALID_TIME_EXPRESSION.value: ValidationErrorCode.INVALID_TIMESTAMP.value,
+    ValidationErrorCode.UNSUPPORTED_TIME_EXPRESSION.value: ValidationErrorCode.INVALID_TIMESTAMP.value,
+    ValidationErrorCode.TIME_RESOLUTION_ERROR.value: ValidationErrorCode.INVALID_TIMESTAMP.value,
+}
+
+
+def _resolve_window(start_time: str, end_time: str) -> tuple[str, str, str]:
+    """Resolve PI time tokens to absolute ISO 8601 with offset, atomically.
+
+    Returns (start_iso, end_iso, input_kind).
+    Maps resolver-internal error codes to INVALID_TIMESTAMP per decision A1.
+    """
+    t0 = time.monotonic()
+    try:
+        resolved = resolve_pi_time_range(start_time, end_time)
+    except DomainValidationError as exc:
+        public_code = _RESOLVER_TO_PUBLIC.get(exc.code.value, exc.code.value)
+        raise DomainValidationError(
+            code=ValidationErrorCode(public_code),
+            message=str(exc),
+        ) from exc
+    finally:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "analysis_tools._resolve_window elapsed_ms=%d start_time=%s end_time=%s",
+            elapsed_ms,
+            start_time,
+            end_time,
+        )
+    return resolved.start_iso, resolved.end_iso, resolved.input_kind
+
 
 def _get_resolver_if_enabled():
     if settings.ENABLE_PI_POINT_RESOLVER_V2:
@@ -40,10 +74,15 @@ async def analyze_pi_tag_behavior(
     end_time: str,
     zero_policy: Literal["valid", "suspicious", "invalid"] = "suspicious",
 ) -> str:
+    try:
+        start_iso, end_iso, input_kind = _resolve_window(start_time, end_time)
+    except DomainValidationError as exc:
+        raise ToolError(f"[{exc.code}] {exc}") from exc
+
     request = AnalysisRequest(
         tag=tag,
-        start_time=start_time,
-        end_time=end_time,
+        start_time=start_iso,
+        end_time=end_iso,
         zero_policy=zero_policy,
     )
 
@@ -55,7 +94,7 @@ async def analyze_pi_tag_behavior(
     collector = PiDataCollector(
         resolver=_get_resolver_if_enabled(),
     )
-    data = await collector.fetch_one(tag, start_time, end_time)
+    data = await collector.fetch_one(tag, start_iso, end_iso)
 
     if isinstance(data, AnalysisError):
         raise ToolError(f"[{data.code}] {data.message}")
@@ -78,10 +117,15 @@ async def generate_pi_tags_analysis_report(
     end_time: str,
     zero_policy: Literal["valid", "suspicious", "invalid"] = "invalid",
 ) -> str:
+    try:
+        start_iso, end_iso, input_kind = _resolve_window(start_time, end_time)
+    except DomainValidationError as exc:
+        raise ToolError(f"[{exc.code}] {exc}") from exc
+
     request = AnalysisRequest(
         tags=tuple(tags),
-        start_time=start_time,
-        end_time=end_time,
+        start_time=start_iso,
+        end_time=end_iso,
         zero_policy=zero_policy,
     )
 
@@ -93,7 +137,7 @@ async def generate_pi_tags_analysis_report(
     collector = PiDataCollector(
         resolver=_get_resolver_if_enabled(),
     )
-    collected = await collector.fetch_many(list(tags), start_time, end_time)
+    collected = await collector.fetch_many(list(tags), start_iso, end_iso)
 
     service = TagAnalysisService()
     multi = service.analyze_many(collected, request)
@@ -159,8 +203,8 @@ async def generate_pi_tags_analysis_report(
                 tool_name="generate_pi_tags_analysis_report",
                 tags_requested=multi.total_requested,
                 tags_processed=multi.total_processed,
-                start_time=start_time,
-                end_time=end_time,
+                start_time=start_iso,
+                end_time=end_iso,
                 operation="analyze",
             ),
             artifact_metadata=ArtifactMetadata(

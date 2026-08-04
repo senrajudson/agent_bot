@@ -1576,8 +1576,8 @@ qualidade dos dados, gaps ou mudanças abruptas de uma ÚNICA tag.
 ## Parâmetros
 
 - `tag`: nome da tag (obrigatório)
-- `start_time`: ISO 8601 com offset (obrigatório)
-- `end_time`: ISO 8601 com offset (obrigatório)
+- `start_time`: ISO 8601 com offset ou token temporal PI suportado (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`) (obrigatório)
+- `end_time`: ISO 8601 com offset ou token temporal PI suportado (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`) (obrigatório)
 - `zero_policy`: `valid`, `suspicious` (padrão) ou `invalid`
 
 ## Comportamento
@@ -1645,8 +1645,8 @@ com exportação, comparação detalhada ou relatório formatado.
 ## Parâmetros
 
 - `tags`: lista de 1 a 10 tags (obrigatório)
-- `start_time`: ISO 8601 com offset (obrigatório)
-- `end_time`: ISO 8601 com offset (obrigatório)
+- `start_time`: ISO 8601 com offset ou token temporal PI suportado (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`) (obrigatório)
+- `end_time`: ISO 8601 com offset ou token temporal PI suportado (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`) (obrigatório)
 - `zero_policy`: `valid`, `suspicious` ou `invalid` (padrão: `invalid`)
 
 ## Comportamento

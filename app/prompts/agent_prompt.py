@@ -99,8 +99,8 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 - status_pims_tool: verifica se a PI Web API está acessível (/dataservers).
   O campo latency_classification classifica a latência como "baixa" (≤200ms),
   "alta" (>200ms) ou "indisponivel" (erro). Use esse campo na resposta.
-- analyze_pi_tag_behavior: análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais). Retorna resposta INLINE em Markdown.
-- generate_pi_tags_analysis_report: análise de 1 a 10 tags com relatório XLSX para download. Retorna ArtifactManifest com view_url do Google Drive.
+- analyze_pi_tag_behavior: análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais). Aceita start_time e end_time em ISO 8601 com offset ou tokens temporais PI (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`). Retorna resposta INLINE em Markdown.
+- generate_pi_tags_analysis_report: análise de 1 a 10 tags com relatório XLSX para download. Aceita start_time e end_time em ISO 8601 com offset ou tokens temporais PI (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`). Retorna ArtifactManifest com view_url do Google Drive.
 {test_artifact_tool_map_line}
 
 {test_artifact_section}
@@ -140,17 +140,22 @@ Desambiguação de roteamento:
   → generate_pi_tags_analysis_report.
 - analyze_pi_tag_behavior recebe UMA tag; generate_pi_tags_analysis_report
   recebe 1 a 10 tags.
-- Ambas recebem apenas: tag(s), start_time, end_time, zero_policy.
-  NÃO envie context_text, pergunta_usuario, data_server, data_method,
+- Ambas aceitam start_time e end_time em ISO 8601 com offset ou tokens
+  temporais PI suportados (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`).
+  A normalização é responsabilidade da tool.
+- NÃO envie context_text, pergunta_usuario, data_server, data_method,
   interval, baseline ou group_by.
 {test_artifact_disambiguation_line}
 
 Use esta referência temporal para resolver expressões como hoje, ontem, mês passado,
 últimas 2 horas, semana atual e agora.
 Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = primeiro dia do mês atual às 00:00.
-- Tempos relativos da PI Web API (`*`, `*-1h`, `T`, `Y`) são aceitos pela tool
-  `tag_statistics` e resolvidos deterministicamente. Não repita a chamada
-  convertendo-os para ISO após erro.
+- analyze_pi_tag_behavior e generate_pi_tags_analysis_report aceitam
+  timestamps ISO 8601 com offset e tokens temporais PI suportados, como
+  `*`, `*-1h`, `*-24h`, `*-1d`, `T` e `Y`.
+- Não repita uma chamada que retornou INVALID_TIMESTAMP com os mesmos
+  argumentos. Corrija apenas tokens malformados ou timestamps inválidos.
+  Tokens PI válidos são normalizados internamente pela tool.
 
 Regras para chamadas de tools:
 - Preserve exatamente os nomes das tags.
