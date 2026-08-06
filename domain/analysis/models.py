@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal, Optional
 
 ZeroPolicy = Literal["valid", "suspicious", "invalid"]
@@ -11,6 +12,14 @@ QualityVerdict = Literal[
     "DADOS_ACEITÁVEIS",
     "DADOS_DEGRADADOS",
 ]
+
+
+class DigitalAnalysisStatus(str, Enum):
+    COMPLETE = "complete"
+    NO_TRANSITIONS = "no_transitions"
+    PARTIAL_COVERAGE = "partial_coverage"
+    NO_DATA = "no_data"
+    INVALID_DIGITAL_VALUES = "invalid_digital_values"
 
 
 @dataclass(frozen=True)
@@ -99,9 +108,60 @@ class DigitalTransition:
 
 
 @dataclass(frozen=True)
+class DigitalStateRef:
+    state_code: int | str
+    state_name: str
+
+
+@dataclass(frozen=True)
+class DigitalStateOccupancy:
+    state_code: int | str
+    state_name: str
+    duration_seconds: float
+    percentage_of_window: float
+    entries_count: int
+
+
+@dataclass(frozen=True)
+class DigitalCoverageMetrics:
+    window_seconds: float
+    known_seconds: float
+    known_pct: float
+    bad_seconds: float
+    bad_pct: float
+    null_seconds: float
+    null_pct: float
+    unknown_seconds: float
+    unknown_pct: float
+    uncovered_seconds: float
+    uncovered_pct: float
+    questionable_seconds: float
+    questionable_pct: float
+    substituted_seconds: float
+    substituted_pct: float
+
+
+@dataclass(frozen=True)
+class DigitalAnalysisResult:
+    status: DigitalAnalysisStatus
+    possible_states: tuple[DigitalStateRef, ...]
+    initial_state: Optional[DigitalStateRef]
+    final_state: Optional[DigitalStateRef]
+    occupancy: tuple[DigitalStateOccupancy, ...]
+    transitions: tuple[DigitalTransition, ...]
+    coverage: DigitalCoverageMetrics
+    recorded_events_count: int
+    valid_events_count: int
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class TagAnalysisResult:
     metadata: TagMetadata
-    quality: QualityMetrics
+    quality: Optional[QualityMetrics] = None
+    digital_analysis: Optional[DigitalAnalysisResult] = None
+    start_time: str = ""
+    end_time: str = ""
     numeric: Optional[NumericStatistics] = None
     digital_durations: tuple[DigitalStateDuration, ...] = ()
     digital_transitions: tuple[DigitalTransition, ...] = ()

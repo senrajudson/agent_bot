@@ -34,6 +34,7 @@ class XlsxAnalysisProjection:
         columns = ["tag", "point_type", "descriptor", "eng_units", "period_start", "period_end", "quality_verdict"]
         rows = []
         for r in multi.results:
+            verdict = "NÃO APLICÁVEL" if r.digital_analysis is not None else (r.quality.verdict if r.quality else "")
             rows.append([
                 r.metadata.tag,
                 r.metadata.point_type,
@@ -41,7 +42,7 @@ class XlsxAnalysisProjection:
                 r.metadata.engineering_units or "",
                 multi.period_start,
                 multi.period_end,
-                r.quality.verdict,
+                verdict,
             ])
         return XlsxSheet(name="Resumo", columns=columns, rows=rows)
 
@@ -49,15 +50,29 @@ class XlsxAnalysisProjection:
         columns = ["tag", "good_pct", "questionable_pct", "substituted_pct", "zero_pct", "zero_policy", "verdict"]
         rows = []
         for r in multi.results:
-            rows.append([
-                r.metadata.tag,
-                r.quality.good_pct,
-                r.quality.questionable_pct,
-                r.quality.substituted_pct,
-                r.quality.zero_pct,
-                r.zero_policy_applied,
-                r.quality.verdict,
-            ])
+            if r.digital_analysis is not None:
+                # Digital: leave numeric cells empty
+                rows.append([
+                    r.metadata.tag,
+                    None,
+                    None,
+                    None,
+                    None,
+                    r.zero_policy_applied,
+                    "NÃO APLICÁVEL",
+                ])
+            elif r.quality is not None:
+                rows.append([
+                    r.metadata.tag,
+                    r.quality.good_pct,
+                    r.quality.questionable_pct,
+                    r.quality.substituted_pct,
+                    r.quality.zero_pct,
+                    r.zero_policy_applied,
+                    r.quality.verdict,
+                ])
+            else:
+                rows.append([r.metadata.tag, None, None, None, None, r.zero_policy_applied, ""])
         return XlsxSheet(name="Qualidade", columns=columns, rows=rows)
 
     def _estatisticas(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
@@ -71,14 +86,12 @@ class XlsxAnalysisProjection:
                     s.p01, s.p99, s.stddev_pop, s.stddev_sample, s.sum, s.zero_count,
                 ])
             else:
-                rows.append([r.metadata.tag, "", "", "", "", "", "", "", "", "", "", ""])
+                rows.append([r.metadata.tag, None, None, None, None, None, None, None, None, None, None, None])
         return XlsxSheet(name="Estatisticas", columns=columns, rows=rows)
 
     def _recorded(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
         columns = ["tag", "timestamp", "value", "good", "questionable", "substituted", "source"]
         rows = []
-        # Recorded points are not stored in TagAnalysisResult directly
-        # This sheet is a placeholder for future expansion
         return XlsxSheet(name="Recorded", columns=columns, rows=rows)
 
     def _interpolated_5m(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
@@ -112,12 +125,39 @@ class XlsxAnalysisProjection:
         return XlsxSheet(name="Spikes", columns=columns, rows=rows)
 
     def _estados_digitais(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
-        columns = ["tag", "state", "count", "percent", "duration_seconds"]
+        columns = [
+            "tag", "state_code", "state_name", "duration_seconds",
+            "percentage_of_window", "entries_count", "analysis_status",
+            "known_coverage_pct", "bad_pct", "null_pct", "unknown_pct",
+            "uncovered_pct", "questionable_pct", "substituted_pct",
+        ]
         rows = []
         for r in multi.results:
-            if r.metadata.point_type == "digital":
+            if r.digital_analysis is not None:
+                da = r.digital_analysis
+                for o in da.occupancy:
+                    rows.append([
+                        r.metadata.tag,
+                        o.state_code,
+                        o.state_name,
+                        o.duration_seconds,
+                        o.percentage_of_window,
+                        o.entries_count,
+                        da.status.value,
+                        da.coverage.known_pct,
+                        da.coverage.bad_pct,
+                        da.coverage.null_pct,
+                        da.coverage.unknown_pct,
+                        da.coverage.uncovered_pct,
+                        da.coverage.questionable_pct,
+                        da.coverage.substituted_pct,
+                    ])
+            elif r.metadata.point_type == "digital":
                 for d in r.digital_durations:
-                    rows.append([r.metadata.tag, d.state, d.count, d.percent, d.duration_seconds])
+                    rows.append([
+                        r.metadata.tag, "", d.state, d.duration_seconds,
+                        d.percent, d.count, "", None, None, None, None, None, None, None,
+                    ])
         return XlsxSheet(name="Estados_Digitais", columns=columns, rows=rows)
 
     def _erros_warnings(self, multi: MultiTagAnalysisResult) -> XlsxSheet:

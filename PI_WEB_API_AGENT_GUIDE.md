@@ -323,7 +323,7 @@ Quando o atributo vier vazio ou não existir, informe ausência de valor em vez 
 
 ---
 
-# CHUNK 06 - DigitalSetName e Digital States
+# CHUNK 06 - Digital Set e Digital States
 
 ## Intenção
 
@@ -331,26 +331,51 @@ Use para digital states, digital set, estados possíveis, ligado/desligado, aber
 
 ## Identificação
 
+O sistema reconhece dois aliases compatíveis do campo do PI Point: `DigitalSetName` e `DigitalSet`. Ambos podem conter o nome do Digital Set.
+
 Consultar o PI Point e observar:
 
 ```text
 PointType
 DigitalSetName
+DigitalSet
 Step
 ```
 
-Tags digitais costumam ter `PointType=Digital`, `DigitalSetName` preenchido e comportamento discreto.
+Tags digitais costumam ter `PointType=Digital`, `DigitalSetName` ou `DigitalSet` preenchido e comportamento discreto.
+
+## Resolução do nome do Digital Set
+
+O nome do Digital Set é resolvido pela função canônica `resolve_digital_set_name` em `domain/pims/utils/digital_states.py`, seguindo esta ordem:
+
+1. Campo `DigitalSetName` do PI Point
+2. Campo `DigitalSet` do PI Point
+3. Atributo `digitalset` do PI Point (via `GET /points/{webId}/attributes?name=digitalset`)
+
+A ausência em uma única fonte não comprova que o Digital Set esteja ausente. O sistema avalia `DigitalSetName`, `DigitalSet` e, quando necessário, o atributo `digitalset`.
+
+## Conflito entre fontes
+
+Quando fontes válidas retornam nomes diferentes, o sistema não escolhe silenciosamente uma delas. O resultado é tratado como resposta inconsistente (`PI_RESPONSE_INVALID`).
+
+## Ausência de Digital Set
+
+`INVALID_DIGITAL_SET` só é emitido quando a tag foi confirmada como digital e nenhuma fonte canônica retornou um nome válido após o fallback completo.
 
 ## Fluxo para estados digitais
 
 ```text
-1. GET /points?path=\\PIMS\TAG
-2. Ler DigitalSetName.
-3. Buscar DataServer PIMS em /dataservers.
+1. GET /points?path=\\PIMS\TAG (selectedFields inclui DigitalSetName e DigitalSet)
+2. Resolver nome via resolve_digital_set_name (aliases + fallback atributo)
+3. Se nome resolvido: buscar DataServer PIMS em /dataservers.
 4. Listar /dataservers/{dataServerWebId}/enumerationsets.
 5. Encontrar o set pelo nome.
 6. Consultar /enumerationsets/{enumSetWebId}/enumerationvalues.
 ```
+
+## Separação: nome vs estados
+
+Resolver o nome do Digital Set (`resolve_digital_set_name`) e consultar seus estados (`get_digital_set_states`) são operações distintas. O cache `_ENUM_SET_CACHE` armazena resultados do lookup dos estados, não do nome.
 
 ## Endpoints
 
@@ -835,7 +860,7 @@ Use para evitar interpretações frágeis em consulta e cálculo.
 | Situação                           | Interpretação recomendada                             |
 | ---------------------------------- | ----------------------------------------------------- |
 | Stream solicitado pelo nome da tag | Primeiro resolver `WebId` com `/points?path=...`      |
-| `DigitalSetName` vazio             | Tratar como ausência de digital set                   |
+| `DigitalSetName` vazio             | Não é conclusivo; avaliar `DigitalSet` e atributo `digitalset` como fallback |
 | `Good=false`                       | Considerar dado ruim, não valor numérico confiável    |
 | `EngineeringUnits` vazio           | Responder sem inventar unidade                        |
 | Atributo vazio                     | Informar que o atributo não foi encontrado/preenchido |

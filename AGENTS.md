@@ -749,6 +749,8 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 **Parâmetros NÃO aceitos**: `context_text`, `pergunta_usuario`, `data_server`, `data_method`, `interval`, `baseline`, `group_by`, `query`, `**kwargs`.
 
+**Resolução de Digital Set**: usa a política canônica `resolve_digital_set_name`. Para tags digitais, o nome do Digital Set é resolvido via `DigitalSetName`, `DigitalSet` ou atributo `digitalset` (fallback). Ausência em todas as fontes gera `[INVALID_DIGITAL_SET]`. Mensagem indica que ambas as fontes foram consultadas.
+
 **Coleta automática**:
 - Numéricas: Recorded + Interpolated 5m
 - Digitais: AtOrBefore (estado inicial) + Recorded
@@ -833,7 +835,7 @@ POST /batch
 
 ```python
 POINT_SELECTED_FIELDS = (
-    "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet"
+    "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet;DigitalSetName"
 )
 ```
 
@@ -1300,10 +1302,18 @@ Para consumo de vazão em Nm3:
 
 ### Digital States
 
-- Verificar `PointType == "Digital"` e `DigitalSet` válido
+- Verificar `PointType == "Digital"` e aliases `DigitalSetName` / `DigitalSet`
+- A ausência em uma única fonte não comprova que o Digital Set esteja ausente; o sistema avalia `DigitalSetName`, `DigitalSet` e, quando necessário, o atributo `digitalset`
 - `INVALID_DIGITAL_SETS`: `n/a`, `não cadastrado`, `não se aplica`, `null`, `undefined`, vazio
+- Resolver o nome do Digital Set (`resolve_digital_set_name`) e consultar seus estados (`get_digital_set_states`) são operações distintas
+- `_ENUM_SET_CACHE` armazena resultados do lookup dos estados, não do nome do Digital Set
 - Consultar `Enumeration Sets` → `Enumeration Values` para mapear índices
 - Estados retornados: `{indice, nome, descricao}`
+
+### Preservação de códigos de erro
+
+- Quando uma tool retornar erro no formato `[CODE] mensagem`, preserve o código entre colchetes na resposta final ao usuário
+- Não atribua o erro à configuração do PI, ao equipamento ou ao administrador sem evidência explícita da tool
 
 ### Detecção de Loops
 
@@ -1438,6 +1448,8 @@ pytest -m integration                                 # Integração (requer Doc
 | Rollback: desativar strict AND | `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` + restart mcp_server. Verificar log: `search_pi_points: STRICT_AND DISABLED`. Caminho legado intacto, sem novo deploy. |
 | LLM envia `context_text` para tool zero-argumento | **Causa raiz**: regra genérica no system prompt (`app/prompts/agent_prompt.py:144`) instruía "Preencha campos de contexto (pergunta_usuario, context_text) sempre que existirem." O LLM interpretava que toda tool recebe `context_text`, mesmo `status_pims_tool` que não tem parâmetros. **Correção (jul/2026)**: regra substituída por orientação schema-first: "use apenas campos do inputSchema exposto". `INVALID_TOOL_ARGUMENTS` bloqueia após 2 tentativas inválidas. Traço: `9b69c18285785fb773547d7557c713df`. |
 | `analyze_pi_tag_behavior` retornou `verdict=DADOS_DEGRADADOS` | Verificar `good_pct`, `questionable_pct`, `substituted_pct` no output. Se `good_pct < 80%`, os dados estão degradados. Verificar qualidade da fonte PI. |
+| Falso `INVALID_DIGITAL_SET` em tag digital | O agente resolvia o Digital Set apenas pelo campo `DigitalSet` do point. A correção introduziu a política canônica `resolve_digital_set_name` que avalia `DigitalSetName`, `DigitalSet` e o atributo `digitalset` como fallback. Verificar: 1) `PointType == "Digital"`, 2) `DigitalSetName`, 3) `DigitalSet`, 4) atributo `digitalset`, 5) conflito entre fontes. Exemplo: `CPD_LP_SECADOR_STATUS` retornava falso erro porque `Estado_126` estava disponível apenas pelo atributo `digitalset`. |
+| Mensagem preserva `[CODE]` técnico | Tool retorna `[CODE] mensagem`; o system prompt preserva o code entre colchetes na resposta final. Não reescreva o código como paráfrase livre que atribua a causa ao PI. |
 | `generate_pi_tags_analysis_report` retornou `partial_success` | Algumas tags falharam. Verificar `errors_summary` no manifest para identificar quais tags falharam e por quê. Tags com erro continuam no manifest com `retryable=true/false`. |
 | `openpyxl ImportError` em runtime | Verificar `pyproject.toml` contém `openpyxl (>=3.1.0,<4.0.0)` e `poetry install` foi executado. |
 | XLSX acima do limite | O retorno contém erro `ARTIFACT_ROW_LIMIT_EXCEEDED` ou `ARTIFACT_SIZE_LIMIT_EXCEEDED`. Reduza o período ou o número de tags. |
@@ -1472,7 +1484,7 @@ O arquivo `PI_WEB_API_AGENT_GUIDE.md` é a fonte de verdade para o RAG. Contém 
 | 03 | `conceptual` | Valor atual de uma tag |
 | 04 | `conceptual` | Metadados: unidade, descriptor, tipo, span, step |
 | 05 | `conceptual` | Atributos: instrumenttag, location, atributos clássicos |
-| 06 | `conceptual` | DigitalSetName e Digital States |
+| 06 | `conceptual` | Digital Set e Digital States (aliases, fallback, conflito) |
 | 07 | `conceptual` | Histórico bruto: recorded values |
 | 08 | `conceptual` | Valores interpolados |
 | 09 | `conceptual` | Summary: média, mínimo, máximo, total, percent good |
@@ -2093,13 +2105,21 @@ consumo_total = sum(médias_horárias) × 1h = X Nm3
 
 Fluxo completo:
 1. Buscar PI Point → ler `PointType` e `DigitalSetName`
-2. Se `PointType == "Digital"` e `DigitalSet` válido:
+2. Resolver nome do Digital Set via política canônica `resolve_digital_set_name`:
+   - Avaliar `DigitalSetName`, `DigitalSet` e, quando necessário, o atributo `digitalset`
+   - A ausência em uma única fonte não comprova que o Digital Set esteja ausente
+   - Fontes válidas divergentes → `PI_RESPONSE_INVALID`
+3. Se `PointType == "Digital"` e nome do Digital Set válido:
    a. Listar Data Servers → encontrar WebId do PIMS (cacheado)
    b. Listar Enumeration Sets → encontrar o set com mesmo nome
    c. Consultar Enumeration Values → retorna `{Value, Name, Description}`
-3. Estados retornados: `{indice, nome, descricao}`
+4. Estados retornados: `{indice, nome, descricao}`
 
 **`INVALID_DIGITAL_SETS`**: `n/a`, `não cadastrado`, `não se aplica`, `null`, `undefined`, vazio
+
+**Separar etapas**: resolver o nome do Digital Set e consultar seus estados são operações distintas. `_ENUM_SET_CACHE` armazena resultados do lookup dos estados, não do nome do Digital Set.
+
+**Consumers não devem** ler `DigitalSet`, `DigitalSetName` ou o atributo `digitalset` com lógica própria fora da política canônica. Novos consumers devem utilizar `domain.pims.utils.digital_states.resolve_digital_set_name`.
 
 ### Detecção de Loops
 

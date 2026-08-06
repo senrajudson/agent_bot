@@ -119,11 +119,94 @@ def _parse_batch_single_response(
     )
 
 
+# ---------------------------------------------------------------------------
+# Enriquecimento de Digital Set no resolver
+# ---------------------------------------------------------------------------
+
+async def enrich_digital_set_for_resolved_point(
+    item: dict[str, Any],
+    *,
+    get_attributes_fn: Callable | None = None,
+) -> dict[str, Any]:
+    """Enriquece um PI Point com Digital Set usando a política canônica.
+
+    Para tags numéricas, retorna o item inalterado.
+    Para tags digitais, tenta resolver via point data e, se MISSING,
+    consulta o atributo ``digitalset``.
+
+    Args:
+        item: Dicionário do PI Point (primeiro item do batch ``Items``).
+        get_attributes_fn: Callable que busca atributos do point
+            (default: ``get_point_attributes``).
+
+    Returns:
+        Item com ``DigitalSet`` enriquecido (ou inalterado se numérico).
+    """
+    from domain.pims.clients.pi_web_api_client import get_point_attributes
+    from domain.pims.utils.digital_states import (
+        DigitalSetSource,
+        resolve_digital_set_name,
+    )
+
+    if get_attributes_fn is None:
+        get_attributes_fn = get_point_attributes
+
+    point_type = str(item.get("PointType", "")).lower()
+    if point_type != "digital":
+        return item
+
+    tag = item.get("Name", "")
+
+    resolution = resolve_digital_set_name(
+        point_data=item,
+        digitalset_attribute=None,
+    )
+
+    if resolution.source != DigitalSetSource.MISSING:
+        if resolution.name is not None:
+            item["DigitalSet"] = resolution.name
+        return item
+
+    try:
+        attr_raw = await get_attributes_fn(tag)
+        resolution = resolve_digital_set_name(
+            point_data=item,
+            digitalset_attribute=attr_raw,
+        )
+    except Exception as exc:
+        msg = str(exc)[:200].lower()
+        if "401" in msg or "403" in msg or "auth" in msg:
+            logger.warning(
+                "digital_set_enrich auth_error tag=%s", tag
+            )
+        elif "timeout" in msg or "connect" in msg:
+            logger.warning(
+                "digital_set_enrich timeout tag=%s", tag
+            )
+        else:
+            logger.warning(
+                "digital_set_enrich error tag=%s error=%s",
+                tag,
+                safe_log_payload({"error": str(exc)[:200]}),
+            )
+        return item
+
+    if resolution.name is not None:
+        item["DigitalSet"] = resolution.name
+
+    return item
+
+
+# ---------------------------------------------------------------------------
+# Resolução single-tag
+# ---------------------------------------------------------------------------
+
 async def resolve_pi_point(
     tag: str,
     *,
     batch_fn: Callable | None = None,
     get_fn: Callable | None = None,
+    digital_set_resolver: Callable | None = None,
 ) -> PiPointResolution:
     """Resolve PI Point por nome usando Batch como transporte primário.
 
@@ -131,6 +214,9 @@ async def resolve_pi_point(
         tag: Nome da tag PI.
         batch_fn: Callable que executa POST /batch (default: execute_pi_batch).
         get_fn: Callable que executa GET /points (default: get_point_by_tag).
+        digital_set_resolver: Callable async que enriquece o point com Digital Set
+            (default: ``enrich_digital_set_for_resolved_point``). ``None`` para
+            não enriquecer (compatibilidade legada).
     """
     from domain.pims.clients.pi_web_api_client import (
         build_resolution_only_batch_request,
@@ -142,6 +228,8 @@ async def resolve_pi_point(
         batch_fn = execute_pi_batch
     if get_fn is None:
         get_fn = get_point_by_tag
+    if digital_set_resolver is None:
+        digital_set_resolver = enrich_digital_set_for_resolved_point
 
     tag_limpa = str(tag or "").strip()
     if not tag_limpa:
@@ -161,6 +249,13 @@ async def resolve_pi_point(
         primary = _parse_batch_single_response(raw, tag_limpa)
 
         if primary.status == ResolutionStatus.RESOLVED:
+            if digital_set_resolver is not None and primary.items:
+                item = dict(primary.items[0])
+                item = await digital_set_resolver(item)
+                items = (item,)
+            else:
+                items = primary.items
+
             logger.info(
                 "pi_point_resolved code=%s tag=%s transport=batch duration_ms=%d",
                 primary.status.value,
@@ -170,7 +265,7 @@ async def resolve_pi_point(
             return PiPointResolution(
                 status=primary.status,
                 tag=primary.tag,
-                items=primary.items,
+                items=items,
                 transport_used="batch",
                 http_status=primary.http_status,
                 duration_ms=batch_ms,
@@ -220,6 +315,11 @@ async def resolve_pi_point(
                 resolved_status = ResolutionStatus.EMPTY_RESULT
             else:
                 resolved_status = ResolutionStatus.RESOLVED
+
+            if resolved_status == ResolutionStatus.RESOLVED and digital_set_resolver is not None and fallback_items:
+                item = dict(fallback_items[0])
+                item = await digital_set_resolver(item)
+                fallback_items = (item,)
 
             total_ms = batch_ms + fallback_ms
             logger.info(
@@ -303,6 +403,30 @@ def _build_multi_tag_batch(tags: list[str]) -> dict[str, Any]:
     return batch_request
 
 
+def _build_digitalset_attribute_batch(
+    tags: list[str], indices: list[int]
+) -> dict[str, Any]:
+    """Monta batch com sub-requests para atributo ``digitalset``.
+
+    Args:
+        tags: Lista completa de tags (para obter WebId via ``point_{i}``).
+        indices: Índices das tags que precisam de fallback de atributo.
+    """
+    from domain.pims.clients.pi_web_api_client import _base_url
+
+    batch_request: dict[str, Any] = {}
+    base_url = _base_url()
+
+    for idx in indices:
+        batch_request[f"digitalset_{idx}"] = {
+            "Method": "GET",
+            "ParentIds": [f"point_{idx}"],
+            "Parameters": [f"$.point_{idx}.Content.WebId"],
+            "Resource": f"{base_url}/points/{{0}}/attributes?name=digitalset",
+        }
+    return batch_request
+
+
 def _parse_multi_tag_batch_response(
     raw: dict[str, Any], tags: list[str]
 ) -> list[PiPointResolution]:
@@ -363,10 +487,12 @@ async def resolve_pi_points(
     *,
     batch_fn: Callable | None = None,
     get_fn: Callable | None = None,
+    digital_set_resolver: Callable | None = None,
 ) -> list[PiPointResolution]:
     """Resolve múltiplos PI Points com um único POST /batch.
 
     Para cada tag com resultado EMPTY/INVALID, tenta fallback individual via GET.
+    Para tags digitais sem Digital Set, consulta o atributo ``digitalset`` em batch.
     """
     from domain.pims.clients.pi_web_api_client import (
         execute_pi_batch,
@@ -377,6 +503,8 @@ async def resolve_pi_points(
         batch_fn = execute_pi_batch
     if get_fn is None:
         get_fn = get_point_by_tag
+    if digital_set_resolver is None:
+        digital_set_resolver = enrich_digital_set_for_resolved_point
 
     if not tags:
         return []
@@ -408,6 +536,50 @@ async def resolve_pi_points(
             fallback_results = await asyncio.gather(*fallback_tasks)
             for i, idx in enumerate(need_fallback):
                 results[idx] = fallback_results[i]
+
+        digital_indices_needing_attr: list[int] = []
+        for i, r in enumerate(results):
+            if r.status != ResolutionStatus.RESOLVED or not r.items:
+                continue
+            item = r.items[0]
+            point_type = str(item.get("PointType", "")).lower()
+            if point_type != "digital":
+                continue
+            ds_name = item.get("DigitalSetName")
+            ds_set = item.get("DigitalSet")
+            from domain.pims.utils.digital_states import (
+                INVALID_DIGITAL_SETS,
+                _normalize_candidate,
+                _is_invalid_candidate,
+            )
+            dsn_valid = ds_name is not None and not _is_invalid_candidate(_normalize_candidate(ds_name))
+            ds_valid = ds_set is not None and not _is_invalid_candidate(_normalize_candidate(ds_set))
+            if not dsn_valid and not ds_valid:
+                digital_indices_needing_attr.append(i)
+
+        if digital_indices_needing_attr and digital_set_resolver is not None:
+            attr_batch = _build_digitalset_attribute_batch(clean_tags, digital_indices_needing_attr)
+            try:
+                attr_raw = await batch_fn(attr_batch)
+                for idx in digital_indices_needing_attr:
+                    attr_entry = attr_raw.get(f"digitalset_{idx}", {}) or {}
+                    attr_content = attr_entry.get("Content") or {}
+                    item = dict(results[idx].items[0])
+                    item = await digital_set_resolver(item)
+                    results[idx] = PiPointResolution(
+                        status=results[idx].status,
+                        tag=results[idx].tag,
+                        items=(item,),
+                        transport_used=results[idx].transport_used,
+                        http_status=results[idx].http_status,
+                        duration_ms=results[idx].duration_ms,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "digital_set_batch_enrich error count=%d error=%s",
+                    len(digital_indices_needing_attr),
+                    safe_log_payload({"error": str(exc)[:200]}),
+                )
 
         logger.info(
             "pi_points_resolved count=%d resolved=%d duration_ms=%d",

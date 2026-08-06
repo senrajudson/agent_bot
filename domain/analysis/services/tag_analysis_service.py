@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from datetime import datetime
+
 from domain.analysis.models import (
     AnalysisError,
     AnalysisPoint,
@@ -27,6 +29,7 @@ from domain.analysis.policies import (
 from domain.analysis.services._digital import (
     compute_state_durations,
     compute_transitions,
+    reconstruct_timeline,
 )
 from domain.analysis.services._numeric import (
     compute_numeric_stats,
@@ -151,6 +154,8 @@ class TagAnalysisService:
         return TagAnalysisResult(
             metadata=metadata,
             quality=quality,
+            start_time=request.start_time,
+            end_time=request.end_time,
             numeric=stats,
             gaps_interpolated=tuple(gaps_interp),
             gaps_recorded=tuple(gaps_rec),
@@ -167,45 +172,44 @@ class TagAnalysisService:
         zero_policy: ZeroPolicy,
     ) -> TagAnalysisResult:
         metadata = data.metadata
-        points = data.recorded
         digital_states = data.digital_states
-        initial_state = data.digital_initial
 
-        durations = compute_state_durations(points, digital_states, initial_state)
-        transitions = compute_transitions(points, digital_states, initial_state)
+        # Resolver janela temporal
+        window_start = datetime.fromisoformat(request.start_time)
+        window_end = datetime.fromisoformat(request.end_time)
 
-        good_pts = [p for p in points if p.good]
-        questionable_pts = [p for p in points if p.questionable]
-        substituted_pts = [p for p in points if p.substituted]
-
-        total = len(points) if points else 1
-        good_pct = len(good_pts) / total * 100
-        questionable_pct = len(questionable_pts) / total * 100
-        substituted_pct = len(substituted_pts) / total * 100
-
-        verdict = assess_quality(
-            good_pct, questionable_pct, substituted_pct, 0.0, zero_policy
+        # Reconstruir timeline digital
+        digital_result = reconstruct_timeline(
+            window_start=window_start,
+            window_end=window_end,
+            seed=data.digital_seed,
+            recorded=data.recorded,
+            possible_states=digital_states,
         )
 
-        quality = QualityMetrics(
-            good_pct=round(good_pct, 2),
-            questionable_pct=round(questionable_pct, 2),
-            substituted_pct=round(substituted_pct, 2),
-            zero_pct=0.0,
-            verdict=verdict,
-        )
-
-        warnings: list[str] = []
-        if zero_policy != "valid":
-            warnings.append(
-                "Parâmetro zero_policy ignorado: tag é digital."
+        # Derivar campos legados de digital_result
+        durations = tuple(
+            DigitalStateDuration(
+                state=o.state_name,
+                count=o.entries_count,
+                percent=o.percentage_of_window,
+                duration_seconds=o.duration_seconds,
             )
+            for o in digital_result.occupancy
+        )
+
+        warnings: list[str] = list(digital_result.warnings)
+        if zero_policy != "valid":
+            warnings.append("Parâmetro zero_policy ignorado: tag é digital.")
 
         return TagAnalysisResult(
             metadata=metadata,
-            quality=quality,
+            quality=None,
+            digital_analysis=digital_result,
+            start_time=request.start_time,
+            end_time=request.end_time,
             digital_durations=durations,
-            digital_transitions=transitions,
+            digital_transitions=digital_result.transitions,
             zero_policy_applied=zero_policy,
             warnings=tuple(warnings),
             zero_policy_warning=(

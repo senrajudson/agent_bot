@@ -5,7 +5,12 @@ import re
 from domain.analysis.formatters import InlineReportFormatter, _validate_no_prohibited_terms
 from domain.analysis.models import (
     AbruptChangeCandidate,
+    DigitalAnalysisResult,
+    DigitalAnalysisStatus,
+    DigitalCoverageMetrics,
     DigitalStateDuration,
+    DigitalStateOccupancy,
+    DigitalStateRef,
     DigitalTransition,
     GapCandidate,
     NumericStatistics,
@@ -36,14 +41,33 @@ def _make_numeric_report() -> TagAnalysisResult:
 def _make_digital_report() -> TagAnalysisResult:
     return TagAnalysisResult(
         metadata=TagMetadata(tag="ACI_VALVE", point_type="digital", descriptor="Valve"),
-        quality=QualityMetrics(good_pct=100.0, questionable_pct=0.0, substituted_pct=0.0, zero_pct=0.0, verdict="DADOS_EXCELENTES"),
-        digital_durations=(
-            DigitalStateDuration(state="CLOSED", count=1, percent=60.0, duration_seconds=21600),
-            DigitalStateDuration(state="OPEN", count=1, percent=40.0, duration_seconds=14400),
+        quality=None,
+        digital_analysis=DigitalAnalysisResult(
+            status=DigitalAnalysisStatus.COMPLETE,
+            possible_states=(
+                DigitalStateRef(state_code=0, state_name="CLOSED"),
+                DigitalStateRef(state_code=1, state_name="OPEN"),
+            ),
+            initial_state=DigitalStateRef(state_code=0, state_name="CLOSED"),
+            final_state=DigitalStateRef(state_code=1, state_name="OPEN"),
+            occupancy=(
+                DigitalStateOccupancy(state_code=0, state_name="CLOSED", duration_seconds=21600, percentage_of_window=60.0, entries_count=1),
+                DigitalStateOccupancy(state_code=1, state_name="OPEN", duration_seconds=14400, percentage_of_window=40.0, entries_count=1),
+            ),
+            transitions=(
+                DigitalTransition(from_state="CLOSED", to_state="OPEN", count=3, rate_per_hour=0.5),
+            ),
+            coverage=DigitalCoverageMetrics(
+                window_seconds=36000, known_seconds=36000, known_pct=100.0,
+                bad_seconds=0, bad_pct=0, null_seconds=0, null_pct=0,
+                unknown_seconds=0, unknown_pct=0, uncovered_seconds=0, uncovered_pct=0,
+                questionable_seconds=0, questionable_pct=0, substituted_seconds=0, substituted_pct=0,
+            ),
+            recorded_events_count=3,
+            valid_events_count=3,
         ),
-        digital_transitions=(
-            DigitalTransition(from_state="CLOSED", to_state="OPEN", count=3, rate_per_hour=0.5),
-        ),
+        start_time="2026-01-01T00:00:00-03:00",
+        end_time="2026-01-01T10:00:00-03:00",
         zero_policy_applied="suspicious",
         warnings=("Parâmetro zero_policy ignorado: tag é digital.",),
         zero_policy_warning="Parâmetro zero_policy ignorado: tag é digital.",
@@ -65,10 +89,13 @@ class TestSectionOrder:
     def test_digital_has_digital_sections(self) -> None:
         formatter = InlineReportFormatter()
         text = formatter.format(_make_digital_report())
-        assert "## Distribuição de Estados" in text
+        assert "## Status Digital" in text
+        assert "## Ocupação Temporal" in text
         assert "## Transições" in text
         assert "CLOSED" in text
         assert "OPEN" in text
+        assert "## Integridade" in text
+        assert "## Classificação Operacional" in text
 
 
 class TestProhibitedTerms:

@@ -157,6 +157,16 @@ Para "mês passado": início = primeiro dia do mês anterior às 00:00, fim = pr
   argumentos. Corrija apenas tokens malformados ou timestamps inválidos.
   Tokens PI válidos são normalizados internamente pela tool.
 
+Regras para análise digital (analyze_pi_tag_behavior):
+- A análise digital é descritiva. Não classifique estados como bons ou ruins,
+  disponíveis ou indisponíveis, normais ou anormais, sem uma política operacional explícita.
+- NO_TRANSITIONS indica estado estável durante toda a janela, não degradação.
+  Não repita tool calls nem sugira verificação de equipamento sem evidência.
+- Bad, Null, Unknown e Uncovered descrevem integridade dos dados, não
+  comportamento do processo.
+- O status NO_DATA, PARTIAL_COVERAGE e INVALID_DIGITAL_VALUES são resultados
+  analíticos válidos (isError=false), não erros de tool.
+
 Regras para chamadas de tools:
 - Preserve exatamente os nomes das tags.
 - Use apenas campos declarados no inputSchema da tool. context_text só existe em
@@ -164,6 +174,11 @@ Regras para chamadas de tools:
   Demais tools (status_pims_tool, search_pi_points, tag_attributes_tool,
   generate_pi_tags_series_csv) não aceitam contexto. Tools zero-argumento:
   chame com arguments={{}}. Exemplo: status_pims_tool({{}}).
+- Quando uma tool retornar erro no formato "[CODE] mensagem", preserve o code
+  entre colchetes na resposta final ao usuário. Não atribua o erro à configuração
+  do PI, ao equipamento ou ao administrador sem evidência explícita da tool.
+  O código técnico facilita a triagem. Exemplo: "[INVALID_DIGITAL_SET] O Digital
+  Set não pôde ser resolvido..." é mais útil que "inconsistência no sistema".
 {test_artifact_call_rule}
 {default_csv_rule}
 

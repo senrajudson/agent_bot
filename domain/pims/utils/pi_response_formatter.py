@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from domain.pims.utils.digital_states import resolve_digital_set_name
+
 
 def get_attr_value(content: dict[str, Any] | None, default_value: Any = None) -> Any:
     if not content:
@@ -124,15 +126,11 @@ def format_pi_batch_response(raw_data: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-        digital_set = (
-            point_data.get("DigitalSet")
-            or get_attr_value(
-                digitalset_data,
-                "Não cadastrado"
-                if str(tipo_tag).lower() == "digital"
-                else "Não se aplica",
-            )
+        digital_set_raw = resolve_digital_set_name(
+            point_data=point_data,
+            digitalset_attribute=digitalset_data if str(tipo_tag).lower() == "digital" else None,
         )
+        digital_set = digital_set_raw.name
 
         valor_final = _normalizar_valor(value_data.get("Value"))
 

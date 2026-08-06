@@ -11,14 +11,15 @@ from domain.pims.clients.pi_web_api_client import (
     get_interpolated_values_by_tag,
     get_point_by_tag,
     get_recorded_values_by_tag,
+    get_value_at_or_before_by_web_id,
+)
+from domain.pims.utils.digital_states import (
+    DigitalSetSource,
+    INVALID_DIGITAL_SETS,
+    resolve_digital_set_name,
 )
 
 logger = logging.getLogger(__name__)
-
-INVALID_DIGITAL_SETS = frozenset({
-    "n/a", "nao cadastrado", "nao se aplica",
-    "sem digital set", "null", "undefined", "",
-})
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class CollectedData:
     interpolated: list[AnalysisPoint] = field(default_factory=list)
     digital_initial: str | None = None
     digital_states: list[dict] = field(default_factory=list)
+    digital_seed: AnalysisPoint | None = None
 
 
 _STATUS_TO_ERROR_CODE = {
@@ -92,7 +94,7 @@ class PiDataCollector:
             metadata = self._build_metadata(tag, item)
 
             if metadata.point_type == "digital":
-                return await self._fetch_digital(tag, start, end, metadata)
+                return await self._fetch_digital(tag, start, end, metadata, item)
 
             recorded, interpolated = await asyncio.gather(
                 self._fetch_recorded(tag, start, end),
@@ -143,16 +145,70 @@ class PiDataCollector:
             logger.warning("Interpolated fetch failed for %s: %s", tag, exc)
             return []
 
+    async def _resolve_digital_set_legacy(
+        self, tag: str, item: dict[str, Any]
+    ) -> str | None:
+        """Adapter legado: consulta atributo ``digitalset`` quando point não tem Set.
+
+        Usado apenas quando o resolver v2 NÃO está ativo (caminho sem ``resolver``).
+        """
+        from domain.pims.clients.pi_web_api_client import get_point_attributes
+
+        point_type = str(item.get("PointType", "")).lower()
+        if point_type != "digital":
+            return None
+
+        resolution = resolve_digital_set_name(
+            point_data=item,
+            digitalset_attribute=None,
+        )
+
+        if resolution.source != DigitalSetSource.MISSING:
+            return resolution.name
+
+        try:
+            attr_raw = await get_point_attributes(tag)
+            resolution = resolve_digital_set_name(
+                point_data=item,
+                digitalset_attribute=attr_raw,
+            )
+        except Exception as exc:
+            msg = str(exc)[:200].lower()
+            if "401" in msg or "auth" in msg:
+                logger.warning(
+                    "digital_set_legacy auth_error tag=%s", tag
+                )
+            elif "timeout" in msg or "connect" in msg:
+                logger.warning(
+                    "digital_set_legacy timeout tag=%s", tag
+                )
+            else:
+                logger.warning(
+                    "digital_set_legacy error tag=%s error=%s",
+                    tag,
+                    str(exc)[:200],
+                )
+            return None
+
+        return resolution.name
+
     async def _fetch_digital(
-        self, tag: str, start: str, end: str, metadata: TagMetadata
+        self, tag: str, start: str, end: str, metadata: TagMetadata, item: dict[str, Any]
     ) -> CollectedData | AnalysisError:
-        ds = metadata.digital_set or ""
-        ds_lower = ds.strip().lower()
-        if not ds or ds_lower in INVALID_DIGITAL_SETS or ds_lower in ("null", "undefined", ""):
+        ds = metadata.digital_set
+
+        if not ds:
+            ds = await self._resolve_digital_set_legacy(tag, item)
+
+        if not ds:
             return AnalysisError(
                 tag=tag,
                 code="INVALID_DIGITAL_SET",
-                message=f"DigitalSet inválido ou ausente para tag digital: {tag}",
+                message=(
+                    "[INVALID_DIGITAL_SET] O Digital Set não pôde ser resolvido "
+                    f"para tag digital '{tag}': campos do PI Point (DigitalSet, "
+                    "DigitalSetName) e atributo digitalset ambos ausentes ou inválidos."
+                ),
                 retryable=False,
             )
 
@@ -167,11 +223,20 @@ class PiDataCollector:
                 retryable=False,
             )
 
-        recorded = await self._fetch_recorded(tag, start, end)
+        web_id = item.get("WebId", "")
+
+        seed_raw, recorded_raw = await asyncio.gather(
+            self._fetch_atorbefore(tag, web_id, start),
+            self._fetch_recorded(tag, start, end),
+        )
+
+        digital_seed = self._parse_single_point(seed_raw)
+        recorded = recorded_raw
 
         initial_state: str | None = None
-        if recorded:
-            first_val = recorded[0].value
+        first_point = digital_seed if digital_seed is not None else (recorded[0] if recorded else None)
+        if first_point is not None:
+            first_val = first_point.value
             if first_val is not None:
                 idx = int(first_val)
                 for s in digital_states:
@@ -180,10 +245,62 @@ class PiDataCollector:
                         break
 
         return CollectedData(
-            metadata=metadata,
+            metadata=TagMetadata(
+                tag=metadata.tag,
+                point_type=metadata.point_type,
+                descriptor=metadata.descriptor,
+                engineering_units=metadata.engineering_units,
+                digital_set=ds,
+            ),
             recorded=recorded,
             digital_initial=initial_state,
             digital_states=digital_states,
+            digital_seed=digital_seed,
+        )
+
+    async def _fetch_atorbefore(
+        self, tag: str, web_id: str, start: str
+    ) -> dict[str, Any]:
+        """Obtém o último valor em ou antes de `start` via WebId reutilizado."""
+        try:
+            return await get_value_at_or_before_by_web_id(web_id, start)
+        except Exception as exc:
+            logger.warning("AtOrBefore fetch failed for %s: %s", tag, exc)
+            return {}
+
+    def _parse_single_point(self, raw: dict[str, Any]) -> AnalysisPoint | None:
+        """Extrai um único AnalysisPoint da resposta AtOrBefore (maxCount=1)."""
+        items = raw.get("Items") or raw.get("items") or []
+        if not isinstance(items, list) or not items:
+            return None
+
+        item = items[0]
+        ts = item.get("Timestamp")
+        val = item.get("Value")
+        if ts is None:
+            return None
+
+        value: float | None = None
+        if isinstance(val, dict):
+            value = val.get("Value")
+        elif isinstance(val, (int, float)):
+            value = float(val)
+        elif isinstance(val, str):
+            try:
+                value = float(val.replace(",", "."))
+            except (ValueError, TypeError):
+                value = None
+
+        good = item.get("Good", True)
+        questionable = item.get("Questionable", False)
+        substituted = item.get("Substituted", False)
+
+        return AnalysisPoint(
+            timestamp=str(ts),
+            value=value,
+            good=bool(good) if good is not None else True,
+            questionable=bool(questionable) if questionable is not None else False,
+            substituted=bool(substituted) if substituted is not None else False,
         )
 
     def _build_metadata(self, tag: str, item: dict[str, Any]) -> TagMetadata:
@@ -196,6 +313,13 @@ class PiDataCollector:
         digital_set = item.get("DigitalSet")
         if digital_set and str(digital_set).strip().lower() in INVALID_DIGITAL_SETS:
             digital_set = None
+
+        dsn = item.get("DigitalSetName")
+        if dsn and str(dsn).strip().lower() in INVALID_DIGITAL_SETS:
+            dsn = None
+
+        if not digital_set and dsn:
+            digital_set = dsn
 
         return TagMetadata(
             tag=tag,

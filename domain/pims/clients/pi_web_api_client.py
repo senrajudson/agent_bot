@@ -12,11 +12,11 @@ _ENUM_SET_CACHE: dict[str, dict[str, Any]] = {}
 TemporalDataMethod = Literal["recorded", "interpolated", "summary"]
 
 POINT_SELECTED_FIELDS = (
-    "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet"
+    "WebId;Name;Descriptor;EngineeringUnits;PointType;DigitalSet;DigitalSetName"
 )
 
 SEARCH_SELECTED_FIELDS = (
-    "Items.WebId;Items.Name;Items.Descriptor;Items.EngineeringUnits;Items.PointType;Items.DigitalSet"
+    "Items.WebId;Items.Name;Items.Descriptor;Items.EngineeringUnits;Items.PointType;Items.DigitalSet;Items.DigitalSetName"
 )
 
 
@@ -142,6 +142,26 @@ async def _get_stream_by_web_id(
     return await _pi_get(
         f"{_base_url()}/streams/{web_id}/{endpoint}",
         params=params,
+    )
+
+
+async def get_value_at_or_before_by_web_id(
+    web_id: str,
+    time: str,
+) -> dict[str, Any]:
+    """GET /streams/{webId}/recorded — último valor em ou antes de `time`.
+
+    Retorna o último ponto registrado com timestamp ≤ `time`.
+    Reutiliza WebId já resolvido, sem nova resolução de PI Point.
+    """
+    return await _get_stream_by_web_id(
+        web_id=web_id,
+        endpoint="recorded",
+        params={
+            "endTime": time,
+            "maxCount": 1,
+            "sortOrder": "desc",
+        },
     )
 
 
