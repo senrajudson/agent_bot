@@ -739,7 +739,7 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 ### 11.6 analyze_pi_tag_behavior
 
-**Propósito**: Análise compacta de uma ÚNICA tag PI, retornando métricas numéricas/digitais, gaps, mudanças abruptas, qualidade dos dados e classificação.
+**Propósito**: Análise compacta de uma ÚNICA tag PI. Para tags numéricas, retorna métricas, gaps, mudanças abruptas e qualidade dos dados. Para tags digitais, retorna análise descritiva baseada em ocupação temporal por estado, transições e integridade dos dados.
 
 **Parâmetros**:
 - `tag`: Nome da tag (obrigatório)
@@ -753,19 +753,31 @@ As tools do agente PI vivem no **MCP Server** (não mais em `app/tools/`). O age
 
 **Coleta automática**:
 - Numéricas: Recorded + Interpolated 5m
-- Digitais: AtOrBefore (estado inicial) + Recorded
+- Digitais: AtOrBefore (seed da janela) + Recorded (paralelo via `asyncio.gather`). Não consulta Interpolated.
 
 **Métricas numéricas**: count, min, max, mean, median, p1, p99, stddev_pop, stddev_sample, sum, zero_count, good_pct, questionable_pct, substituted_pct, zero_pct.
 
-**Métricas digitais**: distribuição de estados (count, percent, duration), transições (count, rate_per_hour, top 5).
+**Análise digital (descritiva)**:
+- `quality` retorna `None` para digitais (não usa `assess_quality` nem `QualityVerdict`).
+- `digital_analysis` retorna `DigitalAnalysisResult` com:
+  - `status`: `COMPLETE`, `NO_TRANSITIONS`, `PARTIAL_COVERAGE`, `NO_DATA` ou `INVALID_DIGITAL_VALUES`.
+  - `possible_states`: todos os estados do Digital Set (preservando homônimos por código).
+  - `initial_state` / `final_state`: primeiro e último estado conhecido.
+  - `occupancy`: duração e percentual por estado (calculado por duração, não por contagem).
+  - `transições`: mudanças entre estados conhecidos.
+  - `coverage`: buckets exclusivos (known + bad + null + unknown + uncovered ≈ window) + overlays (questionable, substituted).
+  - `recorded_events_count` / `valid_events_count`.
+- Classificação operacional: **não aplicável**. A análise é descritiva e não associa significado operacional aos estados sem uma política de domínio configurada.
+- Precedência de status: `NO_DATA` → `INVALID_DIGITAL_VALUES` → `PARTIAL_COVERAGE` → `NO_TRANSITIONS` → `COMPLETE`.
+- Status analíticos (`NO_DATA`, `NO_TRANSITIONS`, `PARTIAL_COVERAGE`, `INVALID_DIGITAL_VALUES`) são resultados bem-sucedidos (`isError=false`), não erros de tool.
 
-**Gaps**: Interpolated (threshold 900s), Recorded (descritivo, mediana × 3).
+**Gaps**: Interpolated (threshold 900s), Recorded (descritivo, mediana × 3). Apenas para numéricas.
 
-**Mudanças abruptas**: z-score rolling (5) OR variação relativa > 50% do range. Top 5.
+**Mudanças abruptas**: z-score rolling (5) OR variação relativa > 50% do range. Top 5. Apenas para numéricas.
 
-**Qualidade**: DADOS_EXCELENTES/SAUDÁVEIS/ACEITÁVEIS/DEGRADADOS.
+**Qualidade (numéricas)**: DADOS_EXCELENTES/SAUDÁVEIS/ACEITÁVEIS/DEGRADADOS. Para digitais, `quality=None`.
 
-**Saída**: Markdown estruturado com 9 seções fixas.
+**Saída**: Markdown estruturado. Numérico: 9 seções. Digital: 8 seções (Resumo, Status Digital, Resumo Digital, Estados Possíveis, Ocupação Temporal, Transições, Integridade, Classificação Operacional).
 
 **Limite**: UMA tag, 31 dias, resposta inline (sem arquivo).
 
@@ -1447,7 +1459,7 @@ pytest -m integration                                 # Integração (requer Doc
 | Rollout: ativar strict AND | 1. Testar em QA com `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=true`. 2. Rodar `poetry run pytest tests/unit/test_search_points_service.py -v` (183 testes). 3. Rodar smoke test no PI real (query "velocidade rb2" deve retornar LFS_RB2_VELOPROC no topo). 4. Validar 1 semana de logs. 5. Ativar em produção (flag=true + restart mcp_server). 6. Nenhuma reingestão de RAG necessária. |
 | Rollback: desativar strict AND | `ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false` + restart mcp_server. Verificar log: `search_pi_points: STRICT_AND DISABLED`. Caminho legado intacto, sem novo deploy. |
 | LLM envia `context_text` para tool zero-argumento | **Causa raiz**: regra genérica no system prompt (`app/prompts/agent_prompt.py:144`) instruía "Preencha campos de contexto (pergunta_usuario, context_text) sempre que existirem." O LLM interpretava que toda tool recebe `context_text`, mesmo `status_pims_tool` que não tem parâmetros. **Correção (jul/2026)**: regra substituída por orientação schema-first: "use apenas campos do inputSchema exposto". `INVALID_TOOL_ARGUMENTS` bloqueia após 2 tentativas inválidas. Traço: `9b69c18285785fb773547d7557c713df`. |
-| `analyze_pi_tag_behavior` retornou `verdict=DADOS_DEGRADADOS` | Verificar `good_pct`, `questionable_pct`, `substituted_pct` no output. Se `good_pct < 80%`, os dados estão degradados. Verificar qualidade da fonte PI. |
+| `analyze_pi_tag_behavior` retornou `verdict=DADOS_DEGRADADOS` | Para tags **numéricas**: verificar `good_pct`, `questionable_pct`, `substituted_pct` no output. Se `good_pct < 80%`, os dados estão degradados. Para tags **digitais**: `DADOS_DEGRADADOS` não deve aparecer — o caminho digital retorna `quality=None` e usa `DigitalAnalysisStatus` (`NO_TRANSITIONS`, `NO_DATA`, etc.). Se `DADOS_DEGRADADOS` aparecer para uma tag digital, reportar como bug. |
 | Falso `INVALID_DIGITAL_SET` em tag digital | O agente resolvia o Digital Set apenas pelo campo `DigitalSet` do point. A correção introduziu a política canônica `resolve_digital_set_name` que avalia `DigitalSetName`, `DigitalSet` e o atributo `digitalset` como fallback. Verificar: 1) `PointType == "Digital"`, 2) `DigitalSetName`, 3) `DigitalSet`, 4) atributo `digitalset`, 5) conflito entre fontes. Exemplo: `CPD_LP_SECADOR_STATUS` retornava falso erro porque `Estado_126` estava disponível apenas pelo atributo `digitalset`. |
 | Mensagem preserva `[CODE]` técnico | Tool retorna `[CODE] mensagem`; o system prompt preserva o code entre colchetes na resposta final. Não reescreva o código como paráfrase livre que atribua a causa ao PI. |
 | `generate_pi_tags_analysis_report` retornou `partial_success` | Algumas tags falharam. Verificar `errors_summary` no manifest para identificar quais tags falharam e por quê. Tags com erro continuam no manifest com `retryable=true/false`. |

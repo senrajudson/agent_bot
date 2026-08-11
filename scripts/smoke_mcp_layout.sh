@@ -51,17 +51,25 @@ echo "[3/5] Entrypoint"
 CMD=$(docker inspect "$IMAGE" --format '{{join .Config.Cmd " "}}')
 check "CMD contains python -m mcp_server.server" "$CMD" "python -m mcp_server.server"
 
-# [4] Startup
+# [4] Startup — habilitar analysis tools para exercitar imports do profile real
 echo ""
 echo "[4/5] Container startup"
+# Criar credencial dummy para Settings validation (arquivo montado read-only)
+DUMMY_SA=$(mktemp /tmp/smoke_sa_XXXXXX.json)
+echo '{"type":"service_account","project_id":"smoke-test"}' > "$DUMMY_SA"
+trap 'rm -f "$DUMMY_SA"' EXIT
 CID=$(docker run -d --rm \
+  -v "$DUMMY_SA":/tmp/smoke_sa.json:ro \
   -e MCP_PORT=8005 \
   -e ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=false \
   -e ENABLE_DRIVE_CSV_EXPORT_TOOL=false \
   -e ENABLE_TEST_ARTIFACT_TOOL=false \
   -e ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=false \
   -e ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false \
+  -e ENABLE_MCP_ANALYSIS_TOOLS=true \
   -e PI_WEB_API_BASE_URL=http://10.247.224.39/piwebapi \
+  -e MATH_TOOL_BASE_URL=http://localhost:8001 \
+  -e GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE=/tmp/smoke_sa.json \
   "$IMAGE" 2>/dev/null)
 
 sleep 8
@@ -85,13 +93,17 @@ docker rm -f "$CID" >/dev/null 2>&1
 echo ""
 echo "[5/5] MCP protocol"
 CID=$(docker run -d --rm \
+  -v "$DUMMY_SA":/tmp/smoke_sa.json:ro \
   -e MCP_PORT=8005 \
   -e ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY=false \
   -e ENABLE_DRIVE_CSV_EXPORT_TOOL=false \
   -e ENABLE_TEST_ARTIFACT_TOOL=false \
   -e ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=false \
   -e ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=false \
+  -e ENABLE_MCP_ANALYSIS_TOOLS=true \
   -e PI_WEB_API_BASE_URL=http://10.247.224.39/piwebapi \
+  -e MATH_TOOL_BASE_URL=http://localhost:8001 \
+  -e GOOGLE_DRIVE_EXPORT_CREDENTIALS_FILE=/tmp/smoke_sa.json \
   "$IMAGE" 2>/dev/null)
 sleep 10
 

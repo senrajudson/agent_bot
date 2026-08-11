@@ -1592,7 +1592,9 @@ um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
 ## Intenção
 
 Use esta documentação quando o usuário pedir análise de comportamento,
-qualidade dos dados, gaps ou mudanças abruptas de uma ÚNICA tag.
+qualidade dos dados, gaps, mudanças abruptas ou ocupação temporal de
+uma ÚNICA tag. Para tags digitais, a análise é descritiva (ocupação
+por estado, transições, integridade) e não emite veredito operacional.
 
 ## Tool
 
@@ -1608,34 +1610,46 @@ qualidade dos dados, gaps ou mudanças abruptas de uma ÚNICA tag.
 ## Comportamento
 
 A tool coleta automaticamente:
-- Recorded (eventos brutos)
-- Interpolated 5m (grade uniforme)
 
-Para tags digitais:
-- Recorded (transições)
-- AtOrBefore (estado inicial)
+**Numéricas**: Recorded + Interpolated 5m.
+
+**Digitais**: AtOrBefore (seed da janela) + Recorded (paralelo via `asyncio.gather`). Não consulta Interpolated. Não usa `assess_quality`.
 
 ## Métricas numéricas
 
 count, min, max, mean, median, p1, p99, stddev_pop, stddev_sample, sum,
 zero_count, good_pct, questionable_pct, substituted_pct, zero_pct.
 
-## Métricas digitais
+## Análise digital (descritiva)
 
-Distribuição de estados (count, percent, duration),
-transições (count, rate_per_hour, top 5).
+Para tags digitais, o resultado é baseado em:
+
+- **Ocupação temporal por estado**: duração e percentual de cada estado conhecido na janela.
+- **Transições**: mudanças entre estados conhecidos (somente entre Known).
+- **Integridade dos dados**: buckets exclusivos (known, bad, null, unknown, uncovered) + overlays (questionable, substituted).
+- **Status técnico**: `COMPLETE`, `NO_TRANSITIONS`, `PARTIAL_COVERAGE`, `NO_DATA`, `INVALID_DIGITAL_VALUES`.
+
+Classificação operacional: **não aplicável**. A análise digital é descritiva
+e não associa significado operacional aos estados (ex: "LIGADO é bom",
+"DESLIGADO é ruim", "FALHA é indisponível") sem uma política de domínio
+configurada.
+
+`quality` retorna `None` para digitais. O veredito `DADOS_DEGRADADOS`
+não se aplica a tags digitais.
 
 ## Gaps
 
 Interpolated: threshold = 5m × 3 = 900s (3 slots ausentes).
 Recorded: descritivo, mediana cadência × 3.
+Apenas para tags numéricas.
 
 ## Mudanças abruptas
 
 z-score rolling (5 pontos) OR variação relativa > 50% do range.
 Top 5 por magnitude absoluta.
+Apenas para tags numéricas.
 
-## Qualidade
+## Qualidade (numéricas)
 
 Matriz determinística:
 - DADOS_EXCELENTES: good ≥ 99%, questionable == 0, substituted == 0
@@ -1643,10 +1657,16 @@ Matriz determinística:
 - DADOS_ACEITÁVEIS: good ≥ 80%
 - DADOS_DEGRADADOS: demais
 
+Para tags digitais, `quality` é `None` e nenhum veredito é emitido.
+
 ## Saída
 
-Markdown estruturado com seções: Resumo, Estatísticas, Comportamento,
+**Numérico**: Markdown com seções Resumo, Estatísticas, Comportamento,
 Gaps, Mudanças Abruptas, Qualidade, Classificação da Qualidade dos Dados.
+
+**Digital**: Markdown com seções Resumo, Status Digital, Resumo Digital,
+Estados Possíveis, Ocupação Temporal, Transições, Integridade,
+Classificação Operacional (não aplicável).
 
 ## Limites
 
