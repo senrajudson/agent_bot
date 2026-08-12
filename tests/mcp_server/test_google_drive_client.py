@@ -153,6 +153,76 @@ def test_upload_csv_uses_media_io_base_upload(client, mock_build):
     assert media.resumable() is False
 
 
+def test_upload_file_uses_csv_mime(client, mock_build):
+    service_mock = mock_build.return_value
+    files_create_mock = service_mock.files.return_value.create
+    files_create_mock.return_value.execute.return_value = {
+        "id": "generic-csv",
+        "name": "report.csv",
+        "mimeType": "text/csv",
+        "size": "10",
+        "webViewLink": "https://drive.google.com/file/generic-csv/view",
+    }
+
+    result = client.upload_file(
+        filename="report.csv",
+        file_bytes=b"a;b\r\n1;2\r\n",
+        mime_type="text/csv",
+        app_properties={"source": "test"},
+    )
+
+    _, kwargs = files_create_mock.call_args
+    assert kwargs["media_body"].mimetype() == "text/csv"
+    assert kwargs["body"]["mimeType"] == "text/csv"
+    assert result.mime_type == "text/csv"
+
+
+def test_upload_file_uses_xlsx_mime(client, mock_build):
+    xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    service_mock = mock_build.return_value
+    files_create_mock = service_mock.files.return_value.create
+    files_create_mock.return_value.execute.return_value = {
+        "id": "generic-xlsx",
+        "name": "report.xlsx",
+        "mimeType": xlsx_mime,
+        "size": "10",
+        "webViewLink": "https://drive.google.com/file/generic-xlsx/view",
+    }
+
+    result = client.upload_file(
+        filename="report.xlsx",
+        file_bytes=b"PK\x03\x04",
+        mime_type=xlsx_mime,
+        app_properties={"source": "test"},
+    )
+
+    _, kwargs = files_create_mock.call_args
+    assert kwargs["media_body"].mimetype() == xlsx_mime
+    assert kwargs["media_body"].resumable() is False
+    assert kwargs["body"]["mimeType"] == xlsx_mime
+    assert result.mime_type == xlsx_mime
+
+
+def test_upload_csv_delegates_to_upload_file(client, monkeypatch):
+    uploaded = object()
+    upload_file = MagicMock(return_value=uploaded)
+    monkeypatch.setattr(client, "upload_file", upload_file)
+
+    result = client.upload_csv(
+        filename="report.csv",
+        csv_bytes=b"a;b\r\n",
+        app_properties={"source": "test"},
+    )
+
+    assert result is uploaded
+    upload_file.assert_called_once_with(
+        filename="report.csv",
+        file_bytes=b"a;b\r\n",
+        mime_type="text/csv",
+        app_properties={"source": "test"},
+    )
+
+
 def test_upload_csv_parents_and_mime(client, mock_build):
     service_mock = mock_build.return_value
     files_create_mock = service_mock.files.return_value.create

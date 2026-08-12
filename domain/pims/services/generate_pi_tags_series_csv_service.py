@@ -36,20 +36,40 @@ SEMAPHORE_LIMIT = 5
 # Reutiliza DEFAULT_PI_TIMEZONE de domain.shared.time.pi_time_resolver.
 _SP_TZ: ZoneInfo = ZoneInfo(DEFAULT_PI_TIMEZONE)
 
-_CSV_COLUMNS = [
-    "Tag",
-    "Timestamp",
-    "Value",
-    "EngineeringUnits",
-    "Good",
-    "Questionable",
-    "Substituted",
-    "Annotated",
-    "Error",
-    "ValueType",
-    "DigitalStateCode",
-    "DigitalStateName",
-]
+_CSV_SCHEMA = (
+    ("Tag", "tag"),
+    ("Timestamp", "timestamp"),
+    ("Value", "value"),
+    ("EngineeringUnits", "eng_unit"),
+    ("Good", "good"),
+    ("Questionable", "questionable"),
+    ("Substituted", "substituted"),
+    ("Annotated", "annotated"),
+    ("Error", "error"),
+    ("ValueType", "value_type"),
+    ("DigitalStateCode", "digital_state_code"),
+    ("DigitalStateName", "digital_state_name"),
+)
+_CSV_COLUMNS = [header for header, _ in _CSV_SCHEMA]
+
+
+def _row_to_csv_values(row: dict[str, Any]) -> list[Any]:
+    return [row[field] for _, field in _CSV_SCHEMA]
+
+
+def _warning(code: str, tag: str, message: str) -> dict[str, str]:
+    return {"code": code, "tag": tag, "message": message}
+
+
+def _deduplicate_warnings(warnings: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    result: list[dict[str, str]] = []
+    for item in warnings:
+        key = (item.get("code", ""), item.get("tag", ""))
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+    return result
 
 
 def _interval_to_seconds(interval: str) -> int:
@@ -220,6 +240,13 @@ async def _acquire_tag_data_interpolated(
         return tag, [], {"error": "String point type não suportado para interpolated"}
 
     raw_items = pi_response.get("Items") or []
+    metadata: dict[str, Any] = {}
+    if not raw_items:
+        metadata["warnings"] = [_warning(
+            "TAG_NO_DATA",
+            tag,
+            "Nenhum dado encontrado para a tag na janela solicitada.",
+        )]
     rows: list[dict[str, Any]] = []
     eng_unit = str(point_meta.get("EngineeringUnits") or "")
     for item in raw_items:
@@ -249,7 +276,7 @@ async def _acquire_tag_data_interpolated(
             "digital_state_code": digital_state_code,
             "digital_state_name": digital_state_name,
         })
-    return tag, rows, {}
+    return tag, rows, metadata
 
 
 async def _acquire_tag_data_recorded(
@@ -257,6 +284,8 @@ async def _acquire_tag_data_recorded(
     start_time: str,
     end_time: str,
     sem: asyncio.Semaphore,
+    *,
+    requested_max_count: int = MAX_COUNT_RECORDED,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     async with sem:
         try:
@@ -264,7 +293,7 @@ async def _acquire_tag_data_recorded(
                 tag=tag,
                 start_time=start_time,
                 end_time=end_time,
-                max_count=MAX_COUNT_RECORDED,
+                max_count=requested_max_count,
             )
         except Exception as exc:
             logger.warning("Failed to acquire recorded data for tag %s: %s", tag, exc)
@@ -272,6 +301,23 @@ async def _acquire_tag_data_recorded(
 
     point_meta = _get_point_metadata(pi_response)
     raw_items = pi_response.get("Items") or []
+    metadata: dict[str, Any] = {}
+    warnings: list[dict[str, str]] = []
+    if not raw_items:
+        warnings.append(_warning(
+            "TAG_NO_DATA",
+            tag,
+            "Nenhum dado encontrado para a tag na janela solicitada.",
+        ))
+    if len(raw_items) >= requested_max_count:
+        warnings.append(_warning(
+            "POSSIBLE_RECORDED_TRUNCATION",
+            tag,
+            "A tag atingiu o limite máximo de pontos Recorded retornáveis nesta consulta. "
+            "O conjunto pode estar truncado.",
+        ))
+    if warnings:
+        metadata["warnings"] = warnings
     rows: list[dict[str, Any]] = []
     eng_unit = str(point_meta.get("EngineeringUnits") or "")
     for item in raw_items:
@@ -301,7 +347,7 @@ async def _acquire_tag_data_recorded(
             "digital_state_code": digital_state_code,
             "digital_state_name": digital_state_name,
         })
-    return tag, rows, {}
+    return tag, rows, metadata
 
 
 async def generate_pi_tags_series_csv_service(
@@ -310,6 +356,8 @@ async def generate_pi_tags_series_csv_service(
     end_time: str = "*",
     data_method: str = "interpolated",
     interval: str | None = None,
+    *,
+    recorded_max_count: int = MAX_COUNT_RECORDED,
 ) -> dict[str, Any]:
     (cleaned_tags, start_iso, end_iso, norm_method, resolved_interval, estimated_rows) = (
         validate_series_csv_contract(tags, start_time, end_time, data_method, interval)
@@ -326,31 +374,40 @@ async def generate_pi_tags_series_csv_service(
             )
         else:
             tasks.append(
-                _acquire_tag_data_recorded(tag, start_iso, end_iso, sem)
+                _acquire_tag_data_recorded(
+                    tag, start_iso, end_iso, sem,
+                    requested_max_count=recorded_max_count,
+                )
             )
 
     results = await asyncio.gather(*tasks)
     all_rows: list[dict[str, Any]] = []
     errors_summary: list[dict[str, Any]] = []
+    warnings: list[dict[str, str]] = []
     tag_no_data_count = 0
     tag_ok_count = 0
 
     for tag, tag_rows, tag_error in results:
         if tag_error:
-            errors_summary.append({
-                "tag": tag,
-                "error": tag_error.get("error", "Erro desconhecido"),
-            })
-            continue
+            warnings.extend(tag_error.get("warnings", []))
+            if "error" in tag_error:
+                errors_summary.append({
+                    "tag": tag,
+                    "error": tag_error.get("error", "Erro desconhecido"),
+                })
+                continue
         if not tag_rows:
             tag_no_data_count += 1
             continue
         tag_ok_count += 1
         all_rows.extend(tag_rows)
 
+    warnings = _deduplicate_warnings(warnings)
+
     if not all_rows and not errors_summary:
         return {
             "status": "no_data",
+            "warnings": warnings,
             "tool_result": {
                 "tags_requested": len(cleaned_tags),
                 "tags_processed": 0,
@@ -367,6 +424,7 @@ async def generate_pi_tags_series_csv_service(
     if errors_summary and not all_rows:
         return {
             "status": "all_failed",
+            "warnings": warnings,
             "errors_summary": errors_summary,
             "tool_result": {
                 "tags_requested": len(cleaned_tags),
@@ -377,7 +435,7 @@ async def generate_pi_tags_series_csv_service(
 
     all_rows.sort(key=lambda r: (r["timestamp"], cleaned_tags.index(r["tag"])))
 
-    status = "partial_success" if errors_summary else "success"
+    status = "partial_success" if errors_summary or tag_no_data_count else "success"
 
     return {
         "status": status,
@@ -395,5 +453,6 @@ async def generate_pi_tags_series_csv_service(
             "actual_rows": len(all_rows),
         },
         "errors_summary": errors_summary,
+        "warnings": warnings,
         "column_headers": _CSV_COLUMNS,
     }

@@ -55,6 +55,90 @@ class TestGeneratePiTagsSeriesCsvService:
 
         assert result.get("status") == "no_data"
         assert "rows" not in result or not result["rows"]
+        assert result["warnings"] == [{
+            "code": "TAG_NO_DATA",
+            "tag": "TAG_A",
+            "message": "Nenhum dado encontrado para a tag na janela solicitada.",
+        }]
+
+    @pytest.mark.asyncio
+    async def test_partial_no_data_is_partial_success(self):
+        from domain.pims.services.generate_pi_tags_series_csv_service import (
+            generate_pi_tags_series_csv_service,
+        )
+
+        anchor = datetime.now(timezone.utc)
+        response_by_tag = {
+            "TAG_A": _make_pi_response([_make_interpolated_row(anchor.isoformat(), 10.0)]),
+            "TAG_B": {"Items": []},
+        }
+
+        async def fake_fetch(*, tag, start_time, end_time, interval):
+            return response_by_tag[tag]
+
+        with patch(
+            "domain.pims.services.generate_pi_tags_series_csv_service.get_interpolated_values_by_tag",
+            side_effect=fake_fetch,
+        ):
+            result = await generate_pi_tags_series_csv_service(
+                tags=["TAG_A", "TAG_B"],
+                start_time="*-1h",
+                end_time="*",
+                data_method="interpolated",
+                interval="1m",
+            )
+
+        assert result["status"] == "partial_success"
+        assert len(result["rows"]) == 1
+        assert result["warnings"][0]["code"] == "TAG_NO_DATA"
+        assert result["warnings"][0]["tag"] == "TAG_B"
+
+    @pytest.mark.asyncio
+    async def test_recorded_limit_emits_possible_truncation_warning(self):
+        from domain.pims.services.generate_pi_tags_series_csv_service import (
+            MAX_COUNT_RECORDED,
+            generate_pi_tags_series_csv_service,
+        )
+
+        row = {
+            "tag": "TAG_A",
+            "timestamp": "2026-08-03T09:00:00-03:00",
+            "value": 1.0,
+            "eng_unit": "",
+            "good": True,
+            "questionable": False,
+            "substituted": False,
+            "annotated": False,
+            "error": "",
+            "value_type": "numeric",
+            "digital_state_code": None,
+            "digital_state_name": None,
+        }
+
+        with patch(
+            "domain.pims.services.generate_pi_tags_series_csv_service._acquire_tag_data_recorded",
+            AsyncMock(return_value=(
+                "TAG_A",
+                [row],
+                {
+                    "warnings": [{
+                        "code": "POSSIBLE_RECORDED_TRUNCATION",
+                        "tag": "TAG_A",
+                        "message": "A tag atingiu o limite máximo de pontos Recorded retornáveis nesta consulta. O conjunto pode estar truncado.",
+                    }],
+                    "items_count": MAX_COUNT_RECORDED,
+                },
+            )),
+        ):
+            result = await generate_pi_tags_series_csv_service(
+                tags=["TAG_A"],
+                start_time="*-1h",
+                end_time="*",
+                data_method="recorded",
+            )
+
+        assert result["status"] == "success"
+        assert result["warnings"][0]["code"] == "POSSIBLE_RECORDED_TRUNCATION"
 
     @pytest.mark.asyncio
     async def test_interpolated_60_rows(self):

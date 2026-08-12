@@ -129,7 +129,7 @@ def test_manifest_contains_view_url():
 
 def test_published_artifact_has_view_url():
     client = MagicMock()
-    client.upload_csv.return_value = DriveUploadedFile(
+    client.upload_file.return_value = DriveUploadedFile(
         file_id="f1", name="t.csv", mime_type="text/csv",
         size=500, web_view_link="https://drive.google.com/view",
         web_content_link=None, created_time="2026-07-28T12:00:00Z",

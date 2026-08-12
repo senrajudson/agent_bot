@@ -696,6 +696,7 @@ async def generate_pi_tags_series_csv(
             end_time=end_time,
             data_method=data_method,
             interval=interval,
+            recorded_max_count=mcp_settings.MCP_SERIES_CSV_RECORDED_MAX_COUNT,
         )
 
         status = service_result.get("status", "no_data")
@@ -716,7 +717,7 @@ async def generate_pi_tags_series_csv(
                     "interval": tr.get("interval", interval),
                 },
                 "message": "Nenhum dado encontrado para as tags e período informados.",
-                "warnings": [],
+                "warnings": service_result.get("warnings", []),
                 "errors_summary": [],
             }, ensure_ascii=False)
 
@@ -731,6 +732,7 @@ async def generate_pi_tags_series_csv(
         tool_result = service_result.get("tool_result", {})
         column_headers = service_result.get("column_headers", [])
         errors_summary = service_result.get("errors_summary", [])
+        service_warnings = service_result.get("warnings", [])
 
         builder = CsvReportBuilder(
             temp_dir=mcp_settings.MCP_SERIES_CSV_PUBLISH_TEMP_DIR,
@@ -738,22 +740,9 @@ async def generate_pi_tags_series_csv(
             delimiter=mcp_settings.MCP_ARTIFACT_CSV_DELIMITER,
         )
 
-        csv_rows = []
-        for r in rows:
-            csv_rows.append([
-                r.get("tag", ""),
-                r.get("timestamp", ""),
-                r.get("value") if r.get("value") is not None else "",
-                r.get("eng_unit", ""),
-                "true" if r.get("good") else "false",
-                "true" if r.get("questionable") else "false",
-                "true" if r.get("substituted") else "false",
-                "true" if r.get("annotated") else "false",
-                r.get("error", ""),
-                r.get("value_type", ""),
-                r.get("digital_state_code") if r.get("digital_state_code") is not None else "",
-                r.get("digital_state_name") or "",
-            ])
+        from domain.pims.services.generate_pi_tags_series_csv_service import _row_to_csv_values
+
+        csv_rows = [_row_to_csv_values(r) for r in rows]
 
         path = builder.build_csv(
             columns=column_headers,
@@ -815,13 +804,21 @@ async def generate_pi_tags_series_csv(
         ]
 
         manifest_errors_list = manifest_errors[:10]
+        manifest_warnings = [
+            WarningsItem(
+                code=str(w.get("code", "")),
+                message=str(w.get("message", "")),
+                tag=w.get("tag"),
+            )
+            for w in service_warnings
+        ]
 
         manifest = build_artifact_manifest(
             status=status,
             tool_name="generate_pi_tags_series_csv",
             request_summary=req_summary,
             artifact_metadata=artifact_meta,
-            warnings=[],
+            warnings=manifest_warnings,
             errors_summary=manifest_errors_list,
             max_manifest_bytes=mcp_settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES,
         )

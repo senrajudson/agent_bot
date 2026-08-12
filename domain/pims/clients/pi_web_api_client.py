@@ -1,9 +1,15 @@
+import json
+import logging
 from typing import Any, Literal
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from domain.core.config import get_domain_settings
+
+logger = logging.getLogger(__name__)
+
+_MAX_UPSTREAM_ERROR_CHARS = 512
 
 
 _DATASERVER_CACHE: dict[str, Any] = {}
@@ -57,6 +63,41 @@ def _normalize_pi_link(url: str) -> str:
     return url
 
 
+def _extract_upstream_error_body(response: httpx.Response) -> str:
+    """Extract a safe, truncated error message from an upstream HTTP error response.
+
+    Attempts JSON parsing first (Errors, Error, message, detail),
+    falls back to text, then to a generic HTTP status message.
+    """
+    status = response.status_code
+    try:
+        text = response.text
+    except Exception:
+        return f"PI Web API returned HTTP {status}"
+
+    if not text or not text.strip():
+        return f"PI Web API returned HTTP {status} without body"
+
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict):
+            for key in ("Errors", "Error", "message", "detail"):
+                val = data.get(key)
+                if val is None:
+                    continue
+                if isinstance(val, list):
+                    msg = "; ".join(str(v) for v in val[:3])
+                else:
+                    msg = str(val)
+                if msg:
+                    return msg[:_MAX_UPSTREAM_ERROR_CHARS]
+        return f"PI Web API returned HTTP {status}: {text[:_MAX_UPSTREAM_ERROR_CHARS]}"
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    return text[:_MAX_UPSTREAM_ERROR_CHARS]
+
+
 async def _pi_get(
     url: str,
     params: dict[str, Any] | None = None,
@@ -71,7 +112,15 @@ async def _pi_get(
             params=params,
         )
 
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        safe_body = _extract_upstream_error_body(exc.response)
+        raise httpx.HTTPStatusError(
+            f"PI Web API error: {safe_body}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
     return response.json()
 
 
@@ -89,7 +138,15 @@ async def _pi_post(
             json=json_body,
         )
 
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        safe_body = _extract_upstream_error_body(exc.response)
+        raise httpx.HTTPStatusError(
+            f"PI Web API error: {safe_body}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
     return response.json()
 
 

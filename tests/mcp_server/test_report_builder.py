@@ -109,3 +109,14 @@ class TestCsvReportBuilder:
             assert "v1;v2" in text or '"v1";"v2"' in text
         finally:
             path.unlink(missing_ok=True)
+
+    def test_header_row_mismatch_fails(self, builder):
+        with pytest.raises(ArtifactLimitExceededError) as exc_info:
+            builder.build_csv(
+                columns=["A", "B"],
+                rows=[["only-one"]],
+                max_rows=100,
+                max_bytes=104857600,
+                max_cell_bytes=32768,
+            )
+        assert exc_info.value.field == "header_row_mismatch"

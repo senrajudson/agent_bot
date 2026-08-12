@@ -48,9 +48,10 @@ class DefaultDrivePublisher:
         app_properties: dict[str, str] | None = None,
     ) -> PublishedArtifact:
         try:
-            uploaded = self._client.upload_csv(
+            uploaded = self._client.upload_file(
                 filename=filename,
-                csv_bytes=file_bytes,
+                file_bytes=file_bytes,
+                mime_type=mime_type,
                 app_properties=app_properties or {},
             )
         except DriveCsvAuthError as exc:

@@ -93,6 +93,26 @@ class TestArtifactManifest:
         assert d["errors_summary"][0]["tag"] == "TAG_A"
         assert d["errors_summary"][0]["code"] == "PI_API_ERROR"
 
+    def test_warning_without_tag_preserves_legacy_shape(self):
+        m = ArtifactManifest(
+            status="success",
+            delivery="drive_artifact",
+            tool_name="test",
+            warnings=[WarningsItem(code="INFO", message="Mensagem")],
+        )
+        warning = m.to_dict()["warnings"][0]
+        assert warning == {"code": "INFO", "message": "Mensagem"}
+
+    def test_warning_with_tag_serializes_tag(self):
+        m = ArtifactManifest(
+            status="success",
+            delivery="drive_artifact",
+            tool_name="test",
+            warnings=[WarningsItem(code="TAG_NO_DATA", message="Sem dados", tag="TAG_A")],
+        )
+        warning = m.to_dict()["warnings"][0]
+        assert warning["tag"] == "TAG_A"
+
 
 class TestDeliveryMode:
     def test_enum_values(self):

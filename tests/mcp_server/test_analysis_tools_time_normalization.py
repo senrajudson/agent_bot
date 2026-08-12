@@ -309,7 +309,7 @@ class TestReportTimeNormalization:
                 MockBuilder.return_value.build_xlsx.return_value = mock_path
                 mock_published = MagicMock()
                 mock_published.name = "report.xlsx"
-                mock_published.mime_type = "text/csv"
+                mock_published.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 mock_published.size_bytes = 100
                 mock_published.view_url = "https://drive.google.com/test"
                 MockPublisher.return_value.publish.return_value = mock_published
@@ -341,7 +341,7 @@ class TestReportTimeNormalization:
                 MockBuilder.return_value.build_xlsx.return_value = mock_path
                 mock_published = MagicMock()
                 mock_published.name = "report.xlsx"
-                mock_published.mime_type = "text/csv"
+                mock_published.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 mock_published.size_bytes = 100
                 mock_published.view_url = "https://drive.google.com/test"
                 MockPublisher.return_value.publish.return_value = mock_published
@@ -378,7 +378,7 @@ class TestReportTimeNormalization:
                 MockBuilder.return_value.build_xlsx.return_value = mock_path
                 mock_published = MagicMock()
                 mock_published.name = "report.xlsx"
-                mock_published.mime_type = "text/csv"
+                mock_published.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 mock_published.size_bytes = 100
                 mock_published.view_url = "https://drive.google.com/test"
                 MockPublisher.return_value.publish.return_value = mock_published

@@ -66,6 +66,12 @@ class CsvReportBuilder:
 
             row_count = 0
             for row in rows:
+                if len(row) != len(columns):
+                    raise ArtifactLimitExceededError(
+                        field="header_row_mismatch",
+                        limit=len(columns),
+                        actual=len(row),
+                    )
                 safe_row: list[str] = []
                 for cell in row:
                     s = self._normalize(cell)

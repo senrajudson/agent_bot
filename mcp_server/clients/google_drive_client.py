@@ -126,23 +126,24 @@ class GoogleDriveClient:
             cache_discovery=False,
         )
 
-    def upload_csv(
+    def upload_file(
         self,
         *,
         filename: str,
-        csv_bytes: bytes,
+        file_bytes: bytes,
+        mime_type: str,
         app_properties: dict[str, str],
     ) -> DriveUploadedFile:
-        if not csv_bytes:
-            raise DriveCsvError("csv_bytes vazio.")
+        if not file_bytes:
+            raise DriveCsvError("file_bytes vazio.")
         service = self._build_service()
         media = MediaIoBaseUpload(
-            BytesIO(csv_bytes), mimetype="text/csv", resumable=False
+            BytesIO(file_bytes), mimetype=mime_type, resumable=False
         )
         body = {
             "name": filename,
             "parents": [self._folder_id],
-            "mimeType": "text/csv",
+            "mimeType": mime_type,
             "appProperties": dict(app_properties),
         }
         try:
@@ -168,7 +169,7 @@ class GoogleDriveClient:
         uploaded = DriveUploadedFile(
             file_id=response.get("id", ""),
             name=response.get("name", filename),
-            mime_type=response.get("mimeType", "text/csv"),
+            mime_type=response.get("mimeType", mime_type),
             size=int(response.get("size") or 0),
             web_view_link=web_view,
             web_content_link=response.get("webContentLink"),
@@ -176,10 +177,25 @@ class GoogleDriveClient:
         )
 
         logger.info(
-            "upload_csv: file_id=%s name=%s size=%d has_web_content=%s",
+            "upload_file: file_id=%s name=%s mime_type=%s size=%d has_web_content=%s",
             _mask_id(uploaded.file_id),
             uploaded.name,
+            uploaded.mime_type,
             uploaded.size,
             "yes" if uploaded.web_content_link else "no",
         )
         return uploaded
+
+    def upload_csv(
+        self,
+        *,
+        filename: str,
+        csv_bytes: bytes,
+        app_properties: dict[str, str],
+    ) -> DriveUploadedFile:
+        return self.upload_file(
+            filename=filename,
+            file_bytes=csv_bytes,
+            mime_type="text/csv",
+            app_properties=app_properties,
+        )

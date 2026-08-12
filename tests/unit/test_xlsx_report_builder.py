@@ -33,10 +33,31 @@ class TestWorkbookOpens:
     def test_workbook_valid(self, builder: XlsxReportBuilder) -> None:
         path = builder.build_xlsx([_make_sheet()])
         assert path.exists()
+        assert path.read_bytes().startswith(b"PK")
         wb = load_workbook(str(path))
         assert len(wb.sheetnames) == 1
         wb.close()
         path.unlink(missing_ok=True)
+
+    def test_mkstemp_fd_is_closed_once(self, builder: XlsxReportBuilder, monkeypatch, tmp_path: Path) -> None:
+        path = tmp_path / "fd-check.xlsx"
+        path.touch()
+        closed: list[int] = []
+
+        monkeypatch.setattr(
+            "mcp_server.services.delivery.xlsx_report_builder.tempfile.mkstemp",
+            lambda **_: (42, str(path)),
+        )
+        monkeypatch.setattr(
+            "mcp_server.services.delivery.xlsx_report_builder.os.close",
+            closed.append,
+        )
+
+        result = builder.build_xlsx([_make_sheet()])
+
+        assert result == path
+        assert closed == [42]
+        result.unlink(missing_ok=True)
 
 
 class TestSheetsCorrect:

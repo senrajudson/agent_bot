@@ -58,6 +58,7 @@ class ErrorsSummaryItem:
 class WarningsItem:
     code: str = ""
     message: str = ""
+    tag: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,7 +97,10 @@ class ArtifactManifest:
         if self.artifact is not None:
             d["artifact"] = asdict(self.artifact)
         if self.warnings:
-            d["warnings"] = [asdict(w) for w in self.warnings]
+            d["warnings"] = [
+                {key: value for key, value in asdict(w).items() if value is not None}
+                for w in self.warnings
+            ]
         if self.errors_summary:
             d["errors_summary"] = [asdict(e) for e in self.errors_summary]
         if self.items_omitted is not None:

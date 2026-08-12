@@ -17,7 +17,7 @@ from mcp_server.services.delivery.contracts import ArtifactManifest
 
 def _make_mock_client():
     client = MagicMock()
-    client.upload_csv.return_value = DriveUploadedFile(
+    client.upload_file.return_value = DriveUploadedFile(
         file_id="abc123",
         name="test.csv",
         mime_type="text/csv",
@@ -40,24 +40,49 @@ class TestDefaultDrivePublisher:
         )
         assert result.view_url == "https://drive.google.com/view"
         assert result.size_bytes == 5000
+        client.upload_file.assert_called_once_with(
+            filename="test.csv",
+            file_bytes=b"a,b,c\n1,2,3",
+            mime_type="text/csv",
+            app_properties={},
+        )
+
+    def test_publish_xlsx_preserves_mime_type(self):
+        xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        client = _make_mock_client()
+        publisher = DefaultDrivePublisher(client)
+
+        publisher.publish(
+            file_bytes=b"PK\x03\x04",
+            filename="report.xlsx",
+            mime_type=xlsx_mime,
+            app_properties={"source": "test"},
+        )
+
+        client.upload_file.assert_called_once_with(
+            filename="report.xlsx",
+            file_bytes=b"PK\x03\x04",
+            mime_type=xlsx_mime,
+            app_properties={"source": "test"},
+        )
 
     def test_auth_error(self):
         client = MagicMock()
-        client.upload_csv.side_effect = DriveCsvAuthError("auth error")
+        client.upload_file.side_effect = DriveCsvAuthError("auth error")
         publisher = DefaultDrivePublisher(client)
         with pytest.raises(DriveConfigError):
             publisher.publish(file_bytes=b"a", filename="test.csv", mime_type="text/csv")
 
     def test_quota_error(self):
         client = MagicMock()
-        client.upload_csv.side_effect = DriveCsvQuotaError("quota error")
+        client.upload_file.side_effect = DriveCsvQuotaError("quota error")
         publisher = DefaultDrivePublisher(client)
         with pytest.raises(ArtifactDeliveryError):
             publisher.publish(file_bytes=b"a", filename="test.csv", mime_type="text/csv")
 
     def test_upload_error(self):
         client = MagicMock()
-        client.upload_csv.side_effect = DriveCsvError("upload error")
+        client.upload_file.side_effect = DriveCsvError("upload error")
         publisher = DefaultDrivePublisher(client)
         with pytest.raises(ArtifactDeliveryError):
             publisher.publish(file_bytes=b"a", filename="test.csv", mime_type="text/csv")

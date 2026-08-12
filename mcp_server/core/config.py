@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     MCP_SERIES_CSV_MIN_INTERVAL_SECONDS: int = 1
     MCP_SERIES_CSV_ERROR_MESSAGE_MAX_CHARS: int = 512
     MCP_SERIES_CSV_PUBLISH_TEMP_DIR: str = "/tmp/agent_bot_mcp_series_csv"
+    MCP_SERIES_CSV_RECORDED_MAX_COUNT: int = 200_000
 
     # search_pi_points strict AND (feature flag, default false)
     ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND: bool = False
@@ -211,6 +212,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"MCP_SERIES_CSV_PUBLISH_TEMP_DIR não acessível: {self.MCP_SERIES_CSV_PUBLISH_TEMP_DIR}"
             )
+        if self.MCP_SERIES_CSV_RECORDED_MAX_COUNT <= 0:
+            raise ValueError("MCP_SERIES_CSV_RECORDED_MAX_COUNT deve ser positivo.")
         return self
 
     @model_validator(mode="after")
@@ -252,12 +255,14 @@ class Settings(BaseSettings):
             "ENABLE_DRIVE_CSV_EXPORT_TOOL=%s "
             "ENABLE_TEST_ARTIFACT_TOOL=%s "
             "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=%s "
+            "MCP_SERIES_CSV_RECORDED_MAX_COUNT=%s "
             "ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=%s "
             "MCP_PORT=%s",
             self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY,
             self.ENABLE_DRIVE_CSV_EXPORT_TOOL,
             self.ENABLE_TEST_ARTIFACT_TOOL,
             self.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV,
+            self.MCP_SERIES_CSV_RECORDED_MAX_COUNT,
             self.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND,
             self.MCP_PORT,
         )

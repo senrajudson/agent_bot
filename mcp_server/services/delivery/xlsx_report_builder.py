@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -38,6 +39,7 @@ class XlsxReportBuilder:
 
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         fd, tmp_path = tempfile.mkstemp(suffix=".xlsx", dir=str(self._temp_dir))
+        os.close(fd)
         path = Path(tmp_path)
 
         try:
