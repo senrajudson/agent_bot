@@ -10,13 +10,18 @@ from zoneinfo import ZoneInfo
 
 from domain.core.config import get_domain_settings
 from domain.pims.clients.pi_web_api_client import (
+    get_digital_set_states,
     get_interpolated_values_by_tag,
+    get_point_by_tag,
     get_recorded_values_by_tag,
 )
+from domain.pims.utils.digital_states import resolve_digital_set_name
 from domain.shared.errors import DomainValidationError, ValidationErrorCode
 from domain.shared.time.pi_time_resolver import DEFAULT_PI_TIMEZONE, resolve_pi_time_range
 
 logger = logging.getLogger(__name__)
+
+MAX_ERROR_MESSAGE_CHARS = 512
 
 _INTERVAL_REGEX = re.compile(r"^[1-9][0-9]*(s|m|h|d)$")
 _INTERVAL_SECONDS: dict[str, int] = {
@@ -61,14 +66,103 @@ def _warning(code: str, tag: str, message: str) -> dict[str, str]:
     return {"code": code, "tag": tag, "message": message}
 
 
+def _warning_with_key(code: str, tag: str, key_extra: str, message: str) -> dict[str, str]:
+    return {"code": code, "tag": tag, "key": f"{tag}:{key_extra}", "message": message}
+
+
 def _deduplicate_warnings(warnings: list[dict[str, str]]) -> list[dict[str, str]]:
     seen: set[tuple[str, str]] = set()
     result: list[dict[str, str]] = []
     for item in warnings:
-        key = (item.get("code", ""), item.get("tag", ""))
-        if key not in seen:
-            seen.add(key)
+        code = item.get("code", "")
+        key = item.get("key") or item.get("tag", "")
+        dedup_key = (code, key)
+        if dedup_key not in seen:
+            seen.add(dedup_key)
             result.append(item)
+    return result
+
+
+def _normalize_digital_state_key(key: Any) -> int | str | None:
+    if key is None:
+        return None
+    if isinstance(key, int):
+        return key
+    if isinstance(key, float):
+        if key == int(key):
+            return int(key)
+        return key
+    if isinstance(key, str):
+        try:
+            if "." in key:
+                f = float(key)
+                if f == int(f):
+                    return int(f)
+                return f
+            return int(key)
+        except ValueError:
+            return key
+    return key
+
+
+def _build_state_map(
+    digital_states: list[dict[str, Any]],
+) -> dict[int | str, dict[str, Any]]:
+    state_map: dict[int | str, dict[str, Any]] = {}
+    for state in digital_states:
+        code_raw = state.get("indice")
+        if code_raw is None:
+            code_raw = state.get("Value")
+        if code_raw is None:
+            code_raw = state.get("code")
+        if code_raw is None:
+            continue
+        code = _normalize_digital_state_key(code_raw)
+        if code is None:
+            continue
+        state_map[code] = {
+            "name": state.get("nome") or state.get("Name") or "",
+            "description": state.get("descricao") or state.get("Description") or "",
+        }
+    return state_map
+
+
+def _extract_digital_value(
+    raw_value: Any,
+    point_type: str,
+) -> tuple[Any, str | None]:
+    if point_type == "digital":
+        if isinstance(raw_value, dict):
+            return raw_value.get("Value"), raw_value.get("Name")
+        return raw_value, None
+    if isinstance(raw_value, dict):
+        return raw_value.get("Value"), raw_value.get("Name")
+    return raw_value, None
+
+
+def _resolve_digital_state_name(
+    code: Any,
+    state_map: dict[int | str, dict[str, Any]],
+    upstream_name: str | None,
+) -> tuple[str, str | None]:
+    normalized = _normalize_digital_state_key(code)
+    if normalized is not None and normalized in state_map:
+        return state_map[normalized]["name"], None
+    if upstream_name:
+        return upstream_name, "UNKNOWN_DIGITAL_STATE"
+    return "", "UNKNOWN_DIGITAL_STATE"
+
+
+async def _fetch_point_metadata_batch(
+    tags: list[str],
+) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for tag in tags:
+        try:
+            point_data = await get_point_by_tag(tag)
+            result[tag] = point_data
+        except Exception:
+            result[tag] = {}
     return result
 
 
@@ -231,7 +325,7 @@ async def _acquire_tag_data_interpolated(
             )
         except Exception as exc:
             logger.warning("Failed to acquire interpolated data for tag %s: %s", tag, exc)
-            return tag, [], {"error": str(exc)[:300]}
+            return tag, [], {"error": str(exc)[:MAX_ERROR_MESSAGE_CHARS]}
 
     point_meta = _get_point_metadata(pi_response)
     point_type = _extract_point_type(point_meta)
@@ -286,6 +380,7 @@ async def _acquire_tag_data_recorded(
     sem: asyncio.Semaphore,
     *,
     requested_max_count: int = MAX_COUNT_RECORDED,
+    pre_resolved_metadata: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     async with sem:
         try:
@@ -297,7 +392,7 @@ async def _acquire_tag_data_recorded(
             )
         except Exception as exc:
             logger.warning("Failed to acquire recorded data for tag %s: %s", tag, exc)
-            return tag, [], {"error": str(exc)[:300]}
+            return tag, [], {"error": str(exc)[:MAX_ERROR_MESSAGE_CHARS]}
 
     point_meta = _get_point_metadata(pi_response)
     raw_items = pi_response.get("Items") or []
@@ -316,23 +411,84 @@ async def _acquire_tag_data_recorded(
             "A tag atingiu o limite máximo de pontos Recorded retornáveis nesta consulta. "
             "O conjunto pode estar truncado.",
         ))
+
+    effective_meta = pre_resolved_metadata or point_meta
+    point_type = _extract_point_type(effective_meta)
+    if not point_type:
+        point_type = _extract_point_type(point_meta)
+    is_digital = point_type == "digital"
+
+    state_map: dict[int | str, dict[str, Any]] = {}
+    if is_digital and raw_items:
+        ds_resolution = resolve_digital_set_name(
+            point_data=effective_meta,
+            digitalset_attribute=None,
+        )
+        ds_name = ds_resolution.name
+        if ds_name:
+            try:
+                ds_result = await get_digital_set_states(ds_name)
+                raw_states = ds_result.get("states") or ds_result.get("Items") or []
+                state_map = _build_state_map(raw_states)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to resolve digital set states for tag %s: %s", tag, exc
+                )
+                warnings.append(_warning(
+                    "DIGITAL_STATE_RESOLUTION_FAILED",
+                    tag,
+                    "Não foi possível resolver os estados do Digital Set. "
+                    "DigitalStateName pode estar incompleto.",
+                ))
+        else:
+            warnings.append(_warning(
+                "DIGITAL_STATE_RESOLUTION_FAILED",
+                tag,
+                "Nome do Digital Set não encontrado na metadata da tag.",
+            ))
+
     if warnings:
         metadata["warnings"] = warnings
     rows: list[dict[str, Any]] = []
     eng_unit = str(point_meta.get("EngineeringUnits") or "")
+    seen_unknown: set[int | str] = set()
     for item in raw_items:
         ts = _extract_timestamp(item.get("Timestamp"))
         if ts is None:
             continue
         quality = _normalize_quality(item)
         raw_value = item.get("Value")
-        digital_state_code = None
-        digital_state_name = None
-        value_type = "numeric"
-        if isinstance(raw_value, dict):
-            digital_state_code = raw_value.get("Value")
-            digital_state_name = raw_value.get("Name")
+        if is_digital:
+            code_raw, upstream_name = _extract_digital_value(raw_value, "digital")
+            if code_raw is not None:
+                code_key = _normalize_digital_state_key(code_raw)
+                resolved_name, unknown_warning = _resolve_digital_state_name(
+                    code_raw, state_map, upstream_name
+                )
+                if unknown_warning and code_key is not None and code_key not in seen_unknown:
+                    seen_unknown.add(code_key)
+                    warnings.append(_warning_with_key(
+                        "UNKNOWN_DIGITAL_STATE",
+                        tag,
+                        str(code_raw),
+                        f"Código digital '{code_raw}' não encontrado no Digital Set atual.",
+                    ))
+                    if "warnings" not in metadata:
+                        metadata["warnings"] = warnings
+                digital_state_code = code_raw
+                digital_state_name = resolved_name
+            else:
+                digital_state_code = None
+                digital_state_name = None
             value_type = "digital"
+        else:
+            digital_state_code = None
+            digital_state_name = None
+            value_type = "numeric"
+            if isinstance(raw_value, dict):
+                digital_state_code = raw_value.get("Value")
+                digital_state_name = raw_value.get("Name")
+                value_type = "digital"
         rows.append({
             "tag": tag,
             "timestamp": ts,
@@ -363,6 +519,10 @@ async def generate_pi_tags_series_csv_service(
         validate_series_csv_contract(tags, start_time, end_time, data_method, interval)
     )
 
+    point_metadata_map: dict[str, dict[str, Any]] = {}
+    if norm_method == "recorded":
+        point_metadata_map = await _fetch_point_metadata_batch(cleaned_tags)
+
     sem = asyncio.Semaphore(SEMAPHORE_LIMIT)
     tasks = []
     for tag in cleaned_tags:
@@ -373,10 +533,12 @@ async def generate_pi_tags_series_csv_service(
                 )
             )
         else:
+            pre_meta = point_metadata_map.get(tag) or {}
             tasks.append(
                 _acquire_tag_data_recorded(
                     tag, start_iso, end_iso, sem,
                     requested_max_count=recorded_max_count,
+                    pre_resolved_metadata=pre_meta,
                 )
             )
 

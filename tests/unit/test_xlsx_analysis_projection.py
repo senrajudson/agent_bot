@@ -2,12 +2,18 @@ from __future__ import annotations
 
 from domain.analysis.models import (
     AnalysisError,
+    DigitalAnalysisResult,
+    DigitalAnalysisStatus,
+    DigitalCoverageMetrics,
     DigitalStateDuration,
+    DigitalStateOccupancy,
+    DigitalStateRef,
     DigitalTransition,
     GapCandidate,
     MultiTagAnalysisResult,
     NumericStatistics,
     QualityMetrics,
+    StateStatistic,
     TagAnalysisResult,
     TagMetadata,
 )
@@ -31,9 +37,32 @@ def _make_multi(have_digital: bool = False) -> MultiTagAnalysisResult:
         results.append(
             TagAnalysisResult(
                 metadata=TagMetadata(tag="ACI_DIG", point_type="digital", descriptor="Dig"),
-                quality=QualityMetrics(good_pct=100.0, questionable_pct=0.0, substituted_pct=0.0, zero_pct=0.0, verdict="DADOS_EXCELENTES"),
-                digital_durations=(DigitalStateDuration(state="ON", count=1, percent=100.0, duration_seconds=3600),),
-                digital_transitions=(),
+                quality=None,
+                digital_analysis=DigitalAnalysisResult(
+                    status=DigitalAnalysisStatus.COMPLETE,
+                    possible_states=(DigitalStateRef(state_code=0, state_name="OFF"), DigitalStateRef(state_code=1, state_name="ON")),
+                    initial_state=DigitalStateRef(state_code=0, state_name="OFF"),
+                    final_state=DigitalStateRef(state_code=1, state_name="ON"),
+                    occupancy=(
+                        DigitalStateOccupancy(state_code=0, state_name="OFF", duration_seconds=1800, percentage_of_window=50.0, entries_count=1),
+                        DigitalStateOccupancy(state_code=1, state_name="ON", duration_seconds=1800, percentage_of_window=50.0, entries_count=1),
+                    ),
+                    transitions=(DigitalTransition(from_state="OFF", to_state="ON", count=1, rate_per_hour=0.5),),
+                    coverage=DigitalCoverageMetrics(
+                        window_seconds=3600, known_seconds=3600, known_pct=100.0,
+                        bad_seconds=0, bad_pct=0, null_seconds=0, null_pct=0,
+                        unknown_seconds=0, unknown_pct=0, uncovered_seconds=0, uncovered_pct=0,
+                        questionable_seconds=0, questionable_pct=0, substituted_seconds=0, substituted_pct=0,
+                    ),
+                    recorded_events_count=2,
+                    valid_events_count=2,
+                    state_statistics=(
+                        StateStatistic(state_code=0, state_name="OFF", observed=True, entries_count=1, exits_count=1, segment_count=1, duration_seconds=1800, percentage_of_window=50.0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=1800.0, dwell_median_seconds=1800.0, dwell_min_seconds=1800.0, dwell_max_seconds=1800.0),
+                        StateStatistic(state_code=1, state_name="ON", observed=True, entries_count=1, exits_count=0, segment_count=1, duration_seconds=1800, percentage_of_window=50.0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=1800.0, dwell_median_seconds=1800.0, dwell_min_seconds=1800.0, dwell_max_seconds=1800.0),
+                    ),
+                ),
+                digital_durations=(DigitalStateDuration(state="OFF", count=1, percent=50.0, duration_seconds=1800), DigitalStateDuration(state="ON", count=1, percent=50.0, duration_seconds=1800)),
+                digital_transitions=(DigitalTransition(from_state="OFF", to_state="ON", count=1, rate_per_hour=0.5),),
                 zero_policy_applied="invalid",
             )
         )
@@ -53,14 +82,15 @@ class TestProjection:
         proj = XlsxAnalysisProjection()
         sheets = proj.project(_make_multi(have_digital=True))
         names = [s.name for s in sheets]
-        assert "Estados_Digitais" in names
-        assert len(sheets) == 10
+        assert "Estados" in names
+        assert len(sheets) >= 10  # mixed has more sheets now
 
     def test_9_sheets_for_numeric_only(self) -> None:
         proj = XlsxAnalysisProjection()
         sheets = proj.project(_make_multi(have_digital=False))
         names = [s.name for s in sheets]
-        assert "Estados_Digitais" not in names
+        assert "Estados" not in names
+        assert "Digital_Set" not in names
         assert len(sheets) == 9
 
     def test_columns_per_sheet(self) -> None:

@@ -432,7 +432,7 @@ Agent (app/agent/agent.py)
 | `consultar_tag` | `tags: list[str]`, `pergunta_usuario: str \| None` | Valor atual e metadados de tags |
 | `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período). SOMENTE para operações estatísticas |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
-| `generate_pi_tags_series_csv` | `tags, start_time, end_time, data_method, interval` | Séries temporais sem agregação estatística. CSV no Drive. Sem `operation` |
+| `generate_pi_tags_series_csv` | `tags, start_time, end_time, data_method, interval` | Séries temporais sem agregação estatística. CSV no Drive. Sem `operation`. Suporta tags digitais com enrichment de Digital Set. |
 | `status_pims_tool` | `-` (sem parâmetros) | Health check da PI Web API (/dataservers) |
 
 ### Configuração

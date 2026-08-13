@@ -1,7 +1,7 @@
-"""Testes de XLSX digital — T106-T118.
+"""Testes de XLSX digital — T106-T118 (atualizados para novo schema).
 
-Cobre: Resumo NÃO APLICÁVEL, Qualidade, Estados_Digitais 14 colunas,
-todos os estados, homônimos, status, cobertura, ausência de availability_pct.
+Cobre: Resumo digital, Qualidade digital, Estados (18 colunas),
+todos os estados, homônimos, status, cobertura, Recorded, availability.
 """
 
 from __future__ import annotations
@@ -11,6 +11,9 @@ from domain.analysis.models import (
     DigitalAnalysisResult,
     DigitalAnalysisStatus,
     DigitalCoverageMetrics,
+    DigitalDiagnosticWarning,
+    DigitalRecordedEvent,
+    DigitalSetSnapshotEntry,
     DigitalStateOccupancy,
     DigitalStateRef,
     DigitalTransition,
@@ -18,8 +21,12 @@ from domain.analysis.models import (
     MultiTagAnalysisResult,
     NumericStatistics,
     QualityMetrics,
+    QualitySummary,
+    SegmentKind,
+    StateStatistic,
     TagAnalysisResult,
     TagMetadata,
+    TimelineSegment,
 )
 from domain.analysis.services.xlsx_projection import XlsxAnalysisProjection
 
@@ -55,6 +62,30 @@ def _make_digital_result() -> TagAnalysisResult:
             ),
             recorded_events_count=0,
             valid_events_count=0,
+            quality_summary=QualitySummary(
+                total_events=0, good_events=0, bad_events=0, questionable_events=0, substituted_events=0,
+                known_duration=604800, bad_duration=0, unknown_duration=0, null_duration=0, uncovered_duration=0,
+                questionable_duration=0, questionable_pct=0, substituted_duration=0, substituted_pct=0,
+                bad_segment_count=0, unknown_segment_count=0,
+                longest_bad_start=None, longest_bad_end=None, longest_bad_duration=0,
+                longest_unknown_start=None, longest_unknown_end=None, longest_unknown_duration=0,
+                first_bad_timestamp=None, last_bad_timestamp=None,
+            ),
+            state_statistics=(
+                StateStatistic(state_code=0, state_name="DESLIGADO", observed=True, entries_count=1, exits_count=0, segment_count=1, duration_seconds=604800, percentage_of_window=100.0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=604800.0, dwell_median_seconds=604800.0, dwell_min_seconds=604800.0, dwell_max_seconds=604800.0),
+                StateStatistic(state_code=1, state_name="VAZIO", observed=False, entries_count=0, exits_count=0, segment_count=0, duration_seconds=0, percentage_of_window=0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=None, dwell_median_seconds=None, dwell_min_seconds=None, dwell_max_seconds=None),
+                StateStatistic(state_code=2, state_name="LIGADO", observed=False, entries_count=0, exits_count=0, segment_count=0, duration_seconds=0, percentage_of_window=0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=None, dwell_median_seconds=None, dwell_min_seconds=None, dwell_max_seconds=None),
+                StateStatistic(state_code=3, state_name="VAZIO", observed=False, entries_count=0, exits_count=0, segment_count=0, duration_seconds=0, percentage_of_window=0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=None, dwell_median_seconds=None, dwell_min_seconds=None, dwell_max_seconds=None),
+                StateStatistic(state_code=4, state_name="FALHA", observed=False, entries_count=0, exits_count=0, segment_count=0, duration_seconds=0, percentage_of_window=0, first_seen=None, last_seen=None, longest_segment_start=None, longest_segment_end=None, dwell_avg_seconds=None, dwell_median_seconds=None, dwell_min_seconds=None, dwell_max_seconds=None),
+            ),
+            digital_set_snapshot=(
+                DigitalSetSnapshotEntry(state_code=0, state_name="DESLIGADO", state_description=None),
+                DigitalSetSnapshotEntry(state_code=1, state_name="VAZIO", state_description=None),
+                DigitalSetSnapshotEntry(state_code=2, state_name="LIGADO", state_description=None),
+                DigitalSetSnapshotEntry(state_code=3, state_name="VAZIO", state_description=None),
+                DigitalSetSnapshotEntry(state_code=4, state_name="FALHA", state_description=None),
+            ),
+            diagnostic_warnings=(),
         ),
         start_time="2026-08-01T00:00:00-03:00",
         end_time="2026-08-08T00:00:00-03:00",
@@ -96,35 +127,62 @@ class TestT106_ResumoDigital:
         digital_row = [r for r in resumo.rows if r[0] == "CPD_LP_SECADOR"][0]
         assert digital_row[6] == "NÃO APLICÁVEL"
 
+    def test_has_analysis_status(self) -> None:
+        sheets = XlsxAnalysisProjection().project(_make_multi())
+        resumo = [s for s in sheets if s.name == "Resumo"][0]
+        digital_row = [r for r in resumo.rows if r[0] == "CPD_LP_SECADOR"][0]
+        # Mixed Resumo: analysis_status at index 9
+        assert digital_row[9] == "no_transitions"
+        assert "A tag permaneceu" in digital_row[10]
+
+    def test_has_executive_diagnosis(self) -> None:
+        sheets = XlsxAnalysisProjection().project(_make_multi())
+        resumo = [s for s in sheets if s.name == "Resumo"][0]
+        digital_row = [r for r in resumo.rows if r[0] == "CPD_LP_SECADOR"][0]
+        # diagnosis at index 18
+        assert digital_row[18] != ""
+
 
 # ---------------------------------------------------------------------------
 # T107 — Qualidade digital
 # ---------------------------------------------------------------------------
 
 class TestT107_QualidadeDigital:
-    def test_numeric_cells_empty(self) -> None:
+    def test_has_event_counts(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
         qualidade = [s for s in sheets if s.name == "Qualidade"][0]
         digital_row = [r for r in qualidade.rows if r[0] == "CPD_LP_SECADOR"][0]
-        assert digital_row[1] is None  # good_pct
-        assert digital_row[4] is None  # zero_pct
-        assert digital_row[6] == "NÃO APLICÁVEL"
+        assert digital_row[1] == "digital"
+        # Mixed Qualidade: total_events at index 8
+        assert digital_row[8] == 0  # total_events
+        assert digital_row[9] == 0  # good_events
 
-
-# ---------------------------------------------------------------------------
-# T108 — Estados_Digitais colunas
-# ---------------------------------------------------------------------------
-
-class TestT108_EstadosDigitaisColumns:
-    def test_14_columns(self) -> None:
+    def test_has_coverage(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
-        assert len(estados.columns) == 14
+        qualidade = [s for s in sheets if s.name == "Qualidade"][0]
+        digital_row = [r for r in qualidade.rows if r[0] == "CPD_LP_SECADOR"][0]
+        # Mixed Qualidade: known_duration_seconds at index 11
+        assert digital_row[11] == 604800  # known_duration_seconds
+        assert digital_row[12] == 0  # bad_duration_seconds
+
+
+# ---------------------------------------------------------------------------
+# T108 — Estados colunas
+# ---------------------------------------------------------------------------
+
+class TestT108_EstadosColumns:
+    def test_18_columns(self) -> None:
+        sheets = XlsxAnalysisProjection().project(_make_multi())
+        estados = [s for s in sheets if s.name == "Estados"][0]
+        assert len(estados.columns) == 18
         expected = [
-            "tag", "state_code", "state_name", "duration_seconds",
-            "percentage_of_window", "entries_count", "analysis_status",
-            "known_coverage_pct", "bad_pct", "null_pct", "unknown_pct",
-            "uncovered_pct", "questionable_pct", "substituted_pct",
+            "tag", "state_code", "state_name", "observed",
+            "entries_count", "exits_count", "segment_count",
+            "duration_seconds", "duration_human", "percentage_of_window",
+            "dwell_avg_seconds", "dwell_median_seconds",
+            "dwell_min_seconds", "dwell_max_seconds",
+            "first_seen", "last_seen",
+            "longest_segment_start", "longest_segment_end",
         ]
         assert estados.columns == expected
 
@@ -136,7 +194,7 @@ class TestT108_EstadosDigitaisColumns:
 class TestT109_AllStatesInXlsx:
     def test_all_states(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
+        estados = [s for s in sheets if s.name == "Estados"][0]
         codes = [r[1] for r in estados.rows if r[0] == "CPD_LP_SECADOR"]
         assert 0 in codes
         assert 1 in codes
@@ -153,7 +211,7 @@ class TestT109_AllStatesInXlsx:
 class TestT110_HomonymousInXlsx:
     def test_distinct_codes(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
+        estados = [s for s in sheets if s.name == "Estados"][0]
         digital_rows = [r for r in estados.rows if r[0] == "CPD_LP_SECADOR"]
         codes = [r[1] for r in digital_rows]
         assert 1 in codes
@@ -167,12 +225,13 @@ class TestT110_HomonymousInXlsx:
 # ---------------------------------------------------------------------------
 
 class TestT111_StatusInXlsx:
-    def test_status_present(self) -> None:
+    def test_observed_present(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
+        estados = [s for s in sheets if s.name == "Estados"][0]
         digital_rows = [r for r in estados.rows if r[0] == "CPD_LP_SECADOR"]
-        for row in digital_rows:
-            assert row[6] == "no_transitions"
+        observed = [r[3] for r in digital_rows]
+        assert True in observed
+        assert False in observed
 
 
 # ---------------------------------------------------------------------------
@@ -180,18 +239,13 @@ class TestT111_StatusInXlsx:
 # ---------------------------------------------------------------------------
 
 class TestT112_CoverageInXlsx:
-    def test_coverage_columns(self) -> None:
+    def test_duration_columns(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
+        estados = [s for s in sheets if s.name == "Estados"][0]
         digital_rows = [r for r in estados.rows if r[0] == "CPD_LP_SECADOR"]
-        for row in digital_rows:
-            assert row[7] == 100.0  # known_coverage_pct
-            assert row[8] == 0  # bad_pct
-            assert row[9] == 0  # null_pct
-            assert row[10] == 0  # unknown_pct
-            assert row[11] == 0  # uncovered_pct
-            assert row[12] == 0  # questionable_pct
-            assert row[13] == 0  # substituted_pct
+        observed_row = [r for r in digital_rows if r[3] is True][0]
+        assert observed_row[7] == 604800  # duration_seconds
+        assert observed_row[9] == 100.0  # percentage_of_window
 
 
 # ---------------------------------------------------------------------------
@@ -220,45 +274,71 @@ class TestT114_NumericPreserved:
 
 
 # ---------------------------------------------------------------------------
-# T115 — Ordem das sheets
+# T115 — Ordem das sheets (mixed)
 # ---------------------------------------------------------------------------
 
 class TestT115_SheetOrder:
     def test_order(self) -> None:
         sheets = XlsxAnalysisProjection().project(_make_multi())
         names = [s.name for s in sheets]
-        expected = ["Resumo", "Qualidade", "Estatisticas", "Recorded", "Interpolated_5m", "Gaps", "Spikes", "Estados_Digitais", "Erros_Warnings", "Metadados"]
-        assert names == expected
+        # Mixed: Resumo, Qualidade, Recorded, Estatisticas, Interpolated_5m,
+        # Gaps, Spikes, Estados, Digital_Set, Erros_Warnings, Metadados
+        assert names[0] == "Resumo"
+        assert names[1] == "Qualidade"
+        assert "Estatisticas" in names
+        assert "Recorded" in names
+        assert "Interpolated_5m" in names
+        assert "Gaps" in names
+        assert "Spikes" in names
+        assert "Estados" in names
+        assert "Digital_Set" in names
+        assert names[-2] == "Erros_Warnings"
+        assert names[-1] == "Metadados"
+        assert "Estados_Digitais" not in names
 
 
 # ---------------------------------------------------------------------------
-# T116 — Fallback legado
+# T116 — Recorded digital populated
 # ---------------------------------------------------------------------------
 
-class TestT116_LegacyFallback:
-    def test_legacy_fallback(self) -> None:
-        from domain.analysis.models import DigitalStateDuration
+class TestT116_RecordedDigital:
+    def test_recorded_has_rows(self) -> None:
+        from domain.analysis.models import DigitalRecordedEvent
         multi = MultiTagAnalysisResult(
             results=(
                 TagAnalysisResult(
-                    metadata=TagMetadata(tag="LEGACY", point_type="digital", descriptor=""),
+                    metadata=TagMetadata(tag="TEST", point_type="digital", descriptor=""),
                     quality=None,
-                    digital_durations=(DigitalStateDuration(state="ON", count=1, percent=100.0, duration_seconds=3600),),
-                    digital_transitions=(),
+                    digital_analysis=DigitalAnalysisResult(
+                        status=DigitalAnalysisStatus.COMPLETE,
+                        possible_states=(DigitalStateRef(state_code=0, state_name="OFF"),),
+                        initial_state=DigitalStateRef(state_code=0, state_name="OFF"),
+                        final_state=DigitalStateRef(state_code=0, state_name="OFF"),
+                        occupancy=(DigitalStateOccupancy(state_code=0, state_name="OFF", duration_seconds=3600, percentage_of_window=100.0, entries_count=1),),
+                        transitions=(),
+                        coverage=DigitalCoverageMetrics(
+                            window_seconds=3600, known_seconds=3600, known_pct=100,
+                            bad_seconds=0, bad_pct=0, null_seconds=0, null_pct=0,
+                            unknown_seconds=0, unknown_pct=0, uncovered_seconds=0, uncovered_pct=0,
+                            questionable_seconds=0, questionable_pct=0, substituted_seconds=0, substituted_pct=0,
+                        ),
+                        recorded_events_count=2,
+                        valid_events_count=2,
+                        classified_recorded_events=(
+                            DigitalRecordedEvent(timestamp="2026-08-01T10:00:00", raw_value=0.0, resolved_code=0, resolved_state="OFF", classification=SegmentKind.KNOWN, good=True, questionable=False, substituted=False),
+                            DigitalRecordedEvent(timestamp="2026-08-01T11:00:00", raw_value=0.0, resolved_code=0, resolved_state="OFF", classification=SegmentKind.KNOWN, good=True, questionable=False, substituted=False),
+                        ),
+                    ),
                     zero_policy_applied="invalid",
                 ),
             ),
-            errors=(),
-            period_start="2026-08-01T00:00:00-03:00",
-            period_end="2026-08-02T00:00:00-03:00",
-            total_requested=1,
-            total_processed=1,
+            period_start="2026-08-01T00:00:00", period_end="2026-08-02T00:00:00",
         )
         sheets = XlsxAnalysisProjection().project(multi)
-        estados = [s for s in sheets if s.name == "Estados_Digitais"][0]
-        assert len(estados.rows) == 1
-        assert estados.rows[0][0] == "LEGACY"
-        assert estados.rows[0][2] == "ON"
+        recorded = [s for s in sheets if s.name == "Recorded"][0]
+        assert len(recorded.rows) == 2
+        assert recorded.rows[0][0] == "TEST"
+        assert recorded.rows[0][5] == "known"
 
 
 # ---------------------------------------------------------------------------
@@ -280,12 +360,10 @@ class TestT117_PartialSuccess:
 class TestT118_ManifestUnchanged:
     def test_manifest_structure(self) -> None:
         multi = _make_multi()
-        # Verify the multi result structure is preserved
         assert multi.total_requested == 3
         assert multi.total_processed == 2
         assert len(multi.results) == 2
         assert len(multi.errors) == 1
-        # Verify digital result has correct structure
         dig = [r for r in multi.results if r.metadata.point_type == "digital"][0]
         assert dig.quality is None
         assert dig.digital_analysis is not None

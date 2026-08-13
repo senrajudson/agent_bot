@@ -29,6 +29,7 @@ from domain.analysis.policies import (
 from domain.analysis.services._digital import (
     compute_state_durations,
     compute_transitions,
+    enrich_digital_result,
     reconstruct_timeline,
 )
 from domain.analysis.services._numeric import (
@@ -185,6 +186,16 @@ class TagAnalysisService:
             seed=data.digital_seed,
             recorded=data.recorded,
             possible_states=digital_states,
+        )
+
+        # Enriquecer com facts adicionais
+        digital_result = enrich_digital_result(
+            base=digital_result,
+            recorded=data.recorded,
+            seed=data.digital_seed,
+            possible_states=digital_states,
+            window_start=window_start,
+            window_end=window_end,
         )
 
         # Derivar campos legados de digital_result

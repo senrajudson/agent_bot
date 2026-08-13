@@ -22,6 +22,19 @@ class DigitalAnalysisStatus(str, Enum):
     INVALID_DIGITAL_VALUES = "invalid_digital_values"
 
 
+class SegmentKind(str, Enum):
+    KNOWN = "known"
+    BAD = "bad"
+    UNKNOWN = "unknown"
+    NULL = "null"
+    UNCOVERED = "uncovered"
+
+
+class SegmentSource(str, Enum):
+    SEED_AT_OR_BEFORE = "seed_at_or_before"
+    RECORDED = "recorded"
+
+
 @dataclass(frozen=True)
 class AnalysisRequest:
     tag: str = ""
@@ -141,6 +154,160 @@ class DigitalCoverageMetrics:
     substituted_pct: float
 
 
+# ---------------------------------------------------------------------------
+# Novos tipos para relatório digital auditável
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TimelineSegment:
+    start: object
+    end: object
+    duration_seconds: float
+    raw_value: float | int | None
+    state_code: int | str | None
+    state_name: str | None
+    kind: SegmentKind
+    good: bool | None
+    questionable: bool | None
+    substituted: bool | None
+    source: SegmentSource | None
+
+
+@dataclass(frozen=True)
+class DigitalRecordedEvent:
+    timestamp: str
+    raw_value: float | None
+    resolved_code: int | None
+    resolved_state: str | None
+    classification: SegmentKind
+    good: bool
+    questionable: bool
+    substituted: bool
+
+
+@dataclass(frozen=True)
+class SeedInfo:
+    found: bool
+    timestamp: str | None
+    raw_value: float | None
+    good: bool | None
+    questionable: bool | None
+    substituted: bool | None
+    classification: SegmentKind | None
+    age_seconds_at_window_start: float | None
+    state_code: int | str | None
+    state_name: str | None
+
+
+@dataclass(frozen=True)
+class StateStatistic:
+    state_code: int | str
+    state_name: str
+    observed: bool
+    entries_count: int
+    exits_count: int
+    segment_count: int
+    duration_seconds: float
+    percentage_of_window: float
+    first_seen: object
+    last_seen: object
+    longest_segment_start: object
+    longest_segment_end: object
+    dwell_avg_seconds: float | None
+    dwell_median_seconds: float | None
+    dwell_min_seconds: float | None
+    dwell_max_seconds: float | None
+
+
+@dataclass(frozen=True)
+class TransitionStatistic:
+    from_kind: SegmentKind | None
+    from_code: int | str | None
+    from_name: str | None
+    to_kind: SegmentKind | None
+    to_code: int | str | None
+    to_name: str | None
+    count: int
+    first_transition: object
+    last_transition: object
+    percentage_of_transitions: float
+
+
+@dataclass(frozen=True)
+class UnknownValueStatistic:
+    raw_value: float | int
+    occurrences: int
+    segment_count: int
+    duration_seconds: float
+    percentage_of_window: float
+    first_seen: object
+    last_seen: object
+    sample_timestamp: str | None
+
+
+@dataclass(frozen=True)
+class QualitySummary:
+    total_events: int
+    good_events: int
+    bad_events: int
+    questionable_events: int
+    substituted_events: int
+    known_duration: float
+    bad_duration: float
+    unknown_duration: float
+    null_duration: float
+    uncovered_duration: float
+    questionable_duration: float
+    questionable_pct: float
+    substituted_duration: float
+    substituted_pct: float
+    bad_segment_count: int
+    unknown_segment_count: int
+    longest_bad_start: object
+    longest_bad_end: object
+    longest_bad_duration: float
+    longest_unknown_start: object
+    longest_unknown_end: object
+    longest_unknown_duration: float
+    first_bad_timestamp: str | None
+    last_bad_timestamp: str | None
+
+
+@dataclass(frozen=True)
+class DailyBucket:
+    date: str
+    known_pct: float
+    bad_pct: float
+    unknown_pct: float
+    null_pct: float
+    uncovered_pct: float
+    transition_count: int
+    dominant_state_code: int | str | None
+    dominant_state_name: str | None
+    dominant_state_pct: float | None
+    distinct_states_observed: int
+    distinct_unknown_values: int
+
+
+@dataclass(frozen=True)
+class DigitalSetSnapshotEntry:
+    state_code: int | str
+    state_name: str
+    state_description: str | None
+
+
+@dataclass(frozen=True)
+class DigitalDiagnosticWarning:
+    code: str
+    severity: str
+
+
+# ---------------------------------------------------------------------------
+# DigitalAnalysisResult (ampliado com defaults retrocompatíveis)
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class DigitalAnalysisResult:
     status: DigitalAnalysisStatus
@@ -153,6 +320,17 @@ class DigitalAnalysisResult:
     recorded_events_count: int
     valid_events_count: int
     warnings: tuple[str, ...] = ()
+    # Novos campos (defaults retrocompatíveis)
+    timeline_segments: tuple[TimelineSegment, ...] = ()
+    classified_recorded_events: tuple[DigitalRecordedEvent, ...] = ()
+    seed_info: Optional[SeedInfo] = None
+    state_statistics: tuple[StateStatistic, ...] = ()
+    transition_statistics: tuple[TransitionStatistic, ...] = ()
+    unknown_value_statistics: tuple[UnknownValueStatistic, ...] = ()
+    quality_summary: Optional[QualitySummary] = None
+    daily_summary: tuple[DailyBucket, ...] = ()
+    digital_set_snapshot: tuple[DigitalSetSnapshotEntry, ...] = ()
+    diagnostic_warnings: tuple[DigitalDiagnosticWarning, ...] = ()
 
 
 @dataclass(frozen=True)

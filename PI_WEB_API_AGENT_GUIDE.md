@@ -1585,6 +1585,56 @@ um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
 - Máximo de 100 MiB por arquivo.
 - Times mínimos suportados: 1s, 1m, 5m, 15m, 1h, 1d, etc.
 
+## Tags Digitais
+
+A tool suporta tags com `PointType=Digital` no modo `recorded`.
+
+### Comportamento
+
+1. **PointType detection**: metadata da PI é obtida antes da aquisição via `get_point_by_tag`. `PointType` é a fonte da verdade (não sufixos de nome).
+2. **Digital Set enrichment**: quando `PointType=Digital`, o nome do Digital Set é resolvido via `resolve_digital_set_name` e os estados via `get_digital_set_states`.
+3. **State resolution**: cada evento é resolvido por código (`DigitalStateCode`) usando o state map. Code `0` é preservado (`is not None`).
+4. **Unknown codes**: se o code não existe no Digital Set atual, `DigitalStateName` recebe o nome upstream (se disponível) ou vazio, com warning `UNKNOWN_DIGITAL_STATE`.
+5. **Set failure**: se a resolução do Digital Set falhar, as rows são preservadas com warning `DIGITAL_STATE_RESOLUTION_FAILED`.
+
+### CSV Schema (12 colunas)
+
+```
+Tag, Timestamp, Value, EngineeringUnits, Good, Questionable, Substituted,
+Annotated, Error, ValueType, DigitalStateCode, DigitalStateName
+```
+
+- `ValueType`: `"digital"` para tags digitais, `"numeric"` para numéricas.
+- `DigitalStateCode`: código do estado (ex: `0`, `1`, `2`).
+- `DigitalStateName`: nome do estado resolvido (ex: `"OFF"`, `"ON"`, `"FAULT"`).
+
+### Exemplo
+
+```json
+{
+  "tags": ["CPD_LP_SECADOR_STATUS"],
+  "start_time": "*-1h",
+  "end_time": "*",
+  "data_method": "recorded"
+}
+```
+
+### Warnings
+
+| Code | Quando | Status impact |
+|---|---|---|
+| `UNKNOWN_DIGITAL_STATE` | Code observado fora do Digital Set atual | Não altera |
+| `DIGITAL_STATE_RESOLUTION_FAILED` | Lookup do Digital Set falhou | Não altera |
+
+### Diferença para analyze_pi_tag_behavior
+
+| Aspecto | generate_pi_tags_series_csv | analyze_pi_tag_behavior |
+|---|---|---|
+| Propósito | Exportação CSV de eventos | Análise descritiva |
+| Digital Set | Enriquecimento de code/name | Timeline + ocupação + transições |
+| Seed (AtOrBefore) | Não utilizado | Utilizado para timeline |
+| Erro upstream | Propaga como technical error | Absorve e continua |
+
 ---
 
 # CHUNK 27 - Análise compacta de uma tag PI
