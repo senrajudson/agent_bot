@@ -34,7 +34,7 @@ _INTERVAL_SECONDS: dict[str, int] = {
 MAX_TAGS = 10
 MAX_DAYS = 31
 MAX_ESTIMATED_ROWS = 1_000_000
-MAX_COUNT_RECORDED = 200_000
+MAX_COUNT_RECORDED = 150_000
 SEMAPHORE_LIMIT = 5
 
 # Fuso horário de saída para a coluna Timestamp do CSV.

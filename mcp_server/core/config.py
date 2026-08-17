@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     MCP_SERIES_CSV_MIN_INTERVAL_SECONDS: int = 1
     MCP_SERIES_CSV_ERROR_MESSAGE_MAX_CHARS: int = 512
     MCP_SERIES_CSV_PUBLISH_TEMP_DIR: str = "/tmp/agent_bot_mcp_series_csv"
-    MCP_SERIES_CSV_RECORDED_MAX_COUNT: int = 200_000
+    MCP_SERIES_CSV_RECORDED_MAX_COUNT: int = 150_000
 
     # search_pi_points strict AND (feature flag, default false)
     ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND: bool = False

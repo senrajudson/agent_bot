@@ -1584,6 +1584,7 @@ um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
 - Máximo de 1.000.000 de linhas por CSV.
 - Máximo de 100 MiB por arquivo.
 - Times mínimos suportados: 1s, 1m, 5m, 15m, 1h, 1d, etc.
+- **Recorded maxCount**: o default para `data_method=recorded` é `150000` (configurável via `MCP_SERIES_CSV_RECORDED_MAX_COUNT`). Este valor é específico deste deployment e foi observado experimentalmente como limite efetivo. Não é limite universal do PI Web API. Requests acima deste valor podem retornar HTTP 400. Séries que atingem o maxCount podem estar truncadas (warning `POSSIBLE_RECORDED_TRUNCATION`). Não existe mecanismo de continuação (`Links.Next` não é retornado).
 
 ## Tags Digitais
 

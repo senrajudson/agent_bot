@@ -441,6 +441,7 @@ Agent (app/agent/agent.py)
 - **MCP_PORT**: `8003` (local) / `8005` (Docker)
 - **MCP_SERVER_URL**: `http://localhost:8015/mcp` (local default no app) / `http://mcp_server:8005/mcp` (Docker)
 - Possui `.env` próprio em `mcp_server/.env`
+- **MCP_SERIES_CSV_RECORDED_MAX_COUNT**: default `150000` (configurável via ENV). Valor específico deste deployment, observado experimentalmente. Não é limite universal do PI Web API.
 
 ### Reuso de Código
 
