@@ -42,7 +42,8 @@ Responder com:
 7. Inconsistências encontradas.
 8. Impacto provável.
 9. Recomendações.
-10. Próxima etapa sugerida.
+10. Crie um pequeno parágrafo com o resumo do resultado.
+11. Próxima etapa sugerida.
 
 ## Regras de classificação
 

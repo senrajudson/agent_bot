@@ -30,7 +30,8 @@ Responder com:
 7. Restrições
 8. Critérios de aceite
 9. Ambiguidades
-10. Próxima etapa recomendada
+10. Crie um pequeno parágrafo com o resumo do resultado e as ambiguidades.
+11. Próxima etapa recomendada
 
 ## Regra crítica
 

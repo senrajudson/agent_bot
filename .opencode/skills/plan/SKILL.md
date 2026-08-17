@@ -30,7 +30,8 @@ Responder com:
 7. Mitigações
 8. Critérios de aceite
 9. Testes/checks necessários
-10. Ordem recomendada
+10. Crie um pequeno parágrafo com o resumo do resultado.
+11. Ordem recomendada
 
 ## Regra crítica
 
