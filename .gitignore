@@ -33,3 +33,5 @@ scrap/*
 *last_answer*
 
 *scrap*
+
+.agents/*
