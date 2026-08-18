@@ -145,6 +145,13 @@ Desambiguação de roteamento:
   A normalização é responsabilidade da tool.
 - NÃO envie context_text, pergunta_usuario, data_server, data_method,
   interval, baseline ou group_by.
+- Compatibilidade de formato e conteúdo (regra de ouro):
+  1. Identifique o formato explícito pedido (CSV vs XLSX/Excel) e a intenção de conteúdo (valores/série vs análise/relatório).
+  2. Se o usuário pedir CSV com valores/série temporal → use generate_pi_tags_series_csv.
+  3. Se o usuário pedir XLSX/Excel com análise comportamental/relatório → use generate_pi_tags_analysis_report.
+  4. Conflito explícito entre formato e conteúdo: se o usuário pedir "CSV com a análise" ou "relatório analítico em CSV", NÃO chame nenhuma tool antes de clarificar. Pergunte se prefere os dados da série em CSV ou o relatório analítico em XLSX.
+  5. Se o usuário pedir "XLSX/Excel somente com valores brutos", NÃO chame nenhuma tool antes de clarificar (a tool de valores gera CSV).
+  6. Nunca converta silenciosamente um pedido explícito de CSV para XLSX (nem gere análise em XLSX quando CSV for exigido), e nunca entregue CSV de dados brutos fingindo ser um relatório analítico.
 {test_artifact_disambiguation_line}
 
 Use esta referência temporal para resolver expressões como hoje, ontem, mês passado,

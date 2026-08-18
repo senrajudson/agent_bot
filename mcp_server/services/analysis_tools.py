@@ -74,6 +74,18 @@ async def analyze_pi_tag_behavior(
     end_time: str,
     zero_policy: Literal["valid", "suspicious", "invalid"] = "suspicious",
 ) -> str:
+    """
+    Executa análise técnica compacta de UMA única tag PI e retorna diagnóstico INLINE em Markdown.
+
+    Analisa estatísticas básicas, qualidade de dados, gaps, mudanças abruptas e estados digitais.
+    NÃO gera arquivo para download e NÃO substitui solicitações de exportação de dados em CSV.
+
+    Args:
+        tag: Nome da tag PI individual.
+        start_time: Início do período (ISO 8601 com offset ou token PI como '*-24h', '*-1d', 'T', 'Y').
+        end_time: Fim do período (ISO 8601 com offset ou token PI como '*').
+        zero_policy: Política de zeros ('valid', 'suspicious', 'invalid'). Default: 'suspicious'.
+    """
     try:
         start_iso, end_iso, input_kind = _resolve_window(start_time, end_time)
     except DomainValidationError as exc:
@@ -93,6 +105,7 @@ async def analyze_pi_tag_behavior(
 
     collector = PiDataCollector(
         resolver=_get_resolver_if_enabled(),
+        recorded_max_count=settings.MCP_ANALYSIS_RECORDED_MAX_COUNT,
     )
     data = await collector.fetch_one(tag, start_iso, end_iso)
 
@@ -117,6 +130,18 @@ async def generate_pi_tags_analysis_report(
     end_time: str,
     zero_policy: Literal["valid", "suspicious", "invalid"] = "invalid",
 ) -> str:
+    """
+    Gera relatório completo de análise comportamental de 1 a 10 tags PI em planilha Excel (.XLSX) multi-abas e publica no Google Drive.
+
+    Contém abas: Resumo, Qualidade, Recorded, Estados, Linha do Tempo, Digital Set, Erros/Warnings e Metadados.
+    NÃO gera arquivo CSV e NÃO deve ser usada silenciosamente quando o usuário exigir formato CSV sem antes resolver o conflito.
+
+    Args:
+        tags: Lista de 1 a 10 tags PI.
+        start_time: Início do período (ISO 8601 com offset ou token PI como '*-24h', '*-1d', 'T', 'Y').
+        end_time: Fim do período (ISO 8601 com offset ou token PI como '*').
+        zero_policy: Política de zeros ('valid', 'suspicious', 'invalid'). Default: 'invalid'.
+    """
     try:
         start_iso, end_iso, input_kind = _resolve_window(start_time, end_time)
     except DomainValidationError as exc:
@@ -136,6 +161,7 @@ async def generate_pi_tags_analysis_report(
 
     collector = PiDataCollector(
         resolver=_get_resolver_if_enabled(),
+        recorded_max_count=settings.MCP_ANALYSIS_RECORDED_MAX_COUNT,
     )
     collected = await collector.fetch_many(list(tags), start_iso, end_iso)
 

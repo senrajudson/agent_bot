@@ -47,11 +47,13 @@ class PiDataCollector:
     def __init__(
         self,
         *,
+        recorded_max_count: int = 150_000,
         max_concurrency: int = 5,
         resolver: Callable | None = None,
     ) -> None:
         self._sem = asyncio.Semaphore(max_concurrency)
         self._resolver = resolver
+        self._recorded_max_count = recorded_max_count
 
     async def fetch_one(
         self, tag: str, start: str, end: str
@@ -129,7 +131,9 @@ class PiDataCollector:
         self, tag: str, start: str, end: str
     ) -> list[AnalysisPoint]:
         try:
-            raw = await get_recorded_values_by_tag(tag, start, end)
+            raw = await get_recorded_values_by_tag(
+                tag, start, end, max_count=self._recorded_max_count
+            )
             return self._parse_points(raw)
         except Exception as exc:
             logger.warning("Recorded fetch failed for %s: %s", tag, exc)

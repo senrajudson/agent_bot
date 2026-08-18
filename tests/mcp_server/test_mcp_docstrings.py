@@ -1,4 +1,4 @@
-"""Validate MCP tool registration, docstrings, and signatures after docstring revert."""
+"""Validate MCP tool registration, docstrings, signatures, and format capability contracts (T-D01 to T-D03)."""
 
 from __future__ import annotations
 
@@ -139,3 +139,44 @@ def test_docstrings_dont_have_required_sections():
             assert section not in doc, (
                 f"Tool '{name}' still has section '{section}'"
             )
+
+
+# ---------------------------------------------------------------------------
+# Format and Content Capability Contracts (T-D01 to T-D03)
+# ---------------------------------------------------------------------------
+
+
+def test_t_d01_generate_pi_tags_series_csv_docstring_contract():
+    """T-D01: generate_pi_tags_series_csv docstring explicitly declares CSV and series scope."""
+    import mcp_server.server as server_mod
+
+    fn = getattr(server_mod, "generate_pi_tags_series_csv", None)
+    assert fn is not None, "generate_pi_tags_series_csv not found in server module"
+    doc = fn.fn.__doc__ if hasattr(fn, "fn") else fn.__doc__
+    assert doc is not None
+    assert "CSV" in doc
+    assert "valores temporais" in doc or "sem agregação estatística" in doc or "série" in doc
+    assert "tag_statistics" in doc
+
+
+def test_t_d02_generate_pi_tags_analysis_report_docstring_contract():
+    """T-D02: generate_pi_tags_analysis_report docstring explicitly declares XLSX and forbids silent CSV fulfillment."""
+    from mcp_server.services.analysis_tools import generate_pi_tags_analysis_report
+
+    doc = generate_pi_tags_analysis_report.__doc__
+    assert doc is not None
+    assert "XLSX" in doc or "Excel" in doc
+    assert "relatório completo de análise comportamental" in doc or "relatório" in doc
+    assert "NÃO gera arquivo CSV" in doc or "não gera arquivo csv" in doc.lower()
+    assert "sem antes resolver o conflito" in doc or "exigir formato csv" in doc.lower()
+
+
+def test_t_d03_analyze_pi_tag_behavior_docstring_contract():
+    """T-D03: analyze_pi_tag_behavior docstring explicitly declares inline markdown and no file artifact."""
+    from mcp_server.services.analysis_tools import analyze_pi_tag_behavior
+
+    doc = analyze_pi_tag_behavior.__doc__
+    assert doc is not None
+    assert "INLINE em Markdown" in doc or "inline" in doc.lower()
+    assert "NÃO gera arquivo para download" in doc or "não gera arquivo" in doc.lower()
+    assert "NÃO substitui solicitações de exportação de dados em CSV" in doc or "csv" in doc.lower()

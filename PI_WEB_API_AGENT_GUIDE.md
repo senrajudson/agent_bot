@@ -31,6 +31,14 @@ Quando receber `delivery: drive_artifact`:
 | Análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais)                     | Análise single-tag INLINE  | `analyze_pi_tag_behavior` |
 | Análise de 1 a 10 tags com relatório XLSX (comparação multi-tag, export)                                            | Relatório multi-tag DRIVE  | `generate_pi_tags_analysis_report` |
 
+### Compatibilidade de Formato e Conteúdo (Desambiguação e Clarificação)
+
+- **CSV + valores/série**: use `generate_pi_tags_series_csv`.
+- **XLSX/Excel + análise comportamental/relatório**: use `generate_pi_tags_analysis_report`.
+- **Conflito explícito (ex.: "CSV com a análise" ou "relatório analítico em CSV")**: **NÃO chame nenhuma tool** antes de clarificar com o usuário. Pergunte se deseja os dados da série em CSV ou o relatório analítico em XLSX.
+- **XLSX + valores brutos**: **NÃO chame nenhuma tool** antes de clarificar (a exportação de dados brutos gera CSV).
+- **Sem conversão silenciosa**: Nunca entregue XLSX quando o usuário exigir estritamente CSV, e nunca entregue CSV de dados brutos fingindo satisfazer uma solicitação de análise detalhada.
+
 ## Descoberta de tags
 
 Use `search_pi_points` quando o usuário não souber o nome exato da tag e quiser encontrar tags relacionadas a uma descrição, equipamento, área, variável ou parte do nome.
@@ -1584,7 +1592,7 @@ um resultado inline `no_data`. Nenhuma linha de dados é retornada ao LLM.
 - Máximo de 1.000.000 de linhas por CSV.
 - Máximo de 100 MiB por arquivo.
 - Times mínimos suportados: 1s, 1m, 5m, 15m, 1h, 1d, etc.
-- **Recorded maxCount**: o default para `data_method=recorded` é `150000` (configurável via `MCP_SERIES_CSV_RECORDED_MAX_COUNT`). Este valor é específico deste deployment e foi observado experimentalmente como limite efetivo. Não é limite universal do PI Web API. Requests acima deste valor podem retornar HTTP 400. Séries que atingem o maxCount podem estar truncadas (warning `POSSIBLE_RECORDED_TRUNCATION`). Não existe mecanismo de continuação (`Links.Next` não é retornado).
+- **Recorded maxCount**: o default para `data_method=recorded` em `generate_pi_tags_series_csv` é `150000` (configurável via `MCP_SERIES_CSV_RECORDED_MAX_COUNT`). Para as tools de análise comportamental (`analyze_pi_tag_behavior`, `generate_pi_tags_analysis_report`), o default é `150000` (configurável via `MCP_ANALYSIS_RECORDED_MAX_COUNT`). Ambos os valores são específicos deste deployment e foram observados experimentalmente como limite efetivo de estabilidade operacional. Não são limites universais do PI Web API. Requests acima deste valor podem retornar HTTP 400. Séries que atingem o maxCount podem estar truncadas (warning `POSSIBLE_RECORDED_TRUNCATION`). Durante o Gate R neste ambiente, não foi observado `Links.Next` nas respostas Recorded testadas.
 
 ## Tags Digitais
 

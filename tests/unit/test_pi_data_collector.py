@@ -135,3 +135,39 @@ async def test_semaphore_limits_concurrency(collector: PiDataCollector) -> None:
         await collector.fetch_many([f"TAG_{i}" for i in range(10)], "2026-01-01T00:00:00-03:00", "2026-01-01T01:00:00-03:00")
 
     assert max_concurrent <= 2
+
+
+@pytest.mark.asyncio
+async def test_recorded_max_count_sentinel_propagated() -> None:
+    """T015: Prova que PiDataCollector repassa recorded_max_count explicitamente ao client."""
+    call_kwargs = {}
+
+    async def mock_get_recorded(tag, start, end, **kwargs):
+        call_kwargs.update(kwargs)
+        return MOCK_RECORDED_RESPONSE
+
+    collector = PiDataCollector(recorded_max_count=12345)
+
+    with patch("domain.analysis.services.pi_data_collector.get_point_by_tag", new_callable=AsyncMock, return_value=MOCK_POINT_RESPONSE), \
+         patch("domain.analysis.services.pi_data_collector.get_recorded_values_by_tag", side_effect=mock_get_recorded), \
+         patch("domain.analysis.services.pi_data_collector.get_interpolated_values_by_tag", new_callable=AsyncMock, return_value=MOCK_INTERPOLATED_RESPONSE):
+        result = await collector.fetch_one("LFI_TEST", "2026-01-01T00:00:00-03:00", "2026-01-01T01:00:00-03:00")
+
+    assert isinstance(result, CollectedData)
+    assert call_kwargs.get("max_count") == 12345
+
+
+@pytest.mark.asyncio
+async def test_recorded_fetch_failure_swallowed_returns_empty_list() -> None:
+    """T020: Preserva failure swallowing retornando lista vazia quando _fetch_recorded falha."""
+    collector = PiDataCollector(recorded_max_count=150_000)
+
+    with patch("domain.analysis.services.pi_data_collector.get_point_by_tag", new_callable=AsyncMock, return_value=MOCK_POINT_RESPONSE), \
+         patch("domain.analysis.services.pi_data_collector.get_recorded_values_by_tag", new_callable=AsyncMock, side_effect=Exception("HTTP 400 Bad Request")), \
+         patch("domain.analysis.services.pi_data_collector.get_interpolated_values_by_tag", new_callable=AsyncMock, return_value=MOCK_INTERPOLATED_RESPONSE):
+        result = await collector.fetch_one("LFI_TEST", "2026-01-01T00:00:00-03:00", "2026-01-01T01:00:00-03:00")
+
+    assert isinstance(result, CollectedData)
+    assert result.recorded == []
+    assert len(result.interpolated) == 2
+

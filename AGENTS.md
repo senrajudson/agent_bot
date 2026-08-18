@@ -441,7 +441,12 @@ Agent (app/agent/agent.py)
 - **MCP_PORT**: `8003` (local) / `8005` (Docker)
 - **MCP_SERVER_URL**: `http://localhost:8015/mcp` (local default no app) / `http://mcp_server:8005/mcp` (Docker)
 - Possui `.env` próprio em `mcp_server/.env`
-- **MCP_SERIES_CSV_RECORDED_MAX_COUNT**: default `150000` (configurável via ENV). Valor específico deste deployment, observado experimentalmente. Não é limite universal do PI Web API.
+- **MCP_SERIES_CSV_RECORDED_MAX_COUNT**: default `150000` (configurável via ENV). Valor específico deste deployment, observado experimentalmente na tool `generate_pi_tags_series_csv`. Não é limite universal do PI Web API.
+- **MCP_ANALYSIS_RECORDED_MAX_COUNT**: default `150000` (configurável via ENV). Valor específico deste deployment injetado no `PiDataCollector` para tools de análise (`analyze_pi_tag_behavior`, `generate_pi_tags_analysis_report`). Não é limite universal do PI Web API.
+- **Roteamento de Formato vs Conteúdo**:
+  - CSV + valores/série $\rightarrow$ `generate_pi_tags_series_csv`.
+  - XLSX/Excel + análise comportamental $\rightarrow$ `generate_pi_tags_analysis_report`.
+  - Conflito explícito (ex.: "CSV com a análise") $\rightarrow$ **CLARIFY** antes de executar qualquer tool.
 
 ### Reuso de Código
 

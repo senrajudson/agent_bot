@@ -170,3 +170,77 @@ class TestRecordedCsvPropagation:
             )
 
         assert call_kwargs.get("max_count") == 12345
+
+
+class TestAnalysisRecordedDefault:
+    """T011: Default sem ENV é 150000 para analysis."""
+
+    def test_default_without_env(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 150_000
+
+    def test_default_is_positive(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT > 0
+
+
+class TestAnalysisRecordedEnvOverride:
+    """T011: Override via ENV preservado para analysis."""
+
+    def test_override_100000(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None, MCP_ANALYSIS_RECORDED_MAX_COUNT=100000)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 100000
+
+    def test_override_12345(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None, MCP_ANALYSIS_RECORDED_MAX_COUNT=12345)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 12345
+
+    def test_override_150000(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None, MCP_ANALYSIS_RECORDED_MAX_COUNT=150000)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 150000
+
+    def test_override_250000(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None, MCP_ANALYSIS_RECORDED_MAX_COUNT=250000)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 250000
+
+
+class TestAnalysisRecordedNoCap:
+    """T011: Ausência de cap/clamp para analysis."""
+
+    def test_large_positive_value_not_clamped(self):
+        from core.config import Settings
+
+        s = Settings(_env_file=None, MCP_ANALYSIS_RECORDED_MAX_COUNT=300000)
+        assert s.MCP_ANALYSIS_RECORDED_MAX_COUNT == 300000
+
+    def test_zero_rejected(self):
+        from core.config import Settings
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            Settings(
+                _env_file=None,
+                MCP_ANALYSIS_RECORDED_MAX_COUNT=0,
+            )
+
+    def test_negative_rejected(self):
+        from core.config import Settings
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            Settings(
+                _env_file=None,
+                MCP_ANALYSIS_RECORDED_MAX_COUNT=-100,
+            )

@@ -89,6 +89,7 @@ class Settings(BaseSettings):
 
     # PI tag analysis tools (feature flag, default false)
     ENABLE_MCP_ANALYSIS_TOOLS: bool = False
+    MCP_ANALYSIS_RECORDED_MAX_COUNT: int = 150_000
 
     # Canonical PI point resolver (feature flag, default false)
     ENABLE_PI_POINT_RESOLVER_V2: bool = False
@@ -248,6 +249,12 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_analysis_recorded_max_count(self) -> "Settings":
+        if self.MCP_ANALYSIS_RECORDED_MAX_COUNT <= 0:
+            raise ValueError("MCP_ANALYSIS_RECORDED_MAX_COUNT deve ser positivo.")
+        return self
+
     def log_effective_config(self) -> None:
         logger.info(
             "Effective config: "
@@ -256,6 +263,7 @@ class Settings(BaseSettings):
             "ENABLE_TEST_ARTIFACT_TOOL=%s "
             "ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV=%s "
             "MCP_SERIES_CSV_RECORDED_MAX_COUNT=%s "
+            "MCP_ANALYSIS_RECORDED_MAX_COUNT=%s "
             "ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND=%s "
             "MCP_PORT=%s",
             self.ENABLE_MCP_DRIVE_ARTIFACT_DELIVERY,
@@ -263,6 +271,7 @@ class Settings(BaseSettings):
             self.ENABLE_TEST_ARTIFACT_TOOL,
             self.ENABLE_MCP_GENERATE_PI_TAGS_SERIES_CSV,
             self.MCP_SERIES_CSV_RECORDED_MAX_COUNT,
+            self.MCP_ANALYSIS_RECORDED_MAX_COUNT,
             self.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND,
             self.MCP_PORT,
         )
