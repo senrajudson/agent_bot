@@ -5,6 +5,7 @@ from typing import Optional
 from datetime import datetime
 
 from domain.analysis.models import (
+    AnalysisCompleteness,
     AnalysisError,
     AnalysisPoint,
     AnalysisRequest,
@@ -65,8 +66,32 @@ class TagAnalysisService:
         zero_policy = request.zero_policy
 
         if metadata.point_type == "digital":
-            return self._analyze_digital(data, request, zero_policy)
-        return self._analyze_numeric(points, metadata, request, zero_policy)
+            res = self._analyze_digital(data, request, zero_policy)
+        else:
+            res = self._analyze_numeric(points, metadata, request, zero_policy)
+
+        # Injetar completude da coleta
+        if data.completeness is not None and res.completeness is None:
+            res = TagAnalysisResult(
+                metadata=res.metadata,
+                quality=res.quality,
+                digital_analysis=res.digital_analysis,
+                start_time=res.start_time,
+                end_time=res.end_time,
+                numeric=res.numeric,
+                digital_durations=res.digital_durations,
+                digital_transitions=res.digital_transitions,
+                gaps_interpolated=res.gaps_interpolated,
+                gaps_recorded=res.gaps_recorded,
+                spikes=res.spikes,
+                spike_total_count=res.spike_total_count,
+                zero_policy_applied=res.zero_policy_applied,
+                warnings=res.warnings,
+                zero_policy_warning=res.zero_policy_warning,
+                completeness=data.completeness,
+            )
+
+        return res
 
     def analyze_many(
         self,
@@ -96,11 +121,21 @@ class TagAnalysisService:
                 errors.append(
                     AnalysisError(
                         tag=tag,
-                        code="PI_RESPONSE_INVALID",
+                        code="ANALYSIS_INTERNAL_ERROR",
                         message=str(exc)[:300],
                         retryable=False,
                     )
                 )
+
+        # T030: Agregação de completude multitag
+        if not results:
+            overall = AnalysisCompleteness.FAILED
+        elif any(r.completeness and r.completeness.analysis_completeness == AnalysisCompleteness.PARTIAL for r in results):
+            overall = AnalysisCompleteness.PARTIAL
+        elif any(r.completeness and r.completeness.analysis_completeness == AnalysisCompleteness.COMPLETENESS_UNCONFIRMED for r in results):
+            overall = AnalysisCompleteness.COMPLETENESS_UNCONFIRMED
+        else:
+            overall = AnalysisCompleteness.COMPLETE
 
         return MultiTagAnalysisResult(
             results=tuple(results),
@@ -109,6 +144,7 @@ class TagAnalysisService:
             period_end=request.end_time,
             total_requested=len(collected),
             total_processed=len(results),
+            overall_completeness=overall,
         )
 
     def _analyze_numeric(
@@ -175,9 +211,12 @@ class TagAnalysisService:
         metadata = data.metadata
         digital_states = data.digital_states
 
-        # Resolver janela temporal
+        # Resolver janela temporal (efetiva se houver truncamento)
         window_start = datetime.fromisoformat(request.start_time)
-        window_end = datetime.fromisoformat(request.end_time)
+        effective_end_str = request.end_time
+        if data.completeness is not None and data.completeness.effective_end_time:
+            effective_end_str = data.completeness.effective_end_time
+        window_end = datetime.fromisoformat(effective_end_str)
 
         # Reconstruir timeline digital
         digital_result = reconstruct_timeline(

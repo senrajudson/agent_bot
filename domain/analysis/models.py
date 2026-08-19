@@ -35,6 +35,40 @@ class SegmentSource(str, Enum):
     RECORDED = "recorded"
 
 
+class LimitStatus(str, Enum):
+    NOT_REACHED = "NOT_REACHED"
+    REACHED_EXACT = "REACHED_EXACT"
+    EXCEEDED = "EXCEEDED"
+    REACHED_UNCONFIRMED = "REACHED_UNCONFIRMED"
+
+
+class AnalysisCompleteness(str, Enum):
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    COMPLETENESS_UNCONFIRMED = "COMPLETENESS_UNCONFIRMED"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True)
+class AnalysisCompletenessMetadata:
+    requested_start_time: str
+    requested_end_time: str
+    effective_start_time: str
+    effective_end_time: str
+    returned_point_count: int
+    configured_point_limit: int
+    pi_request_safe_limit: int
+    artifact_safe_row_limit: int
+    effective_point_limit: int
+    limit_status: LimitStatus
+    analysis_completeness: AnalysisCompleteness
+    truncated: Optional[bool]
+    truncation_direction: str = "FROM_WINDOW_START"
+    overflow_check_performed: bool = False
+    unprocessed_start_time: Optional[str] = None
+    unprocessed_end_time: Optional[str] = None
+
+
 @dataclass(frozen=True)
 class AnalysisRequest:
     tag: str = ""
@@ -350,6 +384,7 @@ class TagAnalysisResult:
     zero_policy_applied: ZeroPolicy = "suspicious"
     warnings: tuple[str, ...] = ()
     zero_policy_warning: Optional[str] = None
+    completeness: Optional[AnalysisCompletenessMetadata] = None
 
 
 @dataclass(frozen=True)
@@ -368,3 +403,4 @@ class MultiTagAnalysisResult:
     period_end: str = ""
     total_requested: int = 0
     total_processed: int = 0
+    overall_completeness: Optional[AnalysisCompleteness] = None

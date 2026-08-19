@@ -120,3 +120,18 @@ class TestProjection:
         assert len(errs) == 1
         assert len(errs[0].rows) == 1
         assert errs[0].rows[0][1] == "PI_TIMEOUT"
+
+    def test_xlsx_sheet_legacy_compatibility(self) -> None:
+        from domain.analysis.services.xlsx_projection import XlsxSheet
+        sheet = XlsxSheet(name="Test", columns=["a", "b"], rows=[[1, 2]])
+        assert sheet.name == "Test"
+        assert sheet.columns == ["a", "b"]
+        assert sheet.rows == [[1, 2]]
+        assert sheet.warnings == []
+        assert sheet.is_presentation is False
+        assert sheet.freeze_panes is None
+        assert sheet.column_widths == {}
+        assert sheet.merges == []
+        assert sheet.cell_styles == {}
+        assert sheet.is_active is False
+

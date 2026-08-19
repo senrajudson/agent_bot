@@ -1179,7 +1179,7 @@ def enrich_digital_result(
     quality_summary = _build_quality_summary(classified, timeline_segments, base.coverage, recorded, seed)
 
     # Daily summary (apenas >24h)
-    daily_summary = _build_daily_summary(timeline_segments, base.transitions, window_start, window_end, window_seconds)
+    daily_summary = _build_daily_summary(timeline_segments, transition_statistics, window_start, window_end, window_seconds)
 
     # Digital set snapshot
     digital_set_snapshot = _build_digital_set_snapshot(possible_states)

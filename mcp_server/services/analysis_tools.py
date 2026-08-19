@@ -247,7 +247,27 @@ async def generate_pi_tags_analysis_report(
             max_manifest_bytes=settings.MCP_ARTIFACT_MANIFEST_MAX_BYTES,
         )
 
-        return manifest.to_json()
+        envelope_dict = manifest.to_dict()
+        if multi.overall_completeness:
+            tags_completeness = []
+            for r in multi.results:
+                if r.completeness:
+                    tags_completeness.append({
+                        "tag": r.metadata.tag,
+                        "limit_status": r.completeness.limit_status.value,
+                        "analysis_completeness": r.completeness.analysis_completeness.value,
+                        "truncated": r.completeness.truncated,
+                        "effective_start_time": r.completeness.effective_start_time,
+                        "effective_end_time": r.completeness.effective_end_time,
+                        "returned_point_count": r.completeness.returned_point_count,
+                        "effective_point_limit": r.completeness.effective_point_limit,
+                    })
+            envelope_dict["analysis_completeness"] = {
+                "overall_status": multi.overall_completeness.value,
+                "tags": tags_completeness,
+            }
+
+        return json.dumps(envelope_dict, ensure_ascii=False, separators=(",", ":"))
 
     except ArtifactDeliveryError as exc:
         raise ToolError(f"[ARTIFACT_DELIVERY_ERROR] {exc}") from exc

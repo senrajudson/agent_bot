@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Any, Optional
+
+from openpyxl.utils import get_column_letter
 
 from domain.analysis.models import (
     DigitalAnalysisResult,
@@ -13,11 +16,28 @@ from domain.analysis.services._digital import format_duration
 
 
 @dataclass(frozen=True)
+class XlsxCellStyle:
+    bg_color: Optional[str] = None
+    font_color: Optional[str] = None
+    bold: bool = False
+    align: Optional[str] = None
+    border: bool = False
+    number_format: Optional[str] = None
+    wrap_text: bool = False
+
+
+@dataclass(frozen=True)
 class XlsxSheet:
     name: str
     columns: list[str]
     rows: list[list[Any]]
     warnings: list[str] = field(default_factory=list)
+    is_presentation: bool = False
+    freeze_panes: Optional[str] = None
+    column_widths: dict[int, float] = field(default_factory=dict)
+    merges: list[str] = field(default_factory=list)
+    cell_styles: dict[tuple[int, int], XlsxCellStyle] = field(default_factory=dict)
+    is_active: bool = False
 
 
 _STATUS_DESCRIPTIONS = {
@@ -43,6 +63,57 @@ _WARNING_RECOMMENDATIONS = {
     "SEED_BAD_QUALITY": "O período inicial pode estar classificado como BAD por causa do seed.",
     "BAD_QUALITY_COVERAGE": "Investigue a integridade da coleta no PI nesta faixa.",
 }
+
+_STATE_COLORS = [
+    "4CAF50", "2196F3", "FF9800", "9C27B0", "00BCD4",
+    "E91E63", "795548", "607D8B", "3F51B5", "009688",
+    "8BC34A", "FFC107"
+]
+
+_QUALITY_COLORS = {
+    "KNOWN": "2E7D32",
+    "GOOD": "2E7D32",
+    "BAD": "D32F2F",
+    "UNKNOWN": "ED6C02",
+    "NULL": "9E9E9E",
+    "UNCOVERED": "D1C4E9",
+    "MIXED": "757575",
+}
+
+_MIXED_COLOR = "757575"
+DEFAULT_PRESENTATION_TZ = "America/Sao_Paulo"
+
+
+def _parse_datetime(val: str | datetime) -> datetime:
+    if isinstance(val, datetime):
+        return val
+    try:
+        return datetime.fromisoformat(val)
+    except Exception:
+        from datetime import timezone as dt_tz
+        return datetime.now(dt_tz.utc)
+
+
+def _format_presentation_time(val: str | datetime | None, tz_name: str = DEFAULT_PRESENTATION_TZ) -> str:
+    if val is None:
+        return ""
+    dt = _parse_datetime(val)
+    if dt.tzinfo is None:
+        from datetime import timezone as dt_tz
+        dt = dt.replace(tzinfo=dt_tz.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        local_dt = dt.astimezone(ZoneInfo(tz_name))
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def calculate_bucket_count(window_seconds: float, segment_count: int) -> int:
+    if window_seconds <= 0:
+        return 96
+    target = max(96, min(240, segment_count if segment_count > 0 else 96))
+    return target
 
 
 class XlsxAnalysisProjection:
@@ -77,10 +148,28 @@ class XlsxAnalysisProjection:
         ]
 
     def _resumo(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
-        columns = ["tag", "point_type", "descriptor", "eng_units", "period_start", "period_end", "quality_verdict"]
+        columns = [
+            "tag",
+            "point_type",
+            "descriptor",
+            "engineering_units",
+            "janela_solicitada_inicio",
+            "janela_solicitada_fim",
+            "janela_efetiva_inicio",
+            "janela_efetiva_fim",
+            "pontos_retornados",
+            "completude",
+            "verdict",
+        ]
         rows = []
         for r in multi.results:
             verdict = "NÃO APLICÁVEL" if r.digital_analysis is not None else (r.quality.verdict if r.quality else "")
+            c = r.completeness
+            eff_start = c.effective_start_time if c else multi.period_start
+            eff_end = c.effective_end_time if c else multi.period_end
+            pts_cnt = c.returned_point_count if c else ""
+            comp_str = c.analysis_completeness.value if c else "COMPLETE"
+
             rows.append([
                 r.metadata.tag,
                 r.metadata.point_type,
@@ -88,6 +177,10 @@ class XlsxAnalysisProjection:
                 r.metadata.engineering_units or "",
                 multi.period_start,
                 multi.period_end,
+                eff_start,
+                eff_end,
+                pts_cnt,
+                comp_str,
                 verdict,
             ])
         return XlsxSheet(name="Resumo", columns=columns, rows=rows)
@@ -169,6 +262,21 @@ class XlsxAnalysisProjection:
         rows = []
         for e in multi.errors:
             rows.append([e.tag or "", e.code, e.message, e.retryable])
+
+        for r in multi.results:
+            c = r.completeness
+            if c is not None and c.truncated:
+                rows.append([
+                    r.metadata.tag,
+                    "POINT_LIMIT_EXCEEDED",
+                    (
+                        f"Limite de pontos por tag excedido ({c.returned_point_count}/{c.effective_point_limit}). "
+                        f"Período analisado: {c.effective_start_time} até {c.effective_end_time}. "
+                        f"Período não analisado: {c.unprocessed_start_time} até {c.unprocessed_end_time}."
+                    ),
+                    False,
+                ])
+
         return XlsxSheet(name="Erros_Warnings", columns=columns, rows=rows)
 
     def _metadados(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
@@ -179,32 +287,46 @@ class XlsxAnalysisProjection:
             ["period_end", multi.period_end],
             ["total_requested", str(multi.total_requested)],
             ["total_processed", str(multi.total_processed)],
-            ["schema_version", "1.0"],
+            ["overall_completeness", multi.overall_completeness.value if multi.overall_completeness else "COMPLETE"],
         ]
+
+        if multi.results and multi.results[0].completeness:
+            c = multi.results[0].completeness
+            rows.extend([
+                ["configured_point_limit", str(c.configured_point_limit)],
+                ["effective_point_limit", str(c.effective_point_limit)],
+                ["returned_point_count", str(c.returned_point_count)],
+                ["truncation_direction", c.truncation_direction],
+                ["overflow_check_performed", str(c.overflow_check_performed)],
+            ])
+        
+        rows.append(["schema_version", "1.0"])
         return XlsxSheet(name="Metadados", columns=columns, rows=rows)
 
     # ------------------------------------------------------------------
-    # Digital-only
+    # Digital-only (Redesenho Orientado à Detecção de Problemas)
     # ------------------------------------------------------------------
 
     def _project_digital_only(self, multi: MultiTagAnalysisResult) -> list[XlsxSheet]:
         sheets: list[XlsxSheet] = []
-        sheets.append(self._resumo_digital(multi))
-        sheets.append(self._qualidade_digital(multi))
-        sheets.append(self._recorded_digital(multi))
+        sheets.append(self._visao_geral(multi))
 
-        # Condicionais — só quando há dados
         first_da = next(
             (r.digital_analysis for r in multi.results if r.digital_analysis is not None),
             None,
         )
+        if first_da is not None and first_da.timeline_segments:
+            sheets.append(self._linha_do_tempo(multi))
+
+        sheets.append(self._resumo_digital(multi))
+        sheets.append(self._qualidade_digital(multi))
+        sheets.append(self._recorded_digital(multi))
+
         if first_da is not None:
             if first_da.state_statistics:
                 sheets.append(self._estados(multi))
             if first_da.transition_statistics:
                 sheets.append(self._transicoes(multi))
-            if first_da.timeline_segments:
-                sheets.append(self._linha_do_tempo(multi))
             if first_da.unknown_value_statistics:
                 sheets.append(self._valores_desconhecidos(multi))
             if first_da.daily_summary:
@@ -215,6 +337,400 @@ class XlsxAnalysisProjection:
         sheets.append(self._erros_warnings(multi))
         sheets.append(self._metadados(multi))
         return sheets
+
+    def _visao_geral(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
+        from datetime import date, timedelta
+        from zoneinfo import ZoneInfo
+
+        rows: list[list[Any]] = []
+        cell_styles: dict[tuple[int, int], XlsxCellStyle] = {}
+        merges: list[str] = []
+
+        digital_results = [r for r in multi.results if r.metadata.point_type == "digital"]
+
+        w_start_dt = _parse_datetime(multi.period_start)
+        w_end_dt = _parse_datetime(multi.period_end)
+
+        try:
+            tz = ZoneInfo(DEFAULT_PRESENTATION_TZ)
+            w_start_local = w_start_dt.astimezone(tz)
+            w_end_local = w_end_dt.astimezone(tz)
+        except Exception:
+            from datetime import timezone as dt_tz
+            tz = dt_tz.utc
+            w_start_local = w_start_dt
+            w_end_local = w_end_dt
+
+        start_d = w_start_local.date()
+        end_d = w_end_local.date()
+        if w_end_local.time() == datetime.min.time() and end_d > start_d:
+            end_d = end_d - timedelta(days=1)
+
+        days: list[date] = []
+        curr_d = start_d
+        while curr_d <= end_d:
+            days.append(curr_d)
+            curr_d += timedelta(days=1)
+
+        num_cols = max(14, len(days) + 1)
+
+        title_style = XlsxCellStyle(bg_color="1A365D", font_color="FFFFFF", bold=True, align="center")
+        section_style = XlsxCellStyle(bg_color="2B6CB0", font_color="FFFFFF", bold=True, align="left")
+        header_lbl_style = XlsxCellStyle(bg_color="EBF8FF", bold=True, wrap_text=True)
+        header_val_style = XlsxCellStyle(wrap_text=True)
+        tbl_hdr_style = XlsxCellStyle(bg_color="1A365D", font_color="FFFFFF", bold=True, align="center", border=True, wrap_text=True)
+        tbl_val_style = XlsxCellStyle(align="center", border=True, wrap_text=True)
+        kpi_card_style = XlsxCellStyle(bg_color="EDF2F7", bold=True, align="center", border=True, wrap_text=True)
+        kpi_val_style = XlsxCellStyle(bg_color="FFFFFF", bold=True, align="center", border=True)
+
+        # Row 1: Title Banner
+        rows.append(["RELATÓRIO EXECUTIVO - DIAGNÓSTICO E LINHA DO TEMPO DE TAGS DIGITAIS"] + [""] * (num_cols - 1))
+        merges.append(f"A1:{get_column_letter(num_cols)}1")
+        cell_styles[(1, 1)] = title_style
+
+        # Section 1: Identificação e Status
+        rows.append(["1. IDENTIFICAÇÃO E DIAGNÓSTICO EXECUTIVO"] + [""] * (num_cols - 1))
+        merges.append(f"A2:{get_column_letter(num_cols)}2")
+        cell_styles[(2, 1)] = section_style
+
+        p_start_local_str = _format_presentation_time(multi.period_start)
+        p_end_local_str = _format_presentation_time(multi.period_end)
+
+        bad_days: set[date] = set()
+        unknown_days: set[date] = set()
+        null_days: set[date] = set()
+        uncovered_days: set[date] = set()
+
+        first_r = digital_results[0] if digital_results else None
+        da_first = first_r.digital_analysis if first_r else None
+        qs = da_first.quality_summary if da_first else None
+        cov = da_first.coverage if da_first else None
+
+        bad_pts = qs.bad_events if qs else 0
+        bad_dur = cov.bad_seconds if cov else 0.0
+        first_bad = qs.first_bad_timestamp if qs else None
+        last_bad = qs.last_bad_timestamp if qs else None
+
+        for r in digital_results:
+            da = r.digital_analysis
+            descriptor = r.metadata.descriptor or "N/A"
+            digital_set = r.metadata.digital_set or "N/A"
+            timeline_segs = da.timeline_segments if da else ()
+
+            state_color_map: dict[str, str] = {}
+            if da and da.possible_states:
+                for idx, ps in enumerate(da.possible_states):
+                    state_color_map[ps.state_name] = _STATE_COLORS[idx % len(_STATE_COLORS)]
+
+            daily_summaries: list[dict[str, Any]] = []
+            for d in days:
+                d_start = datetime.combine(d, datetime.min.time(), tzinfo=tz)
+                d_end = datetime.combine(d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+
+                slice_start = max(d_start, w_start_local)
+                slice_end = min(d_end, w_end_local)
+                slice_dur = max(0.0, (slice_end - slice_start).total_seconds())
+
+                is_partial_day = (slice_start > d_start or slice_end < d_end)
+
+                d_bad_dur = 0.0
+                d_unknown_dur = 0.0
+                d_null_dur = 0.0
+                d_uncovered_dur = 0.0
+                d_known_dur = 0.0
+                d_state_durs: dict[str, float] = {}
+                d_kinds: set[str] = set()
+
+                for seg in timeline_segs:
+                    s_st = _parse_datetime(seg.start).astimezone(tz)
+                    s_en = _parse_datetime(seg.end).astimezone(tz)
+                    overlap = max(0.0, (min(s_en, slice_end) - max(s_st, slice_start)).total_seconds())
+                    if overlap > 0:
+                        k_val = seg.kind.value if hasattr(seg.kind, "value") else str(seg.kind)
+                        k_val = k_val.lower()
+                        d_kinds.add(k_val)
+
+                        if k_val == "bad":
+                            d_bad_dur += overlap
+                            bad_days.add(d)
+                        elif k_val == "unknown":
+                            d_unknown_dur += overlap
+                            unknown_days.add(d)
+                        elif k_val == "null":
+                            d_null_dur += overlap
+                            null_days.add(d)
+                        elif k_val == "uncovered":
+                            d_uncovered_dur += overlap
+                            uncovered_days.add(d)
+                        elif k_val in ("known", "good"):
+                            d_known_dur += overlap
+                            st_name = seg.state_name or "KNOWN"
+                            d_state_durs[st_name] = d_state_durs.get(st_name, 0.0) + overlap
+
+                if d_bad_dur > 0:
+                    prim = "BAD"
+                elif d_unknown_dur > 0:
+                    prim = "UNKNOWN"
+                elif d_null_dur > 0:
+                    prim = "NULL"
+                elif d_uncovered_dur > 0:
+                    prim = "UNCOVERED"
+                else:
+                    prim = "OK"
+
+                pred_st = "N/A"
+                pred_color = "F0F0F0"
+                if d_state_durs:
+                    max_st = max(d_state_durs.items(), key=lambda x: x[1])
+                    pred_st = max_st[0]
+                    pred_color = state_color_map.get(pred_st, _STATE_COLORS[0])
+
+                daily_summaries.append({
+                    "date": d,
+                    "primary": prim,
+                    "bad_dur": d_bad_dur,
+                    "unknown_dur": d_unknown_dur,
+                    "null_dur": d_null_dur,
+                    "uncovered_dur": d_uncovered_dur,
+                    "known_dur": d_known_dur,
+                    "slice_dur": slice_dur,
+                    "is_partial": is_partial_day,
+                    "pred_state": pred_st,
+                    "pred_color": pred_color,
+                    "kind_count": len(d_kinds),
+                })
+
+            comp_meta = multi.results[0].completeness if multi.results and multi.results[0].completeness else None
+            if comp_meta and comp_meta.truncated:
+                status_exec = "ANÁLISE PARCIAL (LIMITE DE PONTOS ALCANÇADO)"
+            elif bad_days:
+                status_exec = "PROBLEMAS DETECTADOS (QUALIDADE BAD)"
+            elif unknown_days or null_days or uncovered_days:
+                status_exec = "PROBLEMAS DETECTADOS (DESCONHECIDO / FALTA COBERTURA)"
+            else:
+                status_exec = "SEM PROBLEMAS DETECTADOS"
+
+            if bad_days:
+                diag_text = (
+                    f"ATENÇÃO: Foram identificados períodos com qualidade BAD em {len(bad_days)} dia(s) da janela analisada, "
+                    f"totalizando {format_duration(bad_dur)} ({qs.bad_segment_count if qs else 0} intervalos contínuos e {bad_pts} pontos PI). "
+                    f"Primeira ocorrência: {_format_presentation_time(first_bad) or 'N/A'}, "
+                    f"última ocorrência: {_format_presentation_time(last_bad) or 'N/A'}. "
+                    f"Os dados desses intervalos não devem ser utilizados sem validação prévia."
+                )
+            elif unknown_days:
+                diag_text = "Foram identificados valores não mapeados pelo Digital Set. Verifique a aba Valores_Desconhecidos."
+            elif uncovered_days:
+                diag_text = "Foram encontradas lacunas de dados no período. Verifique a aba Linha_do_Tempo para detalhamento."
+            else:
+                diag_text = "Análise realizada com 100% de cobertura e qualidade válida. Nenhum problema de coleta ou estado desconhecido foi detectado."
+
+            rows.append(["Tag:", r.metadata.tag, "Descrição:", descriptor, "Digital Set:", digital_set] + [""] * (num_cols - 6))
+            r_i = len(rows)
+            cell_styles[(r_i, 1)] = header_lbl_style
+            cell_styles[(r_i, 3)] = header_lbl_style
+            cell_styles[(r_i, 5)] = header_lbl_style
+
+            rows.append(["Início Janela:", p_start_local_str, "Fim Janela:", p_end_local_str, "Fuso Horário:", DEFAULT_PRESENTATION_TZ] + [""] * (num_cols - 6))
+            r_i = len(rows)
+            cell_styles[(r_i, 1)] = header_lbl_style
+            cell_styles[(r_i, 3)] = header_lbl_style
+            cell_styles[(r_i, 5)] = header_lbl_style
+
+            rows.append(["Status Executivo:", status_exec, "", "", "", ""] + [""] * (num_cols - 6))
+            r_i = len(rows)
+            cell_styles[(r_i, 1)] = header_lbl_style
+            st_bg = "D32F2F" if "BAD" in status_exec else ("ED6C02" if ("DESCONHECIDO" in status_exec or "PARCIAL" in status_exec) else "2E7D32")
+            cell_styles[(r_i, 2)] = XlsxCellStyle(bold=True, bg_color=st_bg, font_color="FFFFFF", align="center", border=True)
+            merges.append(f"B{r_i}:{get_column_letter(num_cols)}{r_i}")
+
+            rows.append(["Diagnóstico Executivo:", diag_text] + [""] * (num_cols - 2))
+            r_i = len(rows)
+            cell_styles[(r_i, 1)] = header_lbl_style
+            cell_styles[(r_i, 2)] = XlsxCellStyle(wrap_text=True, border=True, bg_color="F7FAFC")
+            merges.append(f"B{r_i}:{get_column_letter(num_cols)}{r_i}")
+
+        rows.append([""] * num_cols)
+
+        # Section 2: Resumo Consolidado dos Problemas (RF-04)
+        rows.append(["2. RESUMO CONSOLIDADO DOS PROBLEMAS DE QUALIDADE E COBERTURA"] + [""] * (num_cols - 1))
+        r_sec2 = len(rows)
+        merges.append(f"A{r_sec2}:{get_column_letter(num_cols)}{r_sec2}")
+        cell_styles[(r_sec2, 1)] = section_style
+
+        rows.append(["Tipo de Problema", "Dias Afetados", "Intervalos Contínuos", "Pontos PI Individuais", "Duração Total", "Primeira Ocorrência", "Última Ocorrência"] + [""] * (num_cols - 7))
+        r_hdr2 = len(rows)
+        for c_i in range(1, 8):
+            cell_styles[(r_hdr2, c_i)] = tbl_hdr_style
+
+        prob_rows_data = [
+            ("BAD", len(bad_days), qs.bad_segment_count if qs else 0, qs.bad_events if qs else 0, format_duration(cov.bad_seconds if cov else 0), _format_presentation_time(qs.first_bad_timestamp if qs else None), _format_presentation_time(qs.last_bad_timestamp if qs else None)),
+            ("UNKNOWN", len(unknown_days), qs.unknown_segment_count if qs else 0, len(da_first.unknown_value_statistics) if da_first else 0, format_duration(cov.unknown_seconds if cov else 0), _format_presentation_time(qs.longest_unknown_start if qs else None), _format_presentation_time(qs.longest_unknown_end if qs else None)),
+            ("NULL", len(null_days), 0, 0, format_duration(cov.null_seconds if cov else 0), "—", "—"),
+            ("UNCOVERED", len(uncovered_days), 0, 0, format_duration(cov.uncovered_seconds if cov else 0), "—", "—"),
+        ]
+        for p_type, d_af, int_cont, pts_ind, dur_t, f_occ, l_occ in prob_rows_data:
+            rows.append([p_type, d_af, int_cont, pts_ind, dur_t, f_occ or "—", l_occ or "—"] + [""] * (num_cols - 7))
+            r_p_i = len(rows)
+            for c_i in range(1, 8):
+                cell_styles[(r_p_i, c_i)] = tbl_val_style
+                if p_type == "BAD":
+                    cell_styles[(r_p_i, 1)] = XlsxCellStyle(bold=True, bg_color="D32F2F", font_color="FFFFFF", align="center", border=True)
+                elif p_type == "UNKNOWN":
+                    cell_styles[(r_p_i, 1)] = XlsxCellStyle(bold=True, bg_color="ED6C02", font_color="FFFFFF", align="center", border=True)
+                elif p_type == "NULL":
+                    cell_styles[(r_p_i, 1)] = XlsxCellStyle(bold=True, bg_color="616161", font_color="FFFFFF", align="center", border=True)
+                elif p_type == "UNCOVERED":
+                    cell_styles[(r_p_i, 1)] = XlsxCellStyle(bold=True, bg_color="7E57C2", font_color="FFFFFF", align="center", border=True)
+
+        rows.append([""] * num_cols)
+
+        # Section 3: Indicadores Operacionais Secundários
+        rows.append(["3. INDICADORES OPERACIONAIS SECUNDÁRIOS"] + [""] * (num_cols - 1))
+        r_sec3 = len(rows)
+        merges.append(f"A{r_sec3}:{get_column_letter(num_cols)}{r_sec3}")
+        cell_styles[(r_sec3, 1)] = section_style
+
+        for r in digital_results:
+            da = r.digital_analysis
+            cov = da.coverage if da else None
+
+            known_pct = f"{cov.known_pct:.1f}%" if cov else "0.0%"
+            uncovered_pct = f"{cov.uncovered_pct:.1f}%" if cov else "0.0%"
+            transitions = sum(t.count for t in da.transition_statistics) if da and da.transition_statistics else 0
+
+            dominant = "N/A"
+            if da and da.state_statistics:
+                obs_states = [s for s in da.state_statistics if s.observed]
+                if obs_states:
+                    dom_st = max(obs_states, key=lambda x: x.duration_seconds)
+                    dominant = f"{dom_st.state_name} ({dom_st.percentage_of_window:.1f}%)"
+
+            warnings_cnt = len(da.diagnostic_warnings) if da else 0
+
+            rows.append(["Cobertura Conhecida", "Período Uncovered", "Total Transições", "Estado Predominante", "Alertas/Warnings", "Duração Janela"] + [""] * (num_cols - 6))
+            r_idx = len(rows)
+            for c_idx in range(1, 7):
+                cell_styles[(r_idx, c_idx)] = kpi_card_style
+
+            rows.append([known_pct, uncovered_pct, str(transitions), dominant, str(warnings_cnt), format_duration(cov.window_seconds) if cov else "0s"] + [""] * (num_cols - 6))
+            r_idx_val = len(rows)
+            for c_idx in range(1, 7):
+                cell_styles[(r_idx_val, c_idx)] = kpi_val_style
+
+        rows.append([""] * num_cols)
+
+        # Section 4: Linha do Tempo Diária (GRID HORIZONTAL DE FAIXA DUPLA)
+        rows.append(["4. LINHA DO TEMPO DIÁRIA (GRID HORIZONTAL DE FAIXA DUPLA)"] + [""] * (num_cols - 1))
+        r_sec4 = len(rows)
+        merges.append(f"A{r_sec4}:{get_column_letter(num_cols)}{r_sec4}")
+        cell_styles[(r_sec4, 1)] = section_style
+
+        month_groups: list[tuple[str, int, int]] = []
+        curr_m_label = ""
+        curr_m_start_col = 2
+        for col_idx, d_val in enumerate(days, 2):
+            m_label = d_val.strftime("%B %Y").capitalize()
+            if m_label != curr_m_label:
+                if curr_m_label:
+                    month_groups.append((curr_m_label, curr_m_start_col, col_idx - 1))
+                curr_m_label = m_label
+                curr_m_start_col = col_idx
+        if curr_m_label:
+            month_groups.append((curr_m_label, curr_m_start_col, len(days) + 1))
+
+        row_m_labels = ["Mês / Ano"] + [""] * (num_cols - 1)
+        rows.append(row_m_labels)
+        r_m_hdr = len(rows)
+        cell_styles[(r_m_hdr, 1)] = XlsxCellStyle(bold=True, bg_color="1A365D", font_color="FFFFFF", align="center", border=True)
+        for m_label, c_start, c_end in month_groups:
+            rows[r_m_hdr - 1][c_start - 1] = m_label
+            cell_styles[(r_m_hdr, c_start)] = XlsxCellStyle(bold=True, bg_color="1A365D", font_color="FFFFFF", align="center", border=True)
+            if c_end > c_start:
+                merges.append(f"{get_column_letter(c_start)}{r_m_hdr}:{get_column_letter(c_end)}{r_m_hdr}")
+
+        row_d_labels = ["Dia / Mês (dd/mm)"] + [d_val.strftime("%d/%m") for d_val in days] + [""] * (num_cols - len(days) - 1)
+        rows.append(row_d_labels)
+        r_d_hdr = len(rows)
+        cell_styles[(r_d_hdr, 1)] = XlsxCellStyle(bold=True, bg_color="DEE2E6", align="center", border=True)
+        for c_i in range(2, len(days) + 2):
+            cell_styles[(r_d_hdr, c_i)] = XlsxCellStyle(bold=True, bg_color="DEE2E6", align="center", border=True)
+
+        row_qu_labels = ["1. Qualidade / Problema (PI)"]
+        for d_sum in daily_summaries:
+            p_label = d_sum["primary"]
+            if d_sum["primary"] == "BAD" and d_sum["is_partial"]:
+                p_label = f"BAD ({format_duration(d_sum['bad_dur'])})"
+            elif d_sum["primary"] == "OK" and d_sum["is_partial"]:
+                p_label = f"OK ({format_duration(d_sum['known_dur'])})"
+            elif d_sum["kind_count"] > 1:
+                p_label = f"{d_sum['primary']} (+)"
+            row_qu_labels.append(p_label)
+        row_qu_labels += [""] * (num_cols - len(daily_summaries) - 1)
+        rows.append(row_qu_labels)
+        r_qu_row = len(rows)
+        cell_styles[(r_qu_row, 1)] = XlsxCellStyle(bold=True, bg_color="EDF2F7", align="left", border=True)
+        for c_i, d_sum in enumerate(daily_summaries, 2):
+            prim = d_sum["primary"]
+            bg_c = _QUALITY_COLORS.get(prim, "2E7D32")
+            if prim == "OK":
+                bg_c = _QUALITY_COLORS["GOOD"]
+            cell_styles[(r_qu_row, c_i)] = XlsxCellStyle(bg_color=bg_c, font_color="FFFFFF", align="center", bold=True, border=True)
+
+        row_op_labels = ["2. Estado Operacional (Digital Set)"]
+        for d_sum in daily_summaries:
+            row_op_labels.append(d_sum["pred_state"])
+        row_op_labels += [""] * (num_cols - len(daily_summaries) - 1)
+        rows.append(row_op_labels)
+        r_op_row = len(rows)
+        cell_styles[(r_op_row, 1)] = XlsxCellStyle(bold=True, bg_color="EDF2F7", align="left", border=True)
+        for c_i, d_sum in enumerate(daily_summaries, 2):
+            cell_styles[(r_op_row, c_i)] = XlsxCellStyle(bg_color=d_sum["pred_color"], font_color="FFFFFF", align="center", bold=True, border=True)
+
+        rows.append([""] * num_cols)
+
+        # Section 5: Legenda Interpretativa
+        rows.append(["5. LEGENDA INTERPRETATIVA"] + [""] * (num_cols - 1))
+        r_sec5 = len(rows)
+        merges.append(f"A{r_sec5}:{get_column_letter(num_cols)}{r_sec5}")
+        cell_styles[(r_sec5, 1)] = section_style
+
+        rows.append(["Categoria", "Rótulo / Classificação", "Cor", "Descrição Semântica / Significado"] + [""] * (num_cols - 4))
+        r_leg_hdr = len(rows)
+        for c_i in range(1, 5):
+            cell_styles[(r_leg_hdr, c_i)] = XlsxCellStyle(bold=True, bg_color="EDF2F7")
+
+        legend_items = [
+            ("Qualidade", "OK / GOOD", _QUALITY_COLORS["GOOD"], "Coleta válida e estado digital reconhecido."),
+            ("Qualidade", "BAD", _QUALITY_COLORS["BAD"], "Leitura inválida ou falha técnica registrada no PIMS."),
+            ("Qualidade", "UNKNOWN", _QUALITY_COLORS["UNKNOWN"], "Valor lido fora do Digital Set configurado."),
+            ("Qualidade", "NULL", _QUALITY_COLORS["NULL"], "Ausência de valor (ponto nulo no banco)."),
+            ("Qualidade", "UNCOVERED", _QUALITY_COLORS["UNCOVERED"], "Lacuna ou gap de dados no período."),
+            ("Operação", "Estados do Digital Set", _STATE_COLORS[0], "Cor de referência do estado operacional predominante no dia."),
+        ]
+        for cat, label, color, desc in legend_items:
+            rows.append([cat, label, "   ", desc] + [""] * (num_cols - 4))
+            r_idx_item = len(rows)
+            cell_styles[(r_idx_item, 3)] = XlsxCellStyle(bg_color=color)
+
+        column_widths_map: dict[int, float] = {1: 55.0}
+        for c_i in range(2, len(days) + 2):
+            column_widths_map[c_i] = 14.0
+
+        columns_list = [f"C{i}" for i in range(1, num_cols + 1)]
+
+        return XlsxSheet(
+            name="Visao_Geral",
+            columns=columns_list,
+            rows=rows,
+            is_presentation=True,
+            is_active=True,
+            freeze_panes="B1",
+            column_widths=column_widths_map,
+            merges=merges,
+            cell_styles=cell_styles,
+        )
+
 
     def _resumo_digital(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
         columns = [

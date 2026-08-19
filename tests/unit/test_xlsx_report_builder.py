@@ -143,3 +143,66 @@ class TestCleanup:
             builder.build_xlsx([sheet])
         remaining = list(builder._temp_dir.glob("*.xlsx"))
         assert len(remaining) == 0
+
+
+class TestPresentationFeatures:
+    def test_native_types_in_presentation_sheet(self, builder: XlsxReportBuilder) -> None:
+        from datetime import datetime
+        now = datetime(2026, 8, 1, 10, 0, 0)
+        sheet = XlsxSheet(
+            name="Visao_Geral_e_Timeline",
+            columns=["tag", "count", "time"],
+            rows=[["CPD_SECADOR", 42, now]],
+            is_presentation=True,
+        )
+        path = builder.build_xlsx([sheet])
+        wb = load_workbook(str(path))
+        ws = wb["Visao_Geral_e_Timeline"]
+        assert ws.cell(row=2, column=1).value == "CPD_SECADOR"
+        assert ws.cell(row=2, column=2).value == 42
+        assert isinstance(ws.cell(row=2, column=2).value, int)
+        assert ws.cell(row=2, column=3).value == now
+        wb.close()
+        path.unlink(missing_ok=True)
+
+    def test_structural_layout(self, builder: XlsxReportBuilder) -> None:
+        sheet = XlsxSheet(
+            name="Visao_Geral_e_Timeline",
+            columns=["col1", "col2"],
+            rows=[["val1", "val2"]],
+            is_presentation=True,
+            freeze_panes="A3",
+            column_widths={1: 25.5, 2: 12.0},
+            merges=["A1:B1"],
+            is_active=True,
+        )
+        path = builder.build_xlsx([sheet])
+        wb = load_workbook(str(path))
+        ws = wb["Visao_Geral_e_Timeline"]
+        assert ws.freeze_panes == "A3"
+        assert ws.column_dimensions["A"].width == 25.5
+        assert ws.column_dimensions["B"].width == 12.0
+        assert "A1:B1" in [str(m) for m in ws.merged_cells.ranges]
+        assert wb.active == ws
+        wb.close()
+        path.unlink(missing_ok=True)
+
+    def test_pattern_fill_and_styles(self, builder: XlsxReportBuilder) -> None:
+        from domain.analysis.services.xlsx_projection import XlsxCellStyle
+        style = XlsxCellStyle(bg_color="00FF00", font_color="FFFFFF", bold=True, border=True)
+        sheet = XlsxSheet(
+            name="Visao_Geral_e_Timeline",
+            columns=["col1"],
+            rows=[["OK"]],
+            is_presentation=True,
+            cell_styles={(2, 1): style},
+        )
+        path = builder.build_xlsx([sheet])
+        wb = load_workbook(str(path))
+        ws = wb["Visao_Geral_e_Timeline"]
+        cell = ws.cell(row=2, column=1)
+        assert cell.fill.start_color.rgb in ("0000FF00", "00FF00")
+        assert cell.font.bold is True
+        wb.close()
+        path.unlink(missing_ok=True)
+

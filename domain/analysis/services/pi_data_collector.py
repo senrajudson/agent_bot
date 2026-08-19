@@ -5,7 +5,16 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from domain.analysis.models import AnalysisError, AnalysisPoint, TagMetadata, ZeroPolicy
+from domain.analysis.models import (
+    AnalysisCompleteness,
+    AnalysisCompletenessMetadata,
+    AnalysisError,
+    AnalysisPoint,
+    LimitStatus,
+    TagMetadata,
+    ZeroPolicy,
+)
+from domain.analysis.services.limit_resolver import resolve_effective_point_limit
 from domain.pims.clients.pi_web_api_client import (
     get_digital_set_states,
     get_interpolated_values_by_tag,
@@ -22,6 +31,18 @@ from domain.pims.utils.digital_states import (
 logger = logging.getLogger(__name__)
 
 
+def get_event_identity(p: AnalysisPoint) -> tuple:
+    """T016: Retorna a tupla de identidade completa de um evento PI."""
+    return (
+        p.timestamp,
+        p.value,
+        p.good,
+        getattr(p, "questionable", False),
+        getattr(p, "substituted", False),
+        getattr(p, "annotated", False),
+    )
+
+
 @dataclass(frozen=True)
 class CollectedData:
     metadata: TagMetadata
@@ -30,6 +51,8 @@ class CollectedData:
     digital_initial: str | None = None
     digital_states: list[dict] = field(default_factory=list)
     digital_seed: AnalysisPoint | None = None
+    completeness: AnalysisCompletenessMetadata | None = None
+    first_excluded_point: AnalysisPoint | None = None
 
 
 _STATUS_TO_ERROR_CODE = {
@@ -98,14 +121,16 @@ class PiDataCollector:
             if metadata.point_type == "digital":
                 return await self._fetch_digital(tag, start, end, metadata, item)
 
-            recorded, interpolated = await asyncio.gather(
-                self._fetch_recorded(tag, start, end),
+            (recorded, completeness, first_excluded), interpolated = await asyncio.gather(
+                self._fetch_recorded_with_probe(tag, start, end),
                 self._fetch_interpolated(tag, start, end),
             )
             return CollectedData(
                 metadata=metadata,
                 recorded=recorded,
                 interpolated=interpolated,
+                completeness=completeness,
+                first_excluded_point=first_excluded,
             )
 
         except Exception as exc:
@@ -127,17 +152,83 @@ class PiDataCollector:
         results = await asyncio.gather(*[_bounded(t) for t in tags])
         return {t: r for t, r in results}
 
-    async def _fetch_recorded(
+    async def _fetch_recorded_with_probe(
         self, tag: str, start: str, end: str
-    ) -> list[AnalysisPoint]:
+    ) -> tuple[list[AnalysisPoint], AnalysisCompletenessMetadata, AnalysisPoint | None]:
+        resolution = resolve_effective_point_limit(configured_limit=self._recorded_max_count)
+        limit = resolution.effective_limit
+
         try:
-            raw = await get_recorded_values_by_tag(
-                tag, start, end, max_count=self._recorded_max_count
-            )
-            return self._parse_points(raw)
+            raw = await get_recorded_values_by_tag(tag, start, end, max_count=limit)
+            points = self._parse_points(raw)
         except Exception as exc:
             logger.warning("Recorded fetch failed for %s: %s", tag, exc)
-            return []
+            points = []
+
+        count = len(points)
+        effective_start = start
+        effective_end = end
+        first_excluded: AnalysisPoint | None = None
+        probe_performed = False
+
+        if count < limit:
+            status = LimitStatus.NOT_REACHED
+            completeness = AnalysisCompleteness.COMPLETE
+            truncated = False
+            effective_end = end
+        else:
+            # count == limit: executar probe de 1 chamada
+            probe_performed = True
+            try:
+                last_point = points[-1]
+                effective_end = last_point.timestamp
+                last_identity = get_event_identity(last_point)
+
+                # Busca max 2 pontos a partir do timestamp do último evento
+                probe_raw = await get_recorded_values_by_tag(tag, last_point.timestamp, end, max_count=2)
+                probe_points = self._parse_points(probe_raw)
+
+                # Filtrar duplicatas pela identidade completa de evento
+                distinct_probe = [p for p in probe_points if get_event_identity(p) != last_identity]
+
+                if not distinct_probe:
+                    status = LimitStatus.REACHED_EXACT
+                    completeness = AnalysisCompleteness.COMPLETE
+                    truncated = False
+                    effective_end = end
+                else:
+                    status = LimitStatus.EXCEEDED
+                    completeness = AnalysisCompleteness.PARTIAL
+                    truncated = True
+                    first_excluded = distinct_probe[0]
+                    # Para tags digitais, effective_end é o timestamp do primeiro evento excluído
+                    effective_end = first_excluded.timestamp
+            except Exception as exc:
+                logger.warning("Overflow probe failed for %s: %s", tag, exc)
+                status = LimitStatus.REACHED_UNCONFIRMED
+                completeness = AnalysisCompleteness.COMPLETENESS_UNCONFIRMED
+                truncated = None
+
+        meta = AnalysisCompletenessMetadata(
+            requested_start_time=start,
+            requested_end_time=end,
+            effective_start_time=effective_start,
+            effective_end_time=effective_end,
+            returned_point_count=count,
+            configured_point_limit=resolution.configured_limit,
+            pi_request_safe_limit=resolution.pi_request_safe_limit,
+            artifact_safe_row_limit=resolution.artifact_safe_row_limit,
+            effective_point_limit=resolution.effective_limit,
+            limit_status=status,
+            analysis_completeness=completeness,
+            truncated=truncated,
+            truncation_direction="FROM_WINDOW_START",
+            overflow_check_performed=probe_performed,
+            unprocessed_start_time=effective_end if truncated else None,
+            unprocessed_end_time=end if truncated else None,
+        )
+
+        return points, meta, first_excluded
 
     async def _fetch_interpolated(
         self, tag: str, start: str, end: str
@@ -229,13 +320,12 @@ class PiDataCollector:
 
         web_id = item.get("WebId", "")
 
-        seed_raw, recorded_raw = await asyncio.gather(
+        seed_raw, (recorded, completeness, first_excluded) = await asyncio.gather(
             self._fetch_atorbefore(tag, web_id, start),
-            self._fetch_recorded(tag, start, end),
+            self._fetch_recorded_with_probe(tag, start, end),
         )
 
         digital_seed = self._parse_single_point(seed_raw)
-        recorded = recorded_raw
 
         initial_state: str | None = None
         first_point = digital_seed if digital_seed is not None else (recorded[0] if recorded else None)
@@ -260,6 +350,8 @@ class PiDataCollector:
             digital_initial=initial_state,
             digital_states=digital_states,
             digital_seed=digital_seed,
+            completeness=completeness,
+            first_excluded_point=first_excluded,
         )
 
     async def _fetch_atorbefore(

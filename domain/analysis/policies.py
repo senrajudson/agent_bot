@@ -148,13 +148,6 @@ def validate_analysis_report_contract(
             message="start_time deve ser anterior a end_time.",
         )
 
-    delta = end_dt - start_dt
-    if delta.days > MAX_PERIOD_DAYS:
-        raise DomainValidationError(
-            code=ValidationErrorCode.WINDOW_EXCEEDS_MAX,
-            message=f"Período máximo é {MAX_PERIOD_DAYS} dias.",
-        )
-
 
 def _parse_iso(value: str, field_name: str) -> datetime:
     try:

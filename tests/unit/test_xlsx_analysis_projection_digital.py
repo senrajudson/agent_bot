@@ -6,6 +6,8 @@ todos os estados, homônimos, status, cobertura, Recorded, availability.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from domain.analysis.models import (
     AnalysisError,
     DigitalAnalysisResult,
@@ -367,3 +369,243 @@ class TestT118_ManifestUnchanged:
         dig = [r for r in multi.results if r.metadata.point_type == "digital"][0]
         assert dig.quality is None
         assert dig.digital_analysis is not None
+
+
+# ---------------------------------------------------------------------------
+# T003 — Caracterização do Workbook Legado
+# ---------------------------------------------------------------------------
+
+class TestLegacyCharacterization:
+    def test_digital_only_sheets_characterization(self) -> None:
+        multi_digital = MultiTagAnalysisResult(
+            results=(_make_digital_result(),),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        names = [s.name for s in sheets]
+        expected_subset = ["Resumo", "Qualidade", "Recorded", "Estados", "Digital_Set", "Erros_Warnings", "Metadados"]
+        for expected_name in expected_subset:
+            assert expected_name in names
+
+    def test_numeric_only_sheets_characterization(self) -> None:
+        multi_numeric = MultiTagAnalysisResult(
+            results=(_make_numeric_result(),),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_numeric)
+        names = [s.name for s in sheets]
+        expected_names = [
+            "Resumo", "Qualidade", "Estatisticas", "Recorded",
+            "Interpolated_5m", "Gaps", "Spikes", "Erros_Warnings", "Metadados"
+        ]
+        assert names == expected_names
+
+    def test_technical_sheets_headers_characterization(self) -> None:
+        multi_digital = MultiTagAnalysisResult(
+            results=(_make_digital_result(),),
+            errors=(AnalysisError(tag="FAIL", code="ERR", message="msg", retryable=False),),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        sheet_map = {s.name: s.columns for s in sheets}
+        assert sheet_map["Resumo"][0:4] == ["tag", "description", "point_type", "digital_set"]
+        assert "analysis_status" in sheet_map["Resumo"]
+        assert sheet_map["Qualidade"][0:2] == ["tag", "point_type"]
+        assert "total_events" in sheet_map["Qualidade"]
+        assert sheet_map["Estados"][0:3] == ["tag", "state_code", "state_name"]
+        assert sheet_map["Digital_Set"] == ["tag", "digital_set_name", "state_code", "state_name", "state_description"]
+        assert sheet_map["Erros_Warnings"] == ["tag", "code", "message", "retryable"]
+        assert sheet_map["Metadados"] == ["key", "value"]
+
+    def test_legacy_builder_string_serialization(self, tmp_path: Any) -> None:
+        from mcp_server.services.delivery.xlsx_report_builder import XlsxReportBuilder
+        import openpyxl
+
+        multi_digital = MultiTagAnalysisResult(
+            results=(_make_digital_result(),),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        builder = XlsxReportBuilder(temp_dir=str(tmp_path))
+        path = builder.build_xlsx(sheets)
+
+        wb = openpyxl.load_workbook(str(path))
+        resumo_ws = wb["Resumo"]
+        # In legacy technical sheets, numbers and strings are written as str
+        val = resumo_ws.cell(row=2, column=1).value
+        assert isinstance(val, str)
+        wb.close()
+
+
+# ---------------------------------------------------------------------------
+# T023 — Testes de Estrutura da Nova Aba (Visao_Geral) e Posição (Linha_do_Tempo)
+# ---------------------------------------------------------------------------
+
+class TestVisaoGeral:
+    def test_first_sheet_is_visao_geral(self) -> None:
+        multi_digital = MultiTagAnalysisResult(
+            results=(_make_digital_result(),),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        assert sheets[0].name == "Visao_Geral"
+        assert sheets[0].is_presentation is True
+        assert sheets[0].is_active is True
+
+    def test_second_sheet_is_linha_do_tempo_when_has_segments(self) -> None:
+        r = _make_digital_result()
+        # Add timeline segments
+        da = r.digital_analysis
+        seg = TimelineSegment(start="2026-08-01T00:00:00-03:00", end="2026-08-08T00:00:00-03:00", duration_seconds=604800, raw_value=0, state_code=0, state_name="DESLIGADO", kind=SegmentKind.KNOWN, good=True, questionable=False, substituted=False, source=None)
+        da_with_seg = DigitalAnalysisResult(
+            status=da.status,
+            possible_states=da.possible_states,
+            initial_state=da.initial_state,
+            final_state=da.final_state,
+            occupancy=da.occupancy,
+            transitions=da.transitions,
+            coverage=da.coverage,
+            recorded_events_count=da.recorded_events_count,
+            valid_events_count=da.valid_events_count,
+            quality_summary=da.quality_summary,
+            state_statistics=da.state_statistics,
+            timeline_segments=(seg,),
+            unknown_value_statistics=da.unknown_value_statistics,
+            daily_summary=da.daily_summary,
+            digital_set_snapshot=da.digital_set_snapshot,
+            diagnostic_warnings=da.diagnostic_warnings,
+        )
+        res_with_seg = TagAnalysisResult(
+            metadata=r.metadata,
+            quality=r.quality,
+            digital_analysis=da_with_seg,
+            start_time=r.start_time,
+            end_time=r.end_time,
+        )
+        multi_digital = MultiTagAnalysisResult(
+            results=(res_with_seg,),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        assert sheets[0].name == "Visao_Geral"
+        assert sheets[1].name == "Linha_do_Tempo"
+
+    def test_presentation_sheet_contains_sections(self) -> None:
+        multi_digital = MultiTagAnalysisResult(
+            results=(_make_digital_result(),),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi_digital)
+        presentation = sheets[0]
+        row_texts = [" ".join(str(c) for c in row if c != "") for row in presentation.rows]
+        full_text = "\n".join(row_texts)
+
+        assert "RELATÓRIO EXECUTIVO" in full_text
+        assert "1. IDENTIFICAÇÃO E DIAGNÓSTICO EXECUTIVO" in full_text
+        assert "2. RESUMO CONSOLIDADO DOS PROBLEMAS DE QUALIDADE E COBERTURA" in full_text
+        assert "3. INDICADORES OPERACIONAIS SECUNDÁRIOS" in full_text
+        assert "4. LINHA DO TEMPO DIÁRIA (GRID HORIZONTAL DE FAIXA DUPLA)" in full_text
+        assert "5. LEGENDA INTERPRETATIVA" in full_text
+
+    def test_severity_hierarchy_and_rf04_table(self) -> None:
+        r = _make_digital_result()
+        da = r.digital_analysis
+        # Segments with BAD and UNCOVERED
+        seg_bad = TimelineSegment(start="2026-08-02T10:00:00-03:00", end="2026-08-02T12:00:00-03:00", duration_seconds=7200, raw_value=None, state_code=None, state_name=None, kind=SegmentKind.BAD, good=False, questionable=False, substituted=False, source=None)
+        seg_uncovered = TimelineSegment(start="2026-08-02T12:00:00-03:00", end="2026-08-02T18:00:00-03:00", duration_seconds=21600, raw_value=None, state_code=None, state_name=None, kind=SegmentKind.UNCOVERED, good=False, questionable=False, substituted=False, source=None)
+        
+        da_bad = DigitalAnalysisResult(
+            status=da.status,
+            possible_states=da.possible_states,
+            initial_state=da.initial_state,
+            final_state=da.final_state,
+            occupancy=da.occupancy,
+            transitions=da.transitions,
+            coverage=DigitalCoverageMetrics(
+                window_seconds=604800, known_seconds=576000, known_pct=95.2,
+                bad_seconds=7200, bad_pct=1.2, null_seconds=0, null_pct=0,
+                unknown_seconds=0, unknown_pct=0, uncovered_seconds=21600, uncovered_pct=3.6,
+                questionable_seconds=0, questionable_pct=0, substituted_seconds=0, substituted_pct=0,
+            ),
+            recorded_events_count=da.recorded_events_count,
+            valid_events_count=da.valid_events_count,
+            quality_summary=QualitySummary(
+                total_events=1, good_events=0, bad_events=1, questionable_events=0, substituted_events=0,
+                known_duration=576000, bad_duration=7200, unknown_duration=0, null_duration=0, uncovered_duration=21600,
+                questionable_duration=0, questionable_pct=0, substituted_duration=0, substituted_pct=0,
+                bad_segment_count=1, unknown_segment_count=0,
+                longest_bad_start=None, longest_bad_end=None, longest_bad_duration=7200,
+                longest_unknown_start=None, longest_unknown_end=None, longest_unknown_duration=0,
+                first_bad_timestamp="2026-08-02T10:00:00-03:00", last_bad_timestamp="2026-08-02T12:00:00-03:00",
+            ),
+            state_statistics=da.state_statistics,
+            timeline_segments=(seg_bad, seg_uncovered),
+            unknown_value_statistics=da.unknown_value_statistics,
+            daily_summary=da.daily_summary,
+            digital_set_snapshot=da.digital_set_snapshot,
+            diagnostic_warnings=da.diagnostic_warnings,
+        )
+        res_bad = TagAnalysisResult(
+            metadata=r.metadata,
+            quality=r.quality,
+            digital_analysis=da_bad,
+            start_time=r.start_time,
+            end_time=r.end_time,
+        )
+        multi = MultiTagAnalysisResult(
+            results=(res_bad,),
+            errors=(),
+            period_start="2026-08-01T00:00:00-03:00",
+            period_end="2026-08-08T00:00:00-03:00",
+            total_requested=1,
+            total_processed=1,
+        )
+        sheets = XlsxAnalysisProjection().project(multi)
+        vg = sheets[0]
+        row_texts = [" ".join(str(c) for c in row if c != "") for row in vg.rows]
+        full_text = "\n".join(row_texts)
+
+        # Confirm BAD alert is in status and diagnosis
+        assert "PROBLEMAS DETECTADOS" in full_text
+        assert "BAD" in full_text
+        # Confirm column width A == 55.0
+        assert vg.column_widths[1] == 55.0
+        # Confirm section background color is 2B6CB0
+        assert vg.cell_styles[(2, 1)].bg_color == "2B6CB0"
+        # Confirm label fill is EBF8FF
+        assert vg.cell_styles[(3, 1)].bg_color == "EBF8FF"
+        # Confirm freeze_panes is B1
+        assert vg.freeze_panes == "B1"
+
+
+
+
+
+

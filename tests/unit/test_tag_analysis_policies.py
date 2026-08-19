@@ -100,9 +100,9 @@ class TestValidateContract:
         with pytest.raises(DomainValidationError, match="start_time deve ser anterior"):
             validate_analysis_report_contract(["X"], "2026-01-02T00:00:00-03:00", "2026-01-01T00:00:00-03:00")
 
-    def test_window_exceeds_max(self) -> None:
-        with pytest.raises(DomainValidationError, match="Período máximo é 31"):
-            validate_analysis_report_contract(["X"], "2026-01-01T00:00:00-03:00", "2026-02-15T00:00:00-03:00")
+    def test_free_window_supported(self) -> None:
+        # Janelas de 45 dias são suportadas (sem trava rígida de MAX_PERIOD_DAYS)
+        validate_analysis_report_contract(["X"], "2026-01-01T00:00:00-03:00", "2026-02-15T00:00:00-03:00")
 
     def test_duplicate_tags_deduped(self) -> None:
         validate_analysis_report_contract(["A", "A", "B"], "2026-01-01T00:00:00-03:00", "2026-01-02T00:00:00-03:00")
