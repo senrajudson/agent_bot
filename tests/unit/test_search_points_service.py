@@ -57,6 +57,17 @@ _MOCK_ITEMS_5 = [
     for i in range(5)
 ]
 
+_MOCK_ITEMS_15 = [
+    {
+        "Name": f"TAG_{i}",
+        "Descriptor": f"Tag numero {i}",
+        "WebId": f"W{i}",
+        "PointType": "analog",
+        "EngineeringUnits": "m3/h",
+    }
+    for i in range(15)
+]
+
 
 # ---------------------------------------------------------------------------
 # _useful_chars
@@ -124,7 +135,7 @@ class TestSanitizeQuery:
 # ---------------------------------------------------------------------------
 class TestValidateMaxCount:
     def test_default(self):
-        assert _validate_max_count(5) == 5
+        assert _validate_max_count(15) == 15
 
     def test_zero_returns_default(self):
         assert _validate_max_count(0) == _MAX_COUNT_HARD_CAP
@@ -266,21 +277,21 @@ class TestDedupItems:
 # ---------------------------------------------------------------------------
 class TestBuildOutput:
     def test_no_results(self):
-        msg = _build_output("vaz", [], 0, 5)
+        msg = _build_output("vaz", [], 0, 15)
         assert "Nenhuma tag" in msg
         assert "Para refinar" in msg
 
     def test_with_results(self):
-        msg = _build_output("vaz", [{"name": "TAG_1"}], 1, 5)
-        assert "Encontrei até 5" in msg
+        msg = _build_output("vaz", [{"name": "TAG_1"}], 1, 15)
+        assert "Encontrei até 15" in msg
         assert "1. TAG_1" in msg
 
     def test_max_count_hit(self):
-        items = [{"name": f"T{i}", "description": f"Desc {i}"} for i in range(5)]
-        msg = _build_output("vaz", items, 5, 5)
-        assert "5 tags candidatas" in msg
+        items = [{"name": f"T{i}", "description": f"Desc {i}"} for i in range(15)]
+        msg = _build_output("vaz", items, 15, 15)
+        assert "15 tags candidatas" in msg
         assert "1. T0" in msg
-        assert "5. T4" in msg
+        assert "15. T14" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +329,7 @@ class TestSearchPiPointsClientParams:
             assert "Name:=*LFI_RB3*" in call_kwargs["query"]
 
     @pytest.mark.asyncio
-    async def test_sends_max_count_5(self):
+    async def test_sends_max_count_15(self):
         with patch(
             "domain.pims.services.search_points_service.client_search",
             new_callable=AsyncMock,
@@ -326,7 +337,7 @@ class TestSearchPiPointsClientParams:
         ) as mock_client:
             await search_pi_points(query="LFI_RB3", max_count=100, search_mode="name")
             call_kwargs = mock_client.call_args.kwargs
-            assert call_kwargs["max_count"] == 5
+            assert call_kwargs["max_count"] == 15
 
     @pytest.mark.asyncio
     async def test_calls_points_search_endpoint(self):
@@ -356,7 +367,7 @@ class TestSearchPiPointsSuccess:
             assert result["query"] == "LFI_RB3"
             assert result["search_mode"] == "auto"
             assert result["count"] == 1
-            assert result["max_count"] == 5
+            assert result["max_count"] == 15
             assert len(result["items"]) == 1
             assert isinstance(result["message"], str)
             assert isinstance(result["output"], str)
@@ -420,7 +431,7 @@ class TestSearchPiPointsValidation:
             return_value={"Items": []},
         ):
             result = await search_pi_points(query="vazao", max_count=0)
-            assert result["max_count"] == 5
+            assert result["max_count"] == 15
 
 
 # ---------------------------------------------------------------------------
@@ -536,19 +547,19 @@ class TestSearchModeAuto:
             assert "Description" in first_call_query
 
     @pytest.mark.asyncio
-    async def test_para_se_descricao_der_5(self):
+    async def test_para_se_descricao_der_15(self):
         with patch(
             "domain.pims.services.search_points_service.client_search",
             new_callable=AsyncMock,
-            return_value={"Items": _MOCK_ITEMS_5},
+            return_value={"Items": _MOCK_ITEMS_15},
         ) as mock_client:
             result = await search_pi_points(query="velocidade", search_mode="auto")
             assert mock_client.await_count == 1
-            assert result["count"] == 5
+            assert result["count"] == 15
 
     @pytest.mark.asyncio
-    async def test_chama_nome_se_descricao_menos_5(self):
-        """auto calls name search when description returns < 5 results."""
+    async def test_chama_nome_se_descricao_menos_15(self):
+        """auto calls name search when description returns < 15 results."""
         with (
             patch(
                 "domain.pims.services.search_points_service.client_search",
@@ -557,11 +568,11 @@ class TestSearchModeAuto:
         ):
             mock_client.side_effect = [
                 {"Items": _MOCK_ITEMS},           # description: 1 result
-                {"Items": _MOCK_ITEMS_5},          # name: 5 results
+                {"Items": _MOCK_ITEMS_15},         # name: 15 results
             ]
             result = await search_pi_points(query="velocidade", search_mode="auto")
             assert mock_client.await_count == 2
-            assert result["count"] == 5
+            assert result["count"] == 15
 
     @pytest.mark.asyncio
     async def test_dedup_por_web_id(self):
@@ -578,6 +589,10 @@ class TestSearchModeAuto:
                 "domain.pims.services.search_points_service.client_search",
                 new_callable=AsyncMock,
             ) as mock_client,
+            patch(
+                "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+                False,
+            ),
         ):
             mock_client.side_effect = [
                 {"Items": items_desc},
@@ -602,6 +617,10 @@ class TestSearchModeAuto:
                 "domain.pims.services.search_points_service.client_search",
                 new_callable=AsyncMock,
             ) as mock_client,
+            patch(
+                "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+                False,
+            ),
         ):
             mock_client.side_effect = [
                 {"Items": items_desc},
@@ -612,20 +631,24 @@ class TestSearchModeAuto:
 
     @pytest.mark.asyncio
     async def test_merge_respeita_limite(self):
-        items_3 = _MOCK_ITEMS_5[:3]
-        items_5 = _MOCK_ITEMS_5
+        items_3 = _MOCK_ITEMS_15[:3]
+        items_15 = _MOCK_ITEMS_15
         with (
             patch(
                 "domain.pims.services.search_points_service.client_search",
                 new_callable=AsyncMock,
             ) as mock_client,
+            patch(
+                "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+                False,
+            ),
         ):
             mock_client.side_effect = [
                 {"Items": items_3},
-                {"Items": items_5},
+                {"Items": items_15},
             ]
             result = await search_pi_points(query="descricao tag_a", search_mode="auto")
-            assert result["count"] == 5
+            assert result["count"] == 15
 
 
 # ---------------------------------------------------------------------------
@@ -666,17 +689,17 @@ class TestSearchModeQuery:
 # ---------------------------------------------------------------------------
 class TestHardCap:
     @pytest.mark.asyncio
-    async def test_max_count_100_vira_5(self):
+    async def test_max_count_100_vira_15(self):
         with patch(
             "domain.pims.services.search_points_service.client_search",
             new_callable=AsyncMock,
             return_value={"Items": _MOCK_ITEMS},
         ):
             result = await search_pi_points(query="vazao", max_count=100)
-            assert result["max_count"] == 5
+            assert result["max_count"] == 15
 
     @pytest.mark.asyncio
-    async def test_retorna_max_5_itens(self):
+    async def test_retorna_max_15_itens(self):
         many_items = [{"Name": f"T{i}"} for i in range(20)]
         with patch(
             "domain.pims.services.search_points_service.client_search",
@@ -684,11 +707,11 @@ class TestHardCap:
             return_value={"Items": many_items},
         ):
             result = await search_pi_points(query="vazao")
-            assert len(result["items"]) <= 5
+            assert len(result["items"]) <= 15
 
     @pytest.mark.asyncio
-    async def test_output_textual_ate_5(self):
-        many_items = [{"Name": f"T{i}", "Descriptor": f"D{i}"} for i in range(10)]
+    async def test_output_textual_ate_15(self):
+        many_items = [{"Name": f"T{i}", "Descriptor": f"D{i}"} for i in range(20)]
         with patch(
             "domain.pims.services.search_points_service.client_search",
             new_callable=AsyncMock,
@@ -697,7 +720,7 @@ class TestHardCap:
             result = await search_pi_points(query="vazao")
             lines = result["output"].strip().split("\n")
             numbered = [l for l in lines if l[0].isdigit() and ". " in l[:4]]
-            assert len(numbered) <= 5
+            assert len(numbered) <= 15
 
 
 # ---------------------------------------------------------------------------
@@ -909,13 +932,19 @@ class TestSearchPiPointsErrors:
     @pytest.mark.asyncio
     async def test_http_400_description_no_fallback(self):
         """description mode with 400 → falls through all variants, returns 0."""
-        with patch(
-            "domain.pims.services.search_points_service.client_search",
-            new_callable=AsyncMock,
-            side_effect=httpx.HTTPStatusError(
-                "Bad Request",
-                request=httpx.Request("GET", "/points/search"),
-                response=httpx.Response(400),
+        with (
+            patch(
+                "domain.pims.services.search_points_service.client_search",
+                new_callable=AsyncMock,
+                side_effect=httpx.HTTPStatusError(
+                    "Bad Request",
+                    request=httpx.Request("GET", "/points/search"),
+                    response=httpx.Response(400),
+                ),
+            ),
+            patch(
+                "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+                False,
             ),
         ):
             result = await search_pi_points(
@@ -1169,6 +1198,14 @@ class TestBuildNameFilterVariants:
 # search_pi_points — description mode with variants
 # ---------------------------------------------------------------------------
 class TestSearchDescriptionWithVariants:
+    @pytest.fixture(autouse=True)
+    def _disable_strict_and(self):
+        with patch(
+            "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+            False,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_first_variant_succeeds(self):
         """Description with quoted phrase works first."""
@@ -1236,6 +1273,14 @@ class TestSearchDescriptionWithVariants:
 # search_pi_points — name mode with 500 fallback
 # ---------------------------------------------------------------------------
 class TestSearchNameModeFallback500:
+    @pytest.fixture(autouse=True)
+    def _disable_strict_and(self):
+        with patch(
+            "mcp_server.core.config.settings.ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND",
+            False,
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_500_triggers_fallback(self):
         with (
@@ -1348,18 +1393,18 @@ class TestSearchNameModeFallback500:
 # ---------------------------------------------------------------------------
 class TestOutputLimits:
     @pytest.mark.asyncio
-    async def test_output_max_5_tags(self):
-        many_items = [{"Name": f"T{i}", "Descriptor": f"D{i}", "WebId": f"W{i}"} for i in range(10)]
+    async def test_output_max_15_tags(self):
+        many_items = [{"Name": f"T{i}", "Descriptor": f"D{i}", "WebId": f"W{i}"} for i in range(20)]
         with patch(
             "domain.pims.services.search_points_service.client_search",
             new_callable=AsyncMock,
             return_value={"Items": many_items},
         ):
             result = await search_pi_points(query="tag", search_mode="auto")
-            assert len(result["items"]) <= 5
+            assert len(result["items"]) <= 15
             lines = result["output"].strip().split("\n")
             numbered = [l for l in lines if l[0].isdigit() and ". " in l[:4]]
-            assert len(numbered) <= 5
+            assert len(numbered) <= 15
 
     @pytest.mark.asyncio
     async def test_zero_message_preserved(self):

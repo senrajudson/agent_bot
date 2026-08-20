@@ -82,7 +82,7 @@ def test_public_signatures_unchanged():
 
     baselines = {
         "consultar_tag": "(tags: list[str], pergunta_usuario: str | None = None) -> str",
-        "search_pi_points": "(query: str, max_count: int = 5, search_mode: str = 'auto') -> str",
+        "search_pi_points": "(query: str, max_count: int = 15, search_mode: str = 'auto') -> str",
         "tag_attributes_tool": (
             "(tag: str, attribute_group: str = 'auto', "
             "attributes: list[str] | None = None) -> str"

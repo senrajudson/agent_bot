@@ -56,6 +56,7 @@ mcp = FastMCP(
     instructions=(
         "Roteamento: valor atual/metadados/timestamp → consultar_tag; "
         "descoberta de tags por nome/descrição/área → search_pi_points; "
+        "descoberta de tags digitais por Digital Set → search_pi_points_by_digital_set; "
         "atributos de configuração do PI Point (compressão/exceção/scan) "
         "→ tag_attributes_tool; estatísticas históricas (média/máx/mín/soma) "
         "→ tag_statistics_tool; cálculo temporal (integral/derivada/variação) "
@@ -68,6 +69,7 @@ mcp = FastMCP(
         "status_pims_tool é zero-argumento; chame com arguments={}."
     ),
 )
+
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +836,7 @@ async def generate_pi_tags_series_csv(
 @mcp.tool
 async def search_pi_points(
     query: str,
-    max_count: int = 5,
+    max_count: int = 15,
     search_mode: str = "auto",
 ) -> str:
     """
@@ -845,7 +847,7 @@ async def search_pi_points(
 
     Args:
         query: Termo de busca (parte do nome, descrição, equipamento, etc.).
-        max_count: Máximo de resultados públicos (default 5).
+        max_count: Máximo de resultados públicos (default 15).
         search_mode: 'auto', 'name', 'description', 'query'.
     """
     async def _inner():
@@ -860,6 +862,45 @@ async def search_pi_points(
         )
         return result["output"]
     return await _mcp_safe_tool(_inner)
+
+
+# ---------------------------------------------------------------------------
+# Tool: search_pi_points_by_digital_set
+# ---------------------------------------------------------------------------
+@mcp.tool
+async def search_pi_points_by_digital_set(
+    digital_set_name: str,
+    max_count: int = 100,
+    start_index: int = 0,
+) -> str:
+    """
+    Busca PI Points digitais configurados com um Digital Set específico.
+
+    Use quando o usuário pedir para listar ou encontrar tags/PI Points
+    associados a um conjunto digital (DigitalSet), como "Quais tags usam o
+    Digital Set Estado_01?".
+
+    NÃO usar para verificar o estado operacional atual de uma tag, consultar
+    valores históricos nem buscar por nome/descrição geral.
+
+    Args:
+        digital_set_name: Nome exato do Digital Set (ex: Estado_01, Estado_126).
+        max_count: Quantidade máxima de itens por página (default: 100, máx: 1000).
+        start_index: Índice inicial para paginação (default: 0).
+    """
+    async def _inner():
+        from domain.pims.services.search_points_by_digital_set_service import (
+            search_pi_points_by_digital_set as svc_search,
+        )
+
+        result = await svc_search(
+            digital_set_name=digital_set_name,
+            max_count=max_count,
+            start_index=start_index,
+        )
+        return result["output"]
+    return await _mcp_safe_tool(_inner)
+
 
 
 # ---------------------------------------------------------------------------

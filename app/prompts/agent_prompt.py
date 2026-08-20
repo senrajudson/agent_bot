@@ -92,6 +92,7 @@ para chamada operacional direta.
 Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 - consultar_tag: valor atual, metadados, digital states.
 - search_pi_points: descobrir tags por nome/descrição/área.
+- search_pi_points_by_digital_set: listar/descobrir tags digitais associadas estruturalmente a um Digital Set específico (ex: Estado_01, Estado_126). NÃO usar para estado operacional atual, histórico nem busca geral por nome.
 - tag_attributes_tool: compressão, exceção, scan, archiving, pointsource.
 - tag_statistics: SOMENTE operações estatísticas (média, máximo, mínimo, soma, desvio padrão, consumo). NÃO usar para valores brutos.
 - tag_calculus: integral, derivada, taxa de variação.
@@ -106,9 +107,12 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
 {test_artifact_section}
 
 Desambiguação de roteamento:
+- "quais tags usam o Digital Set Estado_01", "quais tags utilizam o Digital Set Estado_126",
+  "tags associadas ao conjunto digital", "PI Points do Digital Set" → search_pi_points_by_digital_set.
 - "valores minuto a minuto", "valores a cada minuto", "série de valores",
   "histórico de valores", "valores interpolados", "CSV com os valores",
   "exporte os valores" → generate_pi_tags_series_csv com data_method=interpolated.
+
 - "valores brutos", "pontos registrados", "eventos gravados", "histórico recorded",
   "valores recorded" → generate_pi_tags_series_csv com data_method=recorded.
 - "média por minuto", "média a cada minuto" → tag_statistics com operation=mean,

@@ -675,3 +675,27 @@ async def get_points_by_name_filter(
         f"{_base_url()}/dataservers/{web_id}/points",
         params=params,
     )
+
+
+async def search_points_by_digital_set(
+    digital_set_name: str,
+    max_count: int = 100,
+    start_index: int = 0,
+    selected_fields: str | None = None,
+) -> dict[str, Any]:
+    """Busca PI Points digitais por DigitalSet via /points/search com filtro nativo."""
+    data_server = await get_data_server()
+    web_id = data_server["WebId"]
+
+    params: dict[str, Any] = {
+        "dataServerWebId": web_id,
+        "query": f'PointType:=Digital AND DigitalSet:="{digital_set_name}"',
+        "startIndex": start_index,
+        "maxCount": max_count,
+        "selectedFields": selected_fields or SEARCH_SELECTED_FIELDS,
+    }
+
+    return await _pi_get(
+        f"{_base_url()}/points/search",
+        params=params,
+    )

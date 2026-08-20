@@ -83,7 +83,7 @@ class Settings(BaseSettings):
 
     # search_pi_points strict AND (feature flag, default false)
     ENABLE_MCP_SEARCH_PI_POINTS_STRICT_AND: bool = False
-    MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT: int = 25
+    MCP_SEARCH_PI_POINTS_INTERNAL_MAX_COUNT: int = 45
     MCP_SEARCH_PI_POINTS_MAX_VARIANTS: int = 4
     MCP_SEARCH_PI_POINTS_TIMEOUT_SECONDS: float = 30.0
 

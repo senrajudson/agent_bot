@@ -27,8 +27,8 @@ _NETWORK_ERRORS = (
 )
 
 VALID_SEARCH_MODES = {"auto", "name", "description", "query"}
-_DEFAULT_MAX_COUNT = 5
-_MAX_COUNT_HARD_CAP = 5
+_DEFAULT_MAX_COUNT = 15
+_MAX_COUNT_HARD_CAP = 15
 _MAX_QUERY_LENGTH = 200
 
 
@@ -663,7 +663,7 @@ def _dedup_items(
 def _rank_and_cap(
     items: list[dict[str, Any]],
     tokens: list[str],
-    cap: int = 5,
+    cap: int = 15,
 ) -> list[dict[str, Any]]:
     scored: list[tuple[int, dict[str, Any]]] = []
     for item in items:
@@ -799,7 +799,7 @@ def _build_strict_result(
     search_mode: str,
     items: list[dict[str, Any]],
     tokens: list[str],
-    max_count: int = 5,
+    max_count: int = 15,
 ) -> dict[str, Any]:
     ranked = _rank_and_cap(items, tokens, cap=max_count)
     count = len(ranked)

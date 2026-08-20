@@ -430,10 +430,14 @@ Agent (app/agent/agent.py)
 | Tool | Parâmetros | Descrição |
 |------|-----------|-----------|
 | `consultar_tag` | `tags: list[str]`, `pergunta_usuario: str \| None` | Valor atual e metadados de tags |
+| `search_pi_points` | `query: str`, `max_count: int = 5`, `search_mode: str = "auto"` | Busca semântica de tags por nome, descrição, equipamento ou área |
+| `search_pi_points_by_digital_set` | `digital_set_name: str`, `max_count: int = 100`, `start_index: int = 0` | Busca estrutural de PI Points digitais associados a um Digital Set |
+| `tag_attributes_tool` | `tag: str`, `attribute_group: str = "auto"`, `attributes: list[str] \| None` | Consulta atributos cadastrais/configuração do PI Point (compressão, exceção, scan) |
 | `tag_statistics` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, context_text, max_count, group_by, return_series` | Estatísticas históricas (+ breakdown por período). SOMENTE para operações estatísticas |
 | `tag_calculus` | `tags, operation, start_time, end_time, data_method, interval, summary_type, summary_duration, calculation_basis, time_unit, context_text, max_count` | Integralização e derivada |
 | `generate_pi_tags_series_csv` | `tags, start_time, end_time, data_method, interval` | Séries temporais sem agregação estatística. CSV no Drive. Sem `operation`. Suporta tags digitais com enrichment de Digital Set. |
 | `status_pims_tool` | `-` (sem parâmetros) | Health check da PI Web API (/dataservers) |
+
 
 ### Configuração
 
