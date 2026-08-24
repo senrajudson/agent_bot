@@ -98,12 +98,82 @@ def assess_quality(
     return "DADOS_DEGRADADOS"
 
 
+ALLOWED_ANALYSIS_TYPES: tuple[str, ...] = (
+    "all", "mean", "min", "max", "count", "sum", "stddev_sample", "stddev_pop",
+    "range", "percent_good", "median", "p01", "p99", "zero_count", "quality",
+    "gaps", "spikes", "recorded", "interpolated", "digital_states",
+)
+
+INTERVAL_REGEX = re.compile(r"^[1-9][0-9]*[smhd]$")
+
+
+def validate_analysis_types(
+    types: Optional[tuple[str, ...] | list[str]]
+) -> tuple[str, ...]:
+    if types is None:
+        return ("all",)
+    if len(types) == 0:
+        raise DomainValidationError(
+            code=ValidationErrorCode.INVALID_ARGUMENT_COMBINATION,
+            message="analysis_types não pode ser uma lista vazia.",
+        )
+    
+    clean: list[str] = []
+    seen: set[str] = set()
+    for item in types:
+        s = str(item).strip().lower()
+        if s not in ALLOWED_ANALYSIS_TYPES:
+            raise DomainValidationError(
+                code=ValidationErrorCode.INVALID_ARGUMENT_COMBINATION,
+                message=f"Tipo de análise inválido ou não suportado: {item!r}.",
+            )
+        if s not in seen:
+            clean.append(s)
+            seen.add(s)
+            
+    if "all" in clean:
+        if len(clean) > 1:
+            raise DomainValidationError(
+                code=ValidationErrorCode.INVALID_ARGUMENT_COMBINATION,
+                message="'all' não pode ser combinado com outras métricas em analysis_types.",
+            )
+        return ("all",)
+        
+    return tuple(clean)
+
+
+def validate_interval(interval: Optional[str]) -> Optional[str]:
+    if not interval:
+        return None
+    s = interval.strip().lower()
+    if not INTERVAL_REGEX.match(s):
+        raise DomainValidationError(
+            code=ValidationErrorCode.INVALID_INTERVAL,
+            message=f"Formato de interval inválido: {interval!r}. Use formato como '5m', '15m', '1h', '1d'.",
+        )
+    return s
+
+
+def validate_calculation_basis(basis: str) -> str:
+    s = basis.strip().lower()
+    if s not in ("time_weighted", "event_weighted"):
+        raise DomainValidationError(
+            code=ValidationErrorCode.INVALID_ARGUMENT_COMBINATION,
+            message=f"calculation_basis inválido: {basis!r}. Use 'time_weighted' ou 'event_weighted'.",
+        )
+    return s
+
+
+
 def validate_analysis_report_contract(
     tags: tuple[str, ...] | list[str],
     start_time: str,
     end_time: str,
     *,
     zero_policy: Optional[ZeroPolicy] = None,
+    analysis_types: Optional[tuple[str, ...] | list[str]] = None,
+    interval: Optional[str] = None,
+    calculation_basis: str = "time_weighted",
 ) -> None:
     if not tags:
         raise DomainValidationError(
@@ -136,6 +206,10 @@ def validate_analysis_report_contract(
             message=f"zero_policy deve ser um de {ZERO_POLICIES}.",
         )
 
+    validate_analysis_types(analysis_types)
+    validate_interval(interval)
+    validate_calculation_basis(calculation_basis)
+
     _parse_iso(start_time, "start_time")
     _parse_iso(end_time, "end_time")
 
@@ -147,6 +221,7 @@ def validate_analysis_report_contract(
             code=ValidationErrorCode.INVALID_TIME_WINDOW,
             message="start_time deve ser anterior a end_time.",
         )
+
 
 
 def _parse_iso(value: str, field_name: str) -> datetime:

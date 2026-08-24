@@ -10,18 +10,24 @@ from domain.analysis.models import (
     AnalysisCompletenessMetadata,
     AnalysisError,
     AnalysisPoint,
+    BucketSummaryResult,
     LimitStatus,
     TagMetadata,
     ZeroPolicy,
 )
 from domain.analysis.services.limit_resolver import resolve_effective_point_limit
+from domain.analysis.services.pi_summary_response_mapper import PiSummaryResponseMapper
 from domain.pims.clients.pi_web_api_client import (
     get_digital_set_states,
     get_interpolated_values_by_tag,
     get_point_by_tag,
     get_recorded_values_by_tag,
+    get_streamsets_summary,
     get_value_at_or_before_by_web_id,
 )
+
+SUMMARY_BATCH_SIZE = 25
+
 from domain.pims.utils.digital_states import (
     DigitalSetSource,
     INVALID_DIGITAL_SETS,
@@ -53,6 +59,8 @@ class CollectedData:
     digital_seed: AnalysisPoint | None = None
     completeness: AnalysisCompletenessMetadata | None = None
     first_excluded_point: AnalysisPoint | None = None
+    bucket_summaries: list[BucketSummaryResult] = field(default_factory=list)
+
 
 
 _STATUS_TO_ERROR_CODE = {
@@ -461,3 +469,45 @@ class PiDataCollector:
                 )
             )
         return points
+
+    async def collect_summaries(
+        self,
+        web_id_to_tag: dict[str, str],
+        start_time: str,
+        end_time: str,
+        summary_types: list[str],
+        interval: str | None = None,
+        calculation_basis: str = "TimeWeighted",
+    ) -> list[BucketSummaryResult]:
+        """Coleta estatísticas nativas em lote via GET /streamsets/summary."""
+        if not web_id_to_tag or not summary_types:
+            return []
+
+        web_ids = list(web_id_to_tag.keys())
+        mapper = PiSummaryResponseMapper()
+        all_results: list[BucketSummaryResult] = []
+
+        # Dividir em lotes de SUMMARY_BATCH_SIZE
+        for i in range(0, len(web_ids), SUMMARY_BATCH_SIZE):
+            batch_web_ids = web_ids[i : i + SUMMARY_BATCH_SIZE]
+            try:
+                payload = await get_streamsets_summary(
+                    web_ids=batch_web_ids,
+                    summary_types=summary_types,
+                    start_time=start_time,
+                    end_time=end_time,
+                    summary_duration=interval,
+                    calculation_basis=calculation_basis,
+                )
+                mapped = mapper.map_streamsets_summary(
+                    payload=payload,
+                    web_id_to_tag=web_id_to_tag,
+                    calculation_basis=calculation_basis,
+                    interval=interval,
+                )
+                all_results.extend(mapped)
+            except Exception as exc:
+                logger.error(f"Erro na coleta de summary para o lote {batch_web_ids}: {exc}")
+
+        return all_results
+

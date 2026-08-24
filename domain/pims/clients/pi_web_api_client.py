@@ -699,3 +699,29 @@ async def search_points_by_digital_set(
         f"{_base_url()}/points/search",
         params=params,
     )
+
+
+async def get_streamsets_summary(
+    web_ids: list[str],
+    summary_types: list[str],
+    start_time: str,
+    end_time: str,
+    summary_duration: str | None = None,
+    calculation_basis: str = "TimeWeighted",
+) -> dict[str, Any]:
+    """Executa consulta de summaries em lote via GET /streamsets/summary."""
+    params: list[tuple[str, Any]] = []
+    for w in web_ids:
+        params.append(("webId", w))
+    for st in summary_types:
+        params.append(("summaryType", st))
+    params.append(("startTime", start_time))
+    params.append(("endTime", end_time))
+    params.append(("calculationBasis", calculation_basis))
+    if summary_duration:
+        params.append(("summaryDuration", summary_duration))
+
+    return await _pi_get(
+        f"{_base_url()}/streamsets/summary",
+        params=params,
+    )

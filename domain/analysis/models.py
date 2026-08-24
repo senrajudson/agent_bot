@@ -69,6 +69,19 @@ class AnalysisCompletenessMetadata:
     unprocessed_end_time: Optional[str] = None
 
 
+class MetricSource(str, Enum):
+    PI_SUMMARY = "pi_web_api_summary"
+    PI_CALCULATION = "pi_web_api_calculation"
+    LOCAL = "local"
+
+
+class MetricExecutionKind(str, Enum):
+    PI_SUMMARY = "PI_SUMMARY"
+    PI_CALCULATION = "PI_CALCULATION"
+    LOCAL_ONLY = "LOCAL_ONLY"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
 @dataclass(frozen=True)
 class AnalysisRequest:
     tag: str = ""
@@ -76,6 +89,27 @@ class AnalysisRequest:
     start_time: str = ""
     end_time: str = ""
     zero_policy: ZeroPolicy = "suspicious"
+    analysis_types: Optional[tuple[str, ...]] = None
+    interval: Optional[str] = None
+    calculation_basis: str = "time_weighted"
+
+
+@dataclass(frozen=True)
+class BucketSummaryResult:
+    tag: str
+    web_id: str
+    metric: str
+    value: Optional[float]
+    timestamp: str
+    bucket_start: str = ""
+    bucket_end: str = ""
+    source: MetricSource = MetricSource.PI_SUMMARY
+    summary_type: str = ""
+    calculation_basis: str = "TimeWeighted"
+    interval: Optional[str] = None
+    engineering_units: Optional[str] = None
+    good: bool = True
+
 
 
 @dataclass(frozen=True)
@@ -385,6 +419,8 @@ class TagAnalysisResult:
     warnings: tuple[str, ...] = ()
     zero_policy_warning: Optional[str] = None
     completeness: Optional[AnalysisCompletenessMetadata] = None
+    bucket_summaries: tuple[BucketSummaryResult, ...] = ()
+
 
 
 @dataclass(frozen=True)

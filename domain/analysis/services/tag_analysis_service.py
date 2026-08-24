@@ -56,6 +56,9 @@ class TagAnalysisService:
             request.start_time,
             request.end_time,
             zero_policy=request.zero_policy,
+            analysis_types=request.analysis_types,
+            interval=request.interval,
+            calculation_basis=request.calculation_basis,
         )
 
     def analyze_one(
@@ -70,26 +73,26 @@ class TagAnalysisService:
         else:
             res = self._analyze_numeric(points, metadata, request, zero_policy)
 
-        # Injetar completude da coleta
-        if data.completeness is not None and res.completeness is None:
-            res = TagAnalysisResult(
-                metadata=res.metadata,
-                quality=res.quality,
-                digital_analysis=res.digital_analysis,
-                start_time=res.start_time,
-                end_time=res.end_time,
-                numeric=res.numeric,
-                digital_durations=res.digital_durations,
-                digital_transitions=res.digital_transitions,
-                gaps_interpolated=res.gaps_interpolated,
-                gaps_recorded=res.gaps_recorded,
-                spikes=res.spikes,
-                spike_total_count=res.spike_total_count,
-                zero_policy_applied=res.zero_policy_applied,
-                warnings=res.warnings,
-                zero_policy_warning=res.zero_policy_warning,
-                completeness=data.completeness,
-            )
+        # Injetar completude da coleta e bucket_summaries
+        res = TagAnalysisResult(
+            metadata=res.metadata,
+            quality=res.quality,
+            digital_analysis=res.digital_analysis,
+            start_time=res.start_time,
+            end_time=res.end_time,
+            numeric=res.numeric,
+            digital_durations=res.digital_durations,
+            digital_transitions=res.digital_transitions,
+            gaps_interpolated=res.gaps_interpolated,
+            gaps_recorded=res.gaps_recorded,
+            spikes=res.spikes,
+            spike_total_count=res.spike_total_count,
+            zero_policy_applied=res.zero_policy_applied,
+            warnings=res.warnings,
+            zero_policy_warning=res.zero_policy_warning,
+            completeness=data.completeness or res.completeness,
+            bucket_summaries=tuple(data.bucket_summaries),
+        )
 
         return res
 
@@ -114,9 +117,13 @@ class TagAnalysisService:
                         start_time=request.start_time,
                         end_time=request.end_time,
                         zero_policy=request.zero_policy,
+                        analysis_types=request.analysis_types,
+                        interval=request.interval,
+                        calculation_basis=request.calculation_basis,
                     ),
                 )
                 results.append(result)
+
             except Exception as exc:
                 errors.append(
                     AnalysisError(

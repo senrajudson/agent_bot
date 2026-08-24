@@ -101,7 +101,8 @@ Mapa de tools (consulte a descrição MCP de cada tool para detalhes):
   O campo latency_classification classifica a latência como "baixa" (≤200ms),
   "alta" (>200ms) ou "indisponivel" (erro). Use esse campo na resposta.
 - analyze_pi_tag_behavior: análise compacta de UMA tag (estatísticas, qualidade, gaps, mudanças abruptas, estados digitais). Aceita start_time e end_time em ISO 8601 com offset ou tokens temporais PI (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`). Retorna resposta INLINE em Markdown.
-- generate_pi_tags_analysis_report: análise de 1 a 10 tags com relatório XLSX para download. Aceita start_time e end_time em ISO 8601 com offset ou tokens temporais PI (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`). Retorna ArtifactManifest com view_url do Google Drive.
+- generate_pi_tags_analysis_report: análise de 1 a 10 tags com relatório XLSX para download. Aceita start_time e end_time em ISO 8601 com offset ou tokens temporais PI (`*`, `*-1h`, `*-24h`, `*-1d`, `T`, `Y`), além dos parâmetros opcionais analysis_types (ex: ['mean'], ['stddev_sample']), interval (ex: '5m', '15m', '1h') e calculation_basis ('time_weighted' ou 'event_weighted'). Retorna ArtifactManifest com view_url do Google Drive.
+
 {test_artifact_tool_map_line}
 
 {test_artifact_section}

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
+
 from typing import Literal
 
 from fastmcp.exceptions import ToolError
@@ -129,6 +131,9 @@ async def generate_pi_tags_analysis_report(
     start_time: str,
     end_time: str,
     zero_policy: Literal["valid", "suspicious", "invalid"] = "invalid",
+    analysis_types: list[str] | None = None,
+    interval: str | None = None,
+    calculation_basis: Literal["time_weighted", "event_weighted"] = "time_weighted",
 ) -> str:
     """
     Gera relatório completo de análise comportamental de 1 a 10 tags PI em planilha Excel (.XLSX) multi-abas e publica no Google Drive.
@@ -141,6 +146,9 @@ async def generate_pi_tags_analysis_report(
         start_time: Início do período (ISO 8601 com offset ou token PI como '*-24h', '*-1d', 'T', 'Y').
         end_time: Fim do período (ISO 8601 com offset ou token PI como '*').
         zero_policy: Política de zeros ('valid', 'suspicious', 'invalid'). Default: 'invalid'.
+        analysis_types: Lista opcional de métricas/análises desejadas (ex: ['mean'], ['stddev_sample'], ['gaps', 'spikes']) ou None para análise completa.
+        interval: Intervalo opcional de amostragem/agregação temporizada (ex: '5m', '15m', '1h', '1d').
+        calculation_basis: Base de cálculo ('time_weighted' ou 'event_weighted'). Default: 'time_weighted'.
     """
     try:
         start_iso, end_iso, input_kind = _resolve_window(start_time, end_time)
@@ -152,6 +160,9 @@ async def generate_pi_tags_analysis_report(
         start_time=start_iso,
         end_time=end_iso,
         zero_policy=zero_policy,
+        analysis_types=tuple(analysis_types) if analysis_types else None,
+        interval=interval,
+        calculation_basis=calculation_basis,
     )
 
     try:
@@ -159,14 +170,48 @@ async def generate_pi_tags_analysis_report(
     except DomainValidationError as exc:
         raise ToolError(f"[{exc.code}] {exc}") from exc
 
+    from domain.analysis.services.analysis_execution_planner import AnalysisExecutionPlanner
+
+    planner = AnalysisExecutionPlanner()
+    plan = planner.create_plan(request)
+
     collector = PiDataCollector(
         resolver=_get_resolver_if_enabled(),
         recorded_max_count=settings.MCP_ANALYSIS_RECORDED_MAX_COUNT,
     )
     collected = await collector.fetch_many(list(tags), start_iso, end_iso)
 
+    if plan.pi_summary_types:
+        web_id_to_tag: dict[str, str] = {}
+        for tag_name, data in collected.items():
+            if not isinstance(data, AnalysisError):
+                web_id_to_tag[tag_name] = tag_name
+
+        if web_id_to_tag:
+            basis_param = "TimeWeighted" if calculation_basis == "time_weighted" else "EventWeighted"
+            collect_fn = getattr(collector, "collect_summaries", None)
+            if collect_fn:
+                res_or_coro = collect_fn(
+                    web_id_to_tag=web_id_to_tag,
+                    start_time=start_iso,
+                    end_time=end_iso,
+                    summary_types=list(plan.pi_summary_types),
+                    interval=interval,
+                    calculation_basis=basis_param,
+                )
+                if asyncio.iscoroutine(res_or_coro) or hasattr(res_or_coro, "__await__"):
+                    summaries = await res_or_coro
+                else:
+                    summaries = res_or_coro or []
+                for summary in summaries:
+                    tag_data = collected.get(summary.tag)
+                    if isinstance(tag_data, CollectedData):
+                        tag_data.bucket_summaries.append(summary)
+
+
     service = TagAnalysisService()
     multi = service.analyze_many(collected, request)
+
 
     if multi.total_processed == 0:
         raise ToolError("[PI_SERIES_QUERY_ERROR] Nenhuma tag pôde ser processada.")

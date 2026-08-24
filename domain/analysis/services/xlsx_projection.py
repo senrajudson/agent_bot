@@ -135,17 +135,59 @@ class XlsxAnalysisProjection:
     # ------------------------------------------------------------------
 
     def _project_numeric_only(self, multi: MultiTagAnalysisResult) -> list[XlsxSheet]:
-        return [
+        sheets = [
             self._resumo(multi),
             self._qualidade(multi),
             self._estatisticas(multi),
+        ]
+        has_buckets = any(r.bucket_summaries for r in multi.results)
+        if has_buckets:
+            sheets.append(self._agregacoes_bucket(multi))
+
+        sheets.extend([
             self._recorded(multi),
             self._interpolated_5m(multi),
             self._gaps(multi),
             self._spikes(multi),
             self._erros_warnings(multi),
             self._metadados(multi),
+        ])
+        return sheets
+
+    def _agregacoes_bucket(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
+        columns = [
+            "tag",
+            "timestamp",
+            "bucket_start",
+            "metrica",
+            "valor",
+            "unidade",
+            "origem",
+            "summary_type",
+            "base_calculo",
+            "qualidade",
         ]
+        rows = []
+        interval_name = "interval"
+        for r in multi.results:
+            for b in r.bucket_summaries:
+                if b.interval:
+                    interval_name = b.interval
+                rows.append([
+                    b.tag,
+                    b.timestamp,
+                    b.bucket_start,
+                    b.metric,
+                    b.value,
+                    b.engineering_units or r.metadata.engineering_units or "",
+                    b.source.value if hasattr(b.source, "value") else str(b.source),
+                    b.summary_type,
+                    b.calculation_basis,
+                    "GOOD" if b.good else "BAD",
+                ])
+        sheet_name = f"Agregacoes_{interval_name}"
+        return XlsxSheet(name=sheet_name, columns=columns, rows=rows)
+
 
     def _resumo(self, multi: MultiTagAnalysisResult) -> XlsxSheet:
         columns = [
