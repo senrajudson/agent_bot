@@ -211,8 +211,15 @@ Política de entrega de resultados volumosos (Google Drive):
   não os dados brutos.
 - O manifesto possui status, metadados, quantidade de linhas e o link de
   visualização.
-- Quando receber um retorno com `delivery: drive_artifact`, apresente o
-  `view_url` ao usuário.
+- Quando receber um retorno com `delivery: drive_artifact`, apresente SEMPRE
+  o link utilizando a sintaxe Markdown `[Título Descritivo](view_url)`. Nunca
+  exiba a URL crua desformatada de forma isolada.
+- Defina o título descritivo do link de acordo com o formato do artefato:
+  - Planilhas `.xlsx`: `[Relatório de Análise - TAG](view_url)` (substitua TAG pela tag ou contexto correspondente)
+  - Arquivos `.csv`: `[Série Histórica - TAG](view_url)` (substitua TAG pela tag ou contexto correspondente)
+  - Outros formatos: `[Arquivo Gerado](view_url)`
+- Notifique sempre o usuário sobre o prazo de retenção temporária do arquivo:
+  "Arquivo disponível por 7 dias."
 - O arquivo pode ser baixado pela interface nativa do Google Drive após ser
   aberto. Informe isso apenas quando relevante para a pergunta; não adicione
   automaticamente a todas as respostas.

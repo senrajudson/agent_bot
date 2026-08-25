@@ -1,0 +1,19 @@
+[Unit]
+Description=PI Chat Google Drive Artifact Cleanup Timer (Diariamente às 03:00)
+Documentation=https://github.com/senrajudson/agent_bot
+
+# ==============================================================================
+# Instruções de ativação do Timer:
+# 1. Habilitar e iniciar o timer no systemd:
+#    sudo systemctl enable --now cleanup-drive-artifacts.timer
+# 2. Verificar o status e próximo disparo agendado:
+#    sudo systemctl status cleanup-drive-artifacts.timer
+#    systemctl list-timers --all | grep cleanup-drive-artifacts
+# ==============================================================================
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,28 @@
+[Unit]
+Description=PI Chat Google Drive Artifact Cleanup Service
+Documentation=https://github.com/senrajudson/agent_bot
+After=network.target
+
+# ==============================================================================
+# Instruções de instalação e ativação:
+# 1. Copiar as unidades para o diretório de serviços do systemd do usuário ou sistema:
+#    sudo cp systemd/cleanup-drive-artifacts.service /etc/systemd/system/
+#    sudo cp systemd/cleanup-drive-artifacts.timer /etc/systemd/system/
+# 2. Recarregar o daemon do systemd:
+#    sudo systemctl daemon-reload
+# 3. Testar a execução única do serviço:
+#    sudo systemctl start cleanup-drive-artifacts.service
+#    journalctl -u cleanup-drive-artifacts.service -n 50 --no-pager
+# ==============================================================================
+
+[Service]
+Type=oneshot
+User=administrator
+WorkingDirectory=/home/administrator/projetos/agent_bot
+EnvironmentFile=-/home/administrator/projetos/agent_bot/mcp_server/.env
+ExecStart=/home/administrator/.local/bin/poetry run python scripts/cleanup_drive_artifacts.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
