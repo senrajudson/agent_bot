@@ -62,6 +62,21 @@ services:
       retries: 5
       start_period: 5s
 
+  phoenix:
+    image: arizephoenix/phoenix:15.12.0
+    container_name: agent_bot_phoenix
+    restart: always
+    ports:
+      - '6006:6006'
+      - '4317:4317'
+    volumes:
+      - phoenix_data:/mnt/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6006/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   agent_bot:
     build:
       context: .
@@ -82,13 +97,15 @@ services:
       - MCP_SERVER_URL=http://mcp_server:8005/mcp
       - PHOENIX_ENABLED=true
       - PHOENIX_PROJECT_NAME=pi-chat-api
-      - PHOENIX_COLLECTOR_ENDPOINT=http://10.247.179.197:6006/v1/traces
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
       - AGENT_ARTIFACT_BASE_URL=http://agent_bot:8002
       - REDIS_URL=redis://redis:6379/0
       - REDIS_KEY_PREFIX=pi_chat:prod:memory
     volumes:
       - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
+      phoenix:
+        condition: service_started
       redis:
         condition: service_healthy
       math_tool:
@@ -141,4 +158,5 @@ services:
 volumes:
   agent_artifacts:
   event_store_pgdata:
+  phoenix_data:
   redis_data:
