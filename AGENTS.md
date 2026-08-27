@@ -68,6 +68,7 @@ O projeto é organizado como um **monorepo** contendo 4 componentes que rodam co
 | **mcp_server** | FastMCP | 8003 | 8005 | Servidor de tools via protocolo MCP |
 | **calc** | FastAPI | 8001 | 8001 | Math Tool: `/calculate`, `/stats`, `/calculus` |
 | **bridge** | Worker | — | — | Google Chat Bridge (Pub/Sub → Agent Bot) |
+| **redis** | Database | 6379 | 6379 | Redis PRD (Memória, Locks, Deduplicação) |
 
 ---
 
@@ -1124,7 +1125,8 @@ class LLMParams(BaseModel):
 
 | Variável | Padrão | Descrição |
 |----------|--------|-----------|
-| `REDIS_URL` | `redis://127.0.0.1:6379/2` | URL do Redis |
+| `REDIS_URL` | `redis://redis:6379/0` | URL do Redis (PRD Docker Compose: `redis://redis:6379/0`, QA: `redis://127.0.0.1:6380/0`) |
+| `REDIS_KEY_PREFIX` | `pi_chat:prod:memory` | Prefixo das chaves de memória (PRD: `pi_chat:prod:memory`, QA: `pi_chat:qa:memory`) |
 | `CHAT_MEMORY_TTL_SECONDS` | `604800` | TTL da memória (7 dias) |
 | `CHAT_MEMORY_MAX_TURNS` | `8` | Máximo de turns por conversa |
 
@@ -2039,7 +2041,7 @@ O `orchestrator.py` mantém stubs deprecated que usam `state: dict` para compati
 | **MATH_TOOL_BASE_URL** | `http://10.247.179.197:8001` (via .env) | `http://10.247.179.197:8001` (via .env) | `http://math_tool:8001` (docker-compose) |
 | **OLLAMA_BASE_URL** | `http://10.247.179.197:11434` | `http://10.247.179.197:11434` | `http://10.247.179.197:11434` |
 | **PI_WEB_API_BASE_URL** | `http://10.247.224.39/piwebapi` | `http://10.247.224.39/piwebapi` | `http://10.247.224.39/piwebapi` |
-| **REDIS_URL** | `redis://10.247.179.197:6379/2` | `redis://10.247.179.197:6379/2` | `redis://10.247.197:6379/2` |
+| **REDIS_URL** | `redis://127.0.0.1:6379/0` (dev local) | `redis://127.0.0.1:6380/0` (QA local) | `redis://redis:6379/0` (docker-compose PRD) |
 | **QDRANT_URL** | `http://10.247.179.197:6333` | `http://10.247.179.197:6333` | `http://10.247.179.197:6333` |
 | **PHOENIX** | `http://10.247.179.197:6006` | `http://10.247.179.197:6006` | `http://10.247.179.197:6006` |
 

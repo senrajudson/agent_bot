@@ -17,6 +17,9 @@ app/.env.*
 mcp_server/.env
 mcp_server/.env.*
 !mcp_server/.env.example
+qa/.env.qa
+qa/.env.qa.*
+!qa/.env.qa.example
 debug_responses/
 *.log
 

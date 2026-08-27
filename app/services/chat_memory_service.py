@@ -43,11 +43,11 @@ class ChatMemoryTurn(BaseModel):
 
 
 def _memory_key(conversation_id: ConversationId) -> str:
-    return f"{MEMORY_KEY_PREFIX}:{conversation_id}:turns"
+    return f"{settings.REDIS_KEY_PREFIX}:{conversation_id}:turns"
 
 
 def _dedupe_key(conversation_id: ConversationId, event_id: str) -> str:
-    return f"{MEMORY_KEY_PREFIX}:{conversation_id}:dedupe:{event_id}"
+    return f"{settings.REDIS_KEY_PREFIX}:{conversation_id}:dedupe:{event_id}"
 
 
 def _now_iso() -> str:

@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION: str = "pi_web_api_guide"
     OLLAMA_EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"
 
+    APP_ENV: str = "local"
     REDIS_URL: str = "redis://127.0.0.1:6379/2"
+    REDIS_KEY_PREFIX: str = "pi_chat:memory"
     CHAT_MEMORY_TTL_SECONDS: int = 604800
     CHAT_MEMORY_MAX_TURNS: int = 8
 

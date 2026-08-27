@@ -46,6 +46,22 @@ services:
       retries: 5
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    container_name: agent_bot_redis
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   agent_bot:
     build:
       context: .
@@ -68,9 +84,13 @@ services:
       - PHOENIX_PROJECT_NAME=pi-chat-api
       - PHOENIX_COLLECTOR_ENDPOINT=http://10.247.179.197:6006/v1/traces
       - AGENT_ARTIFACT_BASE_URL=http://agent_bot:8002
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_KEY_PREFIX=pi_chat:prod:memory
     volumes:
       - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
+      redis:
+        condition: service_healthy
       math_tool:
         condition: service_started
       mcp_server:
@@ -88,11 +108,15 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/google_chat/service-account.json
       - PYTHONUNBUFFERED=1
       - AGENT_ARTIFACT_BASE_URL=http://agent_bot:8002/artifacts
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - ./secrets/google_chat:/run/secrets/google_chat:ro
       - agent_artifacts:/tmp/agent_bot_artifacts
     depends_on:
-      - agent_bot
+      redis:
+        condition: service_healthy
+      agent_bot:
+        condition: service_started
 
   event_store_postgres:
     image: postgres:16-alpine
@@ -117,3 +141,4 @@ services:
 volumes:
   agent_artifacts:
   event_store_pgdata:
+  redis_data:
