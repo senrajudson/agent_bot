@@ -43,7 +43,12 @@ services:
 
 
   n8n_qa:
-    image: docker.n8n.io/n8nio/n8n:1.82.1
+    image: n8n_custom:2.21.7
+    build:
+      context: ..
+      dockerfile: n8n.Dockerfile
+      args:
+        N8N_VERSION: 2.21.7
     container_name: n8n_app_qa
     restart: unless-stopped
     extra_hosts:
@@ -62,8 +67,8 @@ services:
       - N8N_HOST=${LOCAL_HOST:-localhost}
       - N8N_PORT=5678
       - WEBHOOK_URL=http://${LOCAL_HOST:-localhost}:5678/
-      - BOT_API_BASE_URL=${BOT_API_BASE_URL:-http://host.docker.internal:8002}
-      - BOT_CHAT_URL=${BOT_CHAT_URL:-http://host.docker.internal:8002/chat}
+      - BOT_API_BASE_URL=${BOT_API_BASE_URL:-http://host.docker.internal:8012}
+      - BOT_CHAT_URL=${BOT_CHAT_URL:-http://host.docker.internal:8012/chat}
       - N8N_SECURE_COOKIE=false
       - EXECUTIONS_MODE=queue
       - QUEUE_BULL_REDIS_HOST=redis_qa
@@ -82,7 +87,12 @@ services:
 
 
   n8n_worker_qa:
-    image: docker.n8n.io/n8nio/n8n:1.82.1
+    image: n8n_custom:2.21.7
+    build:
+      context: ..
+      dockerfile: n8n.Dockerfile
+      args:
+        N8N_VERSION: 2.21.7
     container_name: n8n_worker_qa
     restart: unless-stopped
     command: worker --concurrency=3
@@ -100,8 +110,8 @@ services:
       - QUEUE_BULL_REDIS_HOST=redis_qa
       - QUEUE_BULL_REDIS_PORT=6379
       - QUEUE_BULL_REDIS_DB=1
-      - BOT_API_BASE_URL=${BOT_API_BASE_URL:-http://host.docker.internal:8002}
-      - BOT_CHAT_URL=${BOT_CHAT_URL:-http://host.docker.internal:8002/chat}
+      - BOT_API_BASE_URL=${BOT_API_BASE_URL:-http://host.docker.internal:8012}
+      - BOT_CHAT_URL=${BOT_CHAT_URL:-http://host.docker.internal:8012/chat}
       - N8N_SECURE_COOKIE=false
       - QDRANT_URL=http://qdrant_qa:6333
     depends_on:

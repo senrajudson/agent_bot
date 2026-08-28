@@ -1,0 +1,2 @@
+ARG N8N_VERSION=2.21.7
+FROM docker.io/n8nio/n8n:${N8N_VERSION}
