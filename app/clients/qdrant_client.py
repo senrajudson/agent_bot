@@ -37,7 +37,7 @@ def _get_qdrant() -> QdrantClient:
     global _qdrant_client
 
     if _qdrant_client is None:
-        _qdrant_client = QdrantClient(url=QDRANT_URL)
+        _qdrant_client = QdrantClient(url=settings.QDRANT_URL)
 
     return _qdrant_client
 
@@ -110,6 +110,8 @@ def retrieve_relevant_chunks(
     Returns list of dicts with keys: chunk_number, title, content, score.
     """
     query_vector = _embed_query(query)
+    if not query_vector:
+        return []
 
     client = _get_qdrant()
     results = client.query_points(

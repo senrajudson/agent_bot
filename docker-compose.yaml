@@ -77,6 +77,22 @@ services:
       timeout: 5s
       retries: 3
 
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    container_name: agent_bot_qdrant
+    restart: always
+    ports:
+      - '127.0.0.1:6333:6333'
+      - '127.0.0.1:6334:6334'
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ': >/dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   agent_bot:
     build:
       context: .
@@ -95,6 +111,7 @@ services:
       - GEMINI_FALLBACK_MODEL=gemini-2.5-flash
       - OLLAMA_API_BASE=http://10.247.179.197:11434
       - MCP_SERVER_URL=http://mcp_server:8005/mcp
+      - QDRANT_URL=http://qdrant:6333
       - PHOENIX_ENABLED=true
       - PHOENIX_PROJECT_NAME=pi-chat-api
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
@@ -107,6 +124,8 @@ services:
       phoenix:
         condition: service_started
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       math_tool:
         condition: service_started
@@ -159,4 +178,6 @@ volumes:
   agent_artifacts:
   event_store_pgdata:
   phoenix_data:
+  qdrant_data:
+    name: agent_bot_qdrant_data
   redis_data:

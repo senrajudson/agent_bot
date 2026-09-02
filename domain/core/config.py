@@ -11,10 +11,7 @@ def configure_domain_settings(settings: DomainIntegrationSettings) -> None:
     global _DOMAIN_CONFIG
     with _LOCK:
         if _DOMAIN_CONFIG is not None:
-            raise RuntimeError(
-                "DomainIntegrationSettings já foi configurado. "
-                "configure_domain_settings() deve ser chamado uma única vez."
-            )
+            return
         _DOMAIN_CONFIG = settings
 
 

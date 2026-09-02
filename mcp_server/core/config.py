@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     MATH_TOOL_TIMEOUT_SECONDS: float = 120
 
     MCP_HOST: str = "0.0.0.0"
-    MCP_PORT: int = 8003
+    MCP_PORT: int = 8005
 
     # Agent Bot API — artifact upload
     AGENT_API_BASE_URL: str = "http://localhost:8002"

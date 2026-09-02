@@ -6,6 +6,14 @@ import textwrap
 
 import pytest
 
+from app.core.config import settings
+from domain.core.config import configure_domain_settings, _reset_domain_settings
+
+try:
+    configure_domain_settings(settings.to_domain_integration_settings())
+except RuntimeError:
+    pass
+
 
 
 SAMPLE_MARKDOWN = textwrap.dedent("""\

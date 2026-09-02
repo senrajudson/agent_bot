@@ -358,6 +358,7 @@ class ConversationSaga:
             try:
                 ctx = await step(ctx)
             except Exception as exc:
+                logger.exception("Saga step failed at %s: %s", getattr(step, "__name__", "unknown"), exc)
                 ctx = _record_error(ctx, exc)
                 await _publish_error(self, ctx, exc)
                 break
